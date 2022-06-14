@@ -6,6 +6,7 @@ version = 3
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "vk",
  "x11",
 ]
 
@@ -14,6 +15,13 @@ name = "libc"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
+
+[[package]]
+name = "vk"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "x11"
