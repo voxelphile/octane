@@ -24,7 +24,7 @@ fn main() {
     #[cfg(debug_assertions)]
     {
         extensions.push(vk::EXT_DEBUG_REPORT);
-        layers.push(vk::LAYER_LUNARG_STANDARD_VALIDATION);
+        layers.push(vk::LAYER_KHRONOS_VALIDATION);
     }
 
     let create_info = vk::InstanceCreateInfo {

@@ -5,7 +5,7 @@ use std::ptr;
 mod ffi {
     pub use libc::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     #[repr(C)]
     pub enum Result {
         Success = 0,
@@ -56,16 +56,14 @@ mod ffi {
         pub flags: c_uint,
         pub application_info: *const ApplicationInfo,
         pub enabled_layer_count: c_uint,
-        pub enabled_layer_names: *const c_char,
+        pub enabled_layer_names: *const *const c_char,
         pub enabled_extension_count: c_uint,
-        pub enabled_extension_names: *const c_char,
+        pub enabled_extension_names: *const *const c_char,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct Instance {
-        opaque: [u8; 0],
-    }
+    pub struct Instance([u8; 0]);
 
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
@@ -84,6 +82,7 @@ pub const KHR_XLIB_SURFACE: &str = "VK_KHR_xlib_surface";
 
 pub const EXT_DEBUG_REPORT: &str = "VK_EXT_debug_report";
 
+pub const LAYER_KHRONOS_VALIDATION: &str = "VK_LAYER_KHRONOS_validation";
 pub const LAYER_LUNARG_STANDARD_VALIDATION: &str = "VK_LAYER_LUNARG_standard_validation";
 
 #[derive(Clone, Copy, Debug)]
@@ -172,9 +171,9 @@ pub fn create_instance(create_info: InstanceCreateInfo<'_>) -> Result<Instance, 
         .map(|layer_name| CString::new(*layer_name).unwrap())
         .collect::<Vec<_>>();
 
-    let internal_layer_names = internal_layer_names
+    let internal_enabled_layer_names = internal_layer_names
         .iter()
-        .flat_map(|string| string.as_bytes_with_nul().iter().map(|byte| *byte as _))
+        .map(|string| string.as_ptr())
         .collect::<Vec<_>>();
 
     let internal_extension_names = create_info
@@ -183,9 +182,9 @@ pub fn create_instance(create_info: InstanceCreateInfo<'_>) -> Result<Instance, 
         .map(|extension_name| CString::new(*extension_name).unwrap())
         .collect::<Vec<_>>();
 
-    let internal_extension_names = internal_extension_names
+    let internal_enabled_extension_names = internal_extension_names
         .iter()
-        .flat_map(|string| string.as_bytes_with_nul().iter().map(|byte| *byte as _))
+        .map(|string| string.as_ptr())
         .collect::<Vec<_>>();
 
     let internal_create_info = ffi::InstanceCreateInfo {
@@ -193,10 +192,10 @@ pub fn create_instance(create_info: InstanceCreateInfo<'_>) -> Result<Instance, 
         p_next: ptr::null(),
         flags: 0,
         application_info: &internal_application_info,
-        enabled_extension_names: internal_extension_names.as_ptr(),
-        enabled_extension_count: 0,
-        enabled_layer_names: internal_layer_names.as_ptr(),
-        enabled_layer_count: 0,
+        enabled_layer_count: create_info.layers.len() as _,
+        enabled_layer_names: internal_enabled_layer_names.as_ptr(),
+        enabled_extension_count: create_info.extensions.len() as _,
+        enabled_extension_names: internal_enabled_extension_names.as_ptr(),
     };
 
     let mut internal_instance = MaybeUninit::<ffi::Instance>::uninit();
