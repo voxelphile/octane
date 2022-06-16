@@ -88,6 +88,40 @@ fn main() {
         vk::DebugUtilsMessenger::new(instance.clone(), debug_utils_messenger_create_info.unwrap())
             .expect("failed to create debug utils messenger");
 
+    let physical_device = {
+        let mut candidates = vk::PhysicalDevice::enumerate(instance)
+            .into_iter()
+            .map(|x| /* score of 0 */ (0, x))
+            .collect::<Vec<_>>();
+
+        if candidates.len() == 0 {
+            panic!("no suitable gpu");
+        }
+
+        for (score, candidate) in &mut candidates {
+            if candidate.properties.device_type == vk::PhysicalDeviceType::Discrete {
+                *score += 420;
+            }
+
+            *score += candidate.properties.limits.max_image_dimension_2d;
+
+            trace!(
+                "Found GPU \"{}\" with suitability of {}",
+                candidate.properties.device_name,
+                score
+            );
+        }
+
+        candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        candidates.remove(0).1
+    };
+
+    info!(
+        "Selected GPU \"{}\"",
+        physical_device.properties.device_name
+    );
+
     loop {
         let event = window.next_event();
 

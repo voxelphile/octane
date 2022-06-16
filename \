@@ -7,7 +7,7 @@ mod ffi {
     use std::ffi::{CStr, CString};
     use std::mem;
 
-    use libc::{c_char, c_float, c_int, c_uint, c_ulong, c_void, size_t};
+    use libc::{c_char, c_int, size_t, c_uint, c_ulong, c_void};
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -203,142 +203,132 @@ mod ffi {
         Integrated = 1,
         Discrete = 2,
         Virtual = 3,
-        Cpu = 4,
+        Cpu = 4
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceLimits {
-        pub max_image_dimension_1d: c_uint,
-        pub max_image_dimension_2d: c_uint,
-        pub max_image_dimension_3d: c_uint,
-        pub max_image_dimension_cube: c_uint,
-        pub max_image_array_layers: c_uint,
-        pub max_texel_buffer_elements: c_uint,
-        pub max_uniform_buffer_range: c_uint,
-        pub max_storage_buffer_range: c_uint,
-        pub max_push_constants_size: c_uint,
-        pub max_memory_allocation_count: c_uint,
-        pub max_sampler_allocation_count: c_uint,
-        pub buffer_image_granularity: c_ulong,
-        pub sparse_address_space_size: c_ulong,
-        pub max_bound_descriptor_sets: c_uint,
-        pub max_per_stage_descriptor_samplers: c_uint,
-        pub max_per_stage_descriptor_uniform_buffers: c_uint,
-        pub max_per_stage_descriptor_storage_buffers: c_uint,
-        pub max_per_stage_descriptor_sampled_images: c_uint,
-        pub max_per_stage_descriptor_storage_images: c_uint,
-        pub max_per_stage_descriptor_input_attachments: c_uint,
-        pub max_per_stage_resources: c_uint,
-        pub max_descriptor_set_samplers: c_uint,
-        pub max_descriptor_set_uniform_buffers: c_uint,
-        pub max_descriptor_set_uniform_buffers_dynamic: c_uint,
-        pub max_descriptor_set_storage_buffers: c_uint,
-        pub max_descriptor_set_storage_buffers_dynamic: c_uint,
-        pub max_descriptor_set_sampled_images: c_uint,
-        pub max_descriptor_set_storage_images: c_uint,
-        pub max_descriptor_set_input_attachments: c_uint,
-        pub max_vertex_input_attributes: c_uint,
-        pub max_vertex_input_bindings: c_uint,
-        pub max_vertex_input_binding_stride: c_uint,
-        pub max_vertex_output_components: c_uint,
-        pub max_tessellation_generation_level: c_uint,
-        pub max_tessellation_patch_size: c_uint,
-        pub max_tessellation_control_per_vertex_input_components: c_uint,
-        pub max_tessellation_control_per_vertex_output_components: c_uint,
-        pub max_tessellation_control_per_patch_output_components: c_uint,
-        pub max_tessellation_total_output_components: c_uint,
-        pub max_tessellation_evaluation_input_components: c_uint,
-        pub max_tessellation_evaluation_output_components: c_uint,
-        pub max_geometry_shader_invocations: c_uint,
-        pub max_geometry_input_components: c_uint,
-        pub max_geometry_output_components: c_uint,
-        pub max_geometry_output_vertices: c_uint,
-        pub max_geometry_total_output_components: c_uint,
-        pub max_fragment_input_components: c_uint,
-        pub max_fragment_output_attachments: c_uint,
-        pub max_fragment_dual_src_attachments: c_uint,
-        pub max_fragment_combined_output_resources: c_uint,
-        pub max_compute_shared_memory_size: c_uint,
-        pub max_compute_work_group_count: [c_uint; 3],
-        pub max_compute_work_group_invocations: c_uint,
-        pub max_compute_work_group_size: [c_uint; 3],
-        pub sub_pixel_precision_bits: c_uint,
-        pub sub_texel_precision_bits: c_uint,
-        pub mipmap_precision_bits: c_uint,
-        pub max_draw_indexed_index_value: c_uint,
-        pub max_draw_indirect_count: c_uint,
-        pub max_sampler_lod_bias: c_float,
-        pub max_sampler_anisotropy: c_float,
-        pub max_viewports: c_uint,
-        pub max_viewport_dimensions: [c_uint; 2],
-        pub viewport_bounds_range: [c_float; 2],
-        pub viewport_sub_pixel_bits: c_uint,
-        pub min_memory_map_alignment: size_t,
-        pub min_texel_buffer_offset_alignment: c_ulong,
-        pub min_uniform_buffer_offset_alignment: c_ulong,
-        pub min_storage_buffer_offset_alignment: c_ulong,
-        pub min_texel_offset: c_int,
-        pub max_texel_offset: c_uint,
-        pub min_texel_gather_offset: c_int,
-        pub max_texel_gather_offset: c_uint,
-        pub min_interpolation_offset: c_float,
-        pub max_interpolation_offset: c_float,
-        pub sub_pixel_interpolation_offset_bits: c_uint,
-        pub max_framebuffer_width: c_uint,
-        pub min_framebuffer_width: c_uint,
-        pub min_framebuffer_layers: c_uint,
-        pub framebuffer_color_sample_counts: c_uint,
-        pub framebuffer_depth_sample_counts: c_uint,
-        pub framebuffer_stencil_sample_counts: c_uint,
-        pub framebuffer_no_attachments_sample_counts: c_uint,
-        pub max_color_attachments: c_uint,
-        pub sampled_image_color_sample_counts: c_uint,
-        pub sampled_image_integer_sample_counts: c_uint,
-        pub sampled_image_depth_sample_counts: c_uint,
-        pub sampled_image_stencil_sample_counts: c_uint,
-        pub storage_image_sample_counts: c_uint,
-        pub max_sample_mask_words: c_uint,
-        pub timestamp_compute_and_graphics: bool,
-        pub timestamp_period: c_float,
-        pub max_clip_distances: c_uint,
-        pub max_cull_distances: c_uint,
-        pub max_combined_clip_and_cull_distances: c_uint,
-        pub discrete_queue_priorities: c_uint,
-        pub point_size_range: [c_float; 2],
-        pub line_width_range: [c_float; 2],
-        pub point_size_granularity: c_float,
-        pub line_width_granularity: c_float,
-        pub strict_lines: bool,
-        pub standard_sample_locations: bool,
-        pub optimal_buffer_copy_offset_alignment: c_uint,
-        pub optimal_buffer_copy_row_pitch_alignment: c_uint,
-        pub non_coherent_atom_size: c_uint,
+        max_image_dimension_1d: c_uint,
+        max_image_dimension_2d: c_uint,
+        max_image_dimension_3d: c_uint,
+        max_image_dimension_cube: c_uint,
+        max_image_array_layers: c_uint,
+        max_texel_buffer_elements: c_uint,
+        max_uniform_buffer_range: c_uint,
+        max_storage_buffer_range: c_uint,
+        max_push_constants_size: c_uint,
+        max_memory_allocation_count: c_uint,
+        max_sampler_allocation_count: c_uint,
+        buffer_image_granularity: c_ulong,
+        sparse_address_space_size: c_ulong,
+        max_bound_descriptor_sets: c_uint,
+        max_per_stage_descriptor_samplers: c_uint,
+        max_per_stage_descriptor_uniform_buffers: c_uint,
+        max_per_stage_descriptor_storage_buffers: c_uint,
+        max_per_stage_descriptor_sampled_images: c_uint,
+        max_per_stage_descriptor_storage_images: c_uint,
+        max_per_stage_descriptor_input_attachments: c_uint,
+        max_per_stage_resources: c_uint,
+        max_descriptor_set_samplers: c_uint,
+        max_descriptor_set_uniform_buffers: c_uint,
+        max_descriptor_set_uniform_buffers_dynamic: c_uint,
+        max_descriptor_set_storage_buffers: c_uint,
+        max_descriptor_set_storage_buffers_dynamic: c_uint,
+        max_descriptor_set_sampled_images: c_uint,
+        max_descriptor_set_storage_images: c_uint,
+        max_descriptor_set_input_attachments: c_uint,
+        max_vertex_input_attributes: c_uint,
+        max_vertex_input_bindings: c_uint,
+        max_vertex_input_binding_stride: c_uint,
+        max_vertex_output_components: c_uint,
+        max_tessellation_generation_level: c_uint,
+        max_tessellation_patch_size: c_uint,
+        max_tessellation_control_per_vertex_input_components: c_uint,
+        max_tessellation_control_per_vertex_output_components: c_uint,
+        max_tessellation_control_per_patch_output_components: c_uint,
+        max_tessellation_total_output_components: c_uint,
+        max_tessellation_evaluation_input_components: c_uint,
+        max_tessellation_evaluation_output_components: c_uint,
+        max_geometry_shader_invocations: c_uint,
+        max_geometry_input_components: c_uint,
+        max_geometry_output_components: c_uint,
+        max_geometry_output_vertices: c_uint,
+        max_geometry_total_output_components: c_uint,
+        max_fragment_input_components: c_uint,
+        max_fragment_output_attachments: c_uint,
+        max_fragment_dual_src_attachments: c_uint,
+        max_fragment_combined_output_resources: c_uint,
+        max_compute_shared_memory_size: c_uint,
+        max_compute_work_group_count: [c_uint; 3],
+        max_compute_work_group_invocations: c_uint,
+        max_compute_work_group_size: [c_uint; 3],
+        sub_pixel_precision_bits: c_uint,
+        sub_texel_precision_bits: c_uint,
+        mipmap_precision_bits: c_uint,
+        max_draw_indexed_index_value: c_uint,
+        max_draw_indirect_count: c_uint,
+        max_sampler_lod_bias: c_float,
+        max_sampler_anisotropy: c_float,
+        max_viewports: c_uint,
+        max_viewport_dimensions: [c_uint; 2],
+        viewport_bounds_range: [c_float; 2],
+        viewport_sub_pixel_bits: c_uint,
+        min_memory_map_alignment: size_t,
+        min_texel_buffer_offset_alignment: c_ulong,
+        min_uniform_buffer_offset_alignment: c_ulong,
+        min_storage_buffer_offset_alignment: c_ulong,
+        min_texel_offset; c_int,
+        max_texel_offset: c_uint,
+        min_texel_gather_offset: c_int,
+        max_texel_gather_offset: c_uint,
+        min_interpolation_offset: c_float,
+        max_interpolation_offset: c_float,
+        sub_pixel_interpolation_offset_bits: c_uint,
+        max_framebuffer_width: c_uint,
+        min_framebuffer_width: c_uint,
+        min_framebuffer_layers: c_uint,
+        framebuffer_color_sample_counts: c_uint,
+        framebuffer_depth_sample_counts: c_uint,
+        framebuffer_stencil_sample_counts: c_uint,
+        framebuffer_no_attachments_sample_counts: c_uint,
+        max_color_attachments: c_uint,
+        sampled_image_color_sample_counts: c_uint,
+        sampled_image_integer_sample_counts: c_uint,
+        sampled_image_depth_sample_counts: c_uint,
+        sampled_image_stencil_sample_counts: c_uint,
+        storage_image_sample_counts: c_uint,
+        max_sample_mask_words: c_uint,
+        timestamp_compute_and_graphics: c_bool,
+        timestamp_period: c_float,
+        max_clip_distances: c_uint,
+        max_cull_distances: c_uint,
+        max_combined_clip_and_cull_distances: c_uint,
+        discrete_queue_priorities: c_uint,
+        point_size_range: [c_float; 2],
+        line_width_range: [c_float; 2],
+        point_size_granularity: c_float,
+        line_width_granularity: c_float,
+        strict_lines: c_bool,
+        standard_sample_locations: c_bool,
+        optimal_buffer_copy_offset_alignment: c_uint,
+        optimal_buffer_copy_row_pitch_alignment: c_uint,
+        non_coherent_atom_size: c_uint,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceSparseProperties {
-        pub residency_standard_2d_block_shape: bool,
-        pub residency_standard_2d_multisample_block_shape: bool,
-        pub residency_standard_3d_block_shape: bool,
-        pub residency_aligned_mip_size: bool,
-        pub residency_non_resident_strict: bool,
+        residency_standard_2d_block_shape: c_bool,
+        residency_standard_2d_multisample_block_shape: c_bool,
+        residency_standard_3d_block_shape: c_bool,
+        residency_aligned_mip_size: c_bool,
+        residency_non_resident_strict: c_bool,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct PhysicalDeviceProperties {
-        pub api_version: c_uint,
-        pub driver_version: c_uint,
-        pub vendor_id: c_uint,
-        pub device_id: c_uint,
-        pub device_type: PhysicalDeviceType,
-        pub device_name: [c_char; 256],
-        pub pipeline_cache_uuid: [c_char; 16],
-        pub limits: PhysicalDeviceLimits,
-        pub sparse_properties: PhysicalDeviceSparseProperties,
-    }
+    pub struct PhysicalDeviceProperties {}
 
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
@@ -356,10 +346,7 @@ mod ffi {
             physical_device_count: *mut c_uint,
             physical_devices: *mut PhysicalDevice,
         ) -> Result;
-        pub fn vkGetPhysicalDeviceProperties(
-            physical_device: PhysicalDevice,
-            properties: *mut PhysicalDeviceProperties,
-        );
+        pub fn 
     }
 }
 
@@ -642,7 +629,6 @@ impl Drop for DebugUtilsMessenger {
     }
 }
 
-#[derive(PartialEq, Eq)]
 pub enum PhysicalDeviceType {
     Other,
     Integrated,
@@ -651,15 +637,9 @@ pub enum PhysicalDeviceType {
     Cpu,
 }
 
-pub struct PhysicalDeviceLimits {
-    pub max_image_dimension_2d: u32,
-}
-
 //TODO add more info
 pub struct PhysicalDeviceProperties {
-    pub device_type: PhysicalDeviceType,
-    pub device_name: String,
-    pub limits: PhysicalDeviceLimits,
+    device_type: PhysicalDeviceType,
 }
 
 //TODO add info
@@ -667,13 +647,11 @@ pub struct PhysicalDeviceFeatures {}
 
 pub struct PhysicalDevice {
     handle: ffi::PhysicalDevice,
-    pub properties: PhysicalDeviceProperties,
-    pub features: PhysicalDeviceFeatures,
 }
 
 impl PhysicalDevice {
-    pub fn enumerate(instance: Rc<Instance>) -> Vec<Self> {
-        let mut handle_count: u32 = 0;
+    fn enumerate(instance: Rc<Instance>) -> Vec<Self> {
+        let handle_count: u32 = 0;
 
         unsafe {
             ffi::vkEnumeratePhysicalDevices(instance.handle, &mut handle_count, ptr::null_mut())
@@ -689,24 +667,15 @@ impl PhysicalDevice {
             )
         };
 
-        unsafe { handles.set_len(handle_count as _) };
-
-        let physical_devices = handles
-            .iter()
-            .map(|&handle| Self {
-                handle,
-                properties: Self::properties(handle),
-                features: Self::features(handle),
-            })
-            .collect();
+        let physical_devices = handles.iter().map(|&handle| Self { handle }).collect();
 
         physical_devices
     }
 
-    fn properties(handle: ffi::PhysicalDevice) -> PhysicalDeviceProperties {
-        let mut properties = MaybeUninit::<ffi::PhysicalDeviceProperties>::uninit();
+    fn properties(&self) -> PhysicalDeviceProperties {
+        let properties = MaybeUninit::<ffi::PhysicalDeviceProperties>::uninit();
 
-        unsafe { ffi::vkGetPhysicalDeviceProperties(handle, properties.as_mut_ptr()) };
+        unsafe { ffi::vkGetPhysicalDeviceProperties(device, properties.as_mut_ptr()) };
 
         let properties = unsafe { properties.assume_init() };
 
@@ -718,25 +687,11 @@ impl PhysicalDevice {
             ffi::PhysicalDeviceType::Cpu => PhysicalDeviceType::Cpu,
         };
 
-        let device_name = properties
-            .device_name
-            .iter()
-            .map(|&c| c as u8 as char)
-            .collect::<String>();
-
-        let limits = PhysicalDeviceLimits {
-            max_image_dimension_2d: properties.limits.max_image_dimension_2d,
-        };
-
-        PhysicalDeviceProperties {
-            device_type,
-            device_name,
-            limits,
-        }
+        PhysicalDeviceProperties { device_type }
     }
 
     //TODO
-    fn features(handle: ffi::PhysicalDevice) -> PhysicalDeviceFeatures {
+    fn features(&self) -> PhysicalDeviceFeatures {
         PhysicalDeviceFeatures {}
     }
 }
