@@ -77,7 +77,7 @@ fn main() {
         application_info: &application_info,
         extensions: &extensions[..],
         layers: &layers[..],
-        debug_utils: debug_utils_messenger_create_info,
+        debug_utils: &debug_utils_messenger_create_info,
     };
 
     let instance = vk::create_instance(instance_create_info).expect("failed to create instance");

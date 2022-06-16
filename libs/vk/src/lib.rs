@@ -277,7 +277,7 @@ pub struct InstanceCreateInfo<'a> {
     pub application_info: &'a ApplicationInfo<'a>,
     pub extensions: &'a [&'a str],
     pub layers: &'a [&'a str],
-    pub debug_utils: Option<DebugUtilsMessengerCreateInfo>,
+    pub debug_utils: &'a Option<DebugUtilsMessengerCreateInfo>,
 }
 
 #[derive(Clone, Copy)]
