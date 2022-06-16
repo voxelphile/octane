@@ -1,6 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::mem::{self, MaybeUninit};
 use std::ptr;
+use std::rc::Rc;
 
 mod ffi {
     use std::ffi::{CStr, CString};
@@ -165,6 +166,9 @@ mod ffi {
         *mut DebugUtilsMessenger,
     ) -> Result;
 
+    pub type DestroyDebugUtilsMessenger =
+        unsafe extern "system" fn(Instance, DebugUtilsMessenger, *const c_void) -> Result;
+
     pub unsafe extern "system" fn debug_utils_messenger_callback(
         message_severity: c_uint,
         message_type: c_uint,
@@ -197,7 +201,9 @@ mod ffi {
             allocator: *const c_void,
             instance: *mut Instance,
         ) -> Result;
+        pub fn vkDestroyInstance(instance: Instance, allocator: *const c_void);
         pub fn vkGetInstanceProcAddr(instance: Instance, name: *const c_char) -> *const c_void;
+
     }
 }
 
@@ -219,8 +225,6 @@ pub const DEBUG_UTILS_MESSAGE_TYPE_GENERAL: u32 = 0x00000001;
 pub const DEBUG_UTILS_MESSAGE_TYPE_VALIDATION: u32 = 0x00000002;
 pub const DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE: u32 = 0x00000004;
 
-pub type Instance = ffi::Instance;
-pub type DebugUtilsMessenger = ffi::DebugUtilsMessenger;
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
 #[derive(Clone, Copy, Debug)]
@@ -294,55 +298,58 @@ pub struct DebugUtilsMessengerCallbackData<'a> {
     pub message: &'a str,
 }
 
-pub fn create_instance(create_info: InstanceCreateInfo<'_>) -> Result<Instance, Error> {
-    let internal_application_name =
-        CString::new(create_info.application_info.application_name).unwrap();
+pub struct Instance {
+    handle: ffi::Instance,
+}
 
-    let internal_application_version: u32 = create_info.application_info.application_version.into();
+impl Instance {
+    pub fn new(create_info: InstanceCreateInfo<'_>) -> Result<Rc<Instance>, Error> {
+        let application_name = CString::new(create_info.application_info.application_name).unwrap();
 
-    let internal_engine_name = CString::new(create_info.application_info.application_name).unwrap();
+        let application_version: u32 = create_info.application_info.application_version.into();
 
-    let internal_engine_version: u32 = create_info.application_info.engine_version.into();
+        let engine_name = CString::new(create_info.application_info.application_name).unwrap();
 
-    let internal_api_version: u32 = create_info.application_info.api_version.into();
+        let engine_version: u32 = create_info.application_info.engine_version.into();
 
-    let internal_application_info = ffi::ApplicationInfo {
-        structure_type: ffi::StructureType::ApplicationInfo,
-        p_next: ptr::null(),
-        application_name: internal_application_name.as_c_str().as_ptr(),
-        application_version: internal_application_version,
-        engine_name: internal_engine_name.as_c_str().as_ptr(),
-        engine_version: internal_engine_version,
-        api_version: internal_api_version,
-    };
+        let api_version: u32 = create_info.application_info.api_version.into();
 
-    let internal_layer_names = create_info
-        .layers
-        .iter()
-        .map(|layer_name| CString::new(*layer_name).unwrap())
-        .collect::<Vec<_>>();
+        let application_info = ffi::ApplicationInfo {
+            structure_type: ffi::StructureType::ApplicationInfo,
+            p_next: ptr::null(),
+            application_name: application_name.as_c_str().as_ptr(),
+            application_version,
+            engine_name: engine_name.as_c_str().as_ptr(),
+            engine_version,
+            api_version,
+        };
 
-    let internal_enabled_layer_names = internal_layer_names
-        .iter()
-        .map(|string| string.as_ptr())
-        .collect::<Vec<_>>();
+        let layer_names = create_info
+            .layers
+            .iter()
+            .map(|layer_name| CString::new(*layer_name).unwrap())
+            .collect::<Vec<_>>();
 
-    let internal_extension_names = create_info
-        .extensions
-        .iter()
-        .map(|extension_name| CString::new(*extension_name).unwrap())
-        .collect::<Vec<_>>();
+        let enabled_layer_names = layer_names
+            .iter()
+            .map(|string| string.as_ptr())
+            .collect::<Vec<_>>();
 
-    let internal_enabled_extension_names = internal_extension_names
-        .iter()
-        .map(|string| string.as_ptr())
-        .collect::<Vec<_>>();
+        let extension_names = create_info
+            .extensions
+            .iter()
+            .map(|extension_name| CString::new(*extension_name).unwrap())
+            .collect::<Vec<_>>();
 
-    let internal_debug_utils_messenger_create_info =
-        if let Some(create_info) = create_info.debug_utils {
+        let enabled_extension_names = extension_names
+            .iter()
+            .map(|string| string.as_ptr())
+            .collect::<Vec<_>>();
+
+        let debug_utils = if let Some(create_info) = create_info.debug_utils {
             let g = unsafe { mem::transmute(create_info.user_callback) };
 
-            let internal_create_info = ffi::DebugUtilsMessengerCreateInfo {
+            let create_info = ffi::DebugUtilsMessengerCreateInfo {
                 structure_type: ffi::StructureType::DebugUtilsMessengerCreateInfo,
                 p_next: ptr::null(),
                 flags: 0,
@@ -352,95 +359,129 @@ pub fn create_instance(create_info: InstanceCreateInfo<'_>) -> Result<Instance, 
                 user_data: g,
             };
 
-            Some(internal_create_info)
+            Some(create_info)
         } else {
             None
         };
 
-    let p_next = if let Some(create_info) = internal_debug_utils_messenger_create_info {
-        unsafe { mem::transmute::<_, _>(&create_info) }
-    } else {
-        ptr::null()
-    };
+        let p_next = if let Some(create_info) = debug_utils {
+            unsafe { mem::transmute::<_, _>(&create_info) }
+        } else {
+            ptr::null()
+        };
 
-    let internal_create_info = ffi::InstanceCreateInfo {
-        structure_type: ffi::StructureType::InstanceCreateInfo,
-        p_next,
-        flags: 0,
-        application_info: &internal_application_info,
-        enabled_layer_count: create_info.layers.len() as _,
-        enabled_layer_names: internal_enabled_layer_names.as_ptr(),
-        enabled_extension_count: create_info.extensions.len() as _,
-        enabled_extension_names: internal_enabled_extension_names.as_ptr(),
-    };
+        let create_info = ffi::InstanceCreateInfo {
+            structure_type: ffi::StructureType::InstanceCreateInfo,
+            p_next,
+            flags: 0,
+            application_info: &application_info,
+            enabled_layer_count: create_info.layers.len() as _,
+            enabled_layer_names: enabled_layer_names.as_ptr(),
+            enabled_extension_count: create_info.extensions.len() as _,
+            enabled_extension_names: enabled_extension_names.as_ptr(),
+        };
 
-    let mut internal_instance = MaybeUninit::<ffi::Instance>::uninit();
+        let mut handle = MaybeUninit::<ffi::Instance>::uninit();
 
-    let result = unsafe {
-        ffi::vkCreateInstance(
-            &internal_create_info,
-            ptr::null(),
-            internal_instance.as_mut_ptr(),
-        )
-    };
+        let result =
+            unsafe { ffi::vkCreateInstance(&create_info, ptr::null(), handle.as_mut_ptr()) };
 
-    let internal_instance = unsafe { internal_instance.assume_init() };
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
 
-    match result {
-        ffi::Result::Success => Ok(internal_instance),
-        ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
-        ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-        ffi::Result::InitializationFailed => Err(Error::InitializationFailed),
-        ffi::Result::LayerNotPresent => Err(Error::LayerNotPresent),
-        ffi::Result::ExtensionNotPresent => Err(Error::ExtensionNotPresent),
-        ffi::Result::IncompatibleDriver => Err(Error::IncompatibleDriver),
-        _ => panic!("unexpected result"),
+                let instance = Self { handle };
+
+                let instance = Rc::new(instance);
+
+                Ok(instance)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InitializationFailed => Err(Error::InitializationFailed),
+            ffi::Result::LayerNotPresent => Err(Error::LayerNotPresent),
+            ffi::Result::ExtensionNotPresent => Err(Error::ExtensionNotPresent),
+            ffi::Result::IncompatibleDriver => Err(Error::IncompatibleDriver),
+            _ => panic!("unexpected result"),
+        }
     }
 }
 
-//TODO implement allocator
-pub fn create_debug_utils_messenger(
-    instance: Instance,
-    create_info: DebugUtilsMessengerCreateInfo,
-) -> Result<DebugUtilsMessenger, Error> {
-    let f_name = CStr::from_bytes_with_nul(b"vkCreateDebugUtilsMessengerEXT\0").unwrap();
-
-    let f = unsafe { ffi::vkGetInstanceProcAddr(instance, f_name.as_ptr()) };
-
-    if f == ptr::null() {
-        return Err(Error::ExtensionNotPresent);
+impl Drop for Instance {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyInstance(self.handle, ptr::null()) };
     }
+}
 
-    let f = unsafe { mem::transmute::<_, ffi::CreateDebugUtilsMessenger>(f) };
+pub struct DebugUtilsMessenger {
+    instance: Rc<Instance>,
+    handle: ffi::DebugUtilsMessenger,
+}
 
-    let g = unsafe { mem::transmute(create_info.user_callback) };
+impl DebugUtilsMessenger {
+    pub fn new(
+        instance: Rc<Instance>,
+        create_info: DebugUtilsMessengerCreateInfo,
+    ) -> Result<Self, Error> {
+        let f_name = CStr::from_bytes_with_nul(b"vkCreateDebugUtilsMessengerEXT\0").unwrap();
 
-    let internal_create_info = ffi::DebugUtilsMessengerCreateInfo {
-        structure_type: ffi::StructureType::DebugUtilsMessengerCreateInfo,
-        p_next: ptr::null(),
-        flags: 0,
-        message_severity: create_info.message_severity as _,
-        message_type: create_info.message_type as _,
-        user_callback: ffi::debug_utils_messenger_callback,
-        user_data: g,
-    };
+        let f = unsafe { ffi::vkGetInstanceProcAddr(instance.handle, f_name.as_ptr()) };
 
-    let mut internal_debug_utils_messenger = MaybeUninit::<ffi::DebugUtilsMessenger>::uninit();
+        if f == ptr::null() {
+            return Err(Error::ExtensionNotPresent);
+        }
 
-    let result = unsafe {
-        f(
-            instance,
-            &internal_create_info,
-            ptr::null(),
-            internal_debug_utils_messenger.as_mut_ptr(),
-        )
-    };
+        let f = unsafe { mem::transmute::<_, ffi::CreateDebugUtilsMessenger>(f) };
 
-    let internal_debug_utils_messenger = unsafe { internal_debug_utils_messenger.assume_init() };
+        let g = unsafe { mem::transmute(create_info.user_callback) };
 
-    match result {
-        ffi::Result::Success => Ok(internal_debug_utils_messenger),
-        ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
-        _ => panic!("unexpected result"),
+        let create_info = ffi::DebugUtilsMessengerCreateInfo {
+            structure_type: ffi::StructureType::DebugUtilsMessengerCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            message_severity: create_info.message_severity as _,
+            message_type: create_info.message_type as _,
+            user_callback: ffi::debug_utils_messenger_callback,
+            user_data: g,
+        };
+
+        let mut handle = MaybeUninit::<ffi::DebugUtilsMessenger>::uninit();
+
+        let result = unsafe {
+            f(
+                instance.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let debug_utils_messenger = Self { instance, handle };
+
+                Ok(debug_utils_messenger)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for DebugUtilsMessenger {
+    fn drop(&mut self) {
+        let f_name = CStr::from_bytes_with_nul(b"vkDestroyDebugUtilsMessengerEXT\0").unwrap();
+
+        let f = unsafe { ffi::vkGetInstanceProcAddr(self.instance.handle, f_name.as_ptr()) };
+
+        if f == ptr::null() {
+            panic!("extension not present, but handle already created");
+        }
+
+        let f = unsafe { mem::transmute::<_, ffi::DestroyDebugUtilsMessenger>(f) };
+
+        unsafe { f(self.instance.handle, self.handle, ptr::null()) };
     }
 }

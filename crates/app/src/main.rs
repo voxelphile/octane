@@ -1,6 +1,7 @@
 mod window;
 
 use crate::window::{Event as WindowEvent, Window};
+
 use log::{error, info, trace, warn};
 
 fn debug_utils_messenger_callback(data: &vk::DebugUtilsMessengerCallbackData) -> bool {
@@ -80,11 +81,11 @@ fn main() {
         debug_utils: &debug_utils_messenger_create_info,
     };
 
-    let instance = vk::create_instance(instance_create_info).expect("failed to create instance");
+    let instance = vk::Instance::new(instance_create_info).expect("failed to create instance");
 
     #[cfg(debug_assertions)]
     let debug_utils_messenger =
-        vk::create_debug_utils_messenger(instance, debug_utils_messenger_create_info.unwrap())
+        vk::DebugUtilsMessenger::new(instance.clone(), debug_utils_messenger_create_info.unwrap())
             .expect("failed to create debug utils messenger");
 
     loop {
@@ -97,4 +98,7 @@ fn main() {
             None => {}
         }
     }
+
+    //vk shutdown happens during implicit Drop.
+    //Rc ensures shutdown happens in right order.
 }
