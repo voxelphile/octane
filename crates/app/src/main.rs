@@ -91,36 +91,65 @@ fn main() {
     let physical_device = {
         let mut candidates = vk::PhysicalDevice::enumerate(instance)
             .into_iter()
-            .map(|x| /* score of 0 */ (0, x))
+            .map(|x| (0, x.properties(), x)) // suitability of 0, pd properties, pd
             .collect::<Vec<_>>();
 
         if candidates.len() == 0 {
             panic!("no suitable gpu");
         }
 
-        for (score, candidate) in &mut candidates {
-            if candidate.properties.device_type == vk::PhysicalDeviceType::Discrete {
-                *score += 420;
+        for (suitability, properties, _) in &mut candidates {
+            if properties.device_type == vk::PhysicalDeviceType::Discrete {
+                *suitability += 420;
             }
 
-            *score += candidate.properties.limits.max_image_dimension_2d;
+            *suitability += properties.limits.max_image_dimension_2d;
 
             trace!(
                 "Found GPU \"{}\" with suitability of {}",
-                candidate.properties.device_name,
-                score
+                properties.device_name,
+                suitability
             );
         }
 
-        candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
+        candidates.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
 
-        candidates.remove(0).1
+        let (_, properties, physical_device) = candidates.remove(0);
+
+        info!("Selected GPU \"{}\"", properties.device_name);
+
+        physical_device
     };
 
-    info!(
-        "Selected GPU \"{}\"",
-        physical_device.properties.device_name
-    );
+    let queue_families = physical_device.queue_families();
+
+    let mut graphics_queue_family_index = 0;
+
+    for (i, queue_family) in queue_families.iter().enumerate() {
+        if queue_family.queue_flags & vk::QUEUE_GRAPHICS != 0 {
+            graphics_queue_family_index = i as u32;
+            break;
+        }
+    }
+
+    let queue_create_info = vk::DeviceQueueCreateInfo {
+        queue_family_index: graphics_queue_family_index,
+        queue_priorities: &[1.0],
+    };
+
+    let physical_device_features = vk::PhysicalDeviceFeatures {};
+
+    let device_create_info = vk::DeviceCreateInfo {
+        queues: &[queue_create_info],
+        enabled_features: &physical_device_features,
+        extensions: &[],
+        layers: &layers[..],
+    };
+
+    let device = vk::Device::new(physical_device, device_create_info)
+        .expect("failed to create logical device");
+
+    let queue = device.queue(graphics_queue_family_index);
 
     loop {
         let event = window.next_event();

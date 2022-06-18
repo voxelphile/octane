@@ -38,45 +38,10 @@ mod ffi {
     pub enum StructureType {
         ApplicationInfo = 0,
         InstanceCreateInfo = 1,
+        DeviceQueueCreateInfo = 2,
+        DeviceCreateInfo = 3,
         DebugUtilsMessengerCreateInfo = 1000128004,
     }
-
-    #[derive(Clone, Copy)]
-    #[repr(C)]
-    pub struct ApplicationInfo {
-        pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub application_name: *const c_char,
-        pub application_version: c_uint,
-        pub engine_name: *const c_char,
-        pub engine_version: c_uint,
-        pub api_version: c_uint,
-    }
-
-    #[derive(Clone, Copy)]
-    #[repr(C)]
-    pub struct InstanceCreateInfo {
-        pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub application_info: *const ApplicationInfo,
-        pub enabled_layer_count: c_uint,
-        pub enabled_layer_names: *const *const c_char,
-        pub enabled_extension_count: c_uint,
-        pub enabled_extension_names: *const *const c_char,
-    }
-
-    #[derive(Clone, Copy)]
-    #[repr(C)]
-    pub struct Instance(*mut u8);
-
-    #[derive(Clone, Copy)]
-    #[repr(C)]
-    pub struct PhysicalDevice(*mut u8);
-
-    #[derive(Clone, Copy)]
-    #[repr(transparent)]
-    pub struct DebugUtilsMessenger(u64);
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -109,6 +74,50 @@ mod ffi {
         CommandPool = 25,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct Instance(*mut u8);
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PhysicalDevice(*mut u8);
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct Device(*mut u8);
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct Queue(*mut u8);
+
+    #[derive(Clone, Copy)]
+    #[repr(transparent)]
+    pub struct DebugUtilsMessenger(u64);
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ApplicationInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub application_name: *const c_char,
+        pub application_version: c_uint,
+        pub engine_name: *const c_char,
+        pub engine_version: c_uint,
+        pub api_version: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct InstanceCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub application_info: *const ApplicationInfo,
+        pub enabled_layer_count: c_uint,
+        pub enabled_layer_names: *const *const c_char,
+        pub enabled_extension_count: c_uint,
+        pub enabled_extension_names: *const *const c_char,
+    }
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DebugUtilsLabel {
@@ -340,6 +349,41 @@ mod ffi {
         pub sparse_properties: PhysicalDeviceSparseProperties,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct QueueFamilyProperties {
+        pub queue_flags: c_uint,
+        pub queue_count: c_uint,
+        pub timestamp_valid_bits: c_uint,
+        pub min_image_transfer_granularity: [c_uint; 3],
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DeviceQueueCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub queue_family_index: c_uint,
+        pub queue_count: c_uint,
+        pub queue_priorities: *const c_float,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DeviceCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub queue_create_info_count: c_uint,
+        pub queue_create_infos: *const DeviceQueueCreateInfo,
+        pub enabled_layer_count: c_uint,
+        pub enabled_layer_names: *const *const c_char,
+        pub enabled_extension_count: c_uint,
+        pub enabled_extension_names: *const *const c_char,
+        pub enabled_features: *const c_void,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -359,6 +403,24 @@ mod ffi {
         pub fn vkGetPhysicalDeviceProperties(
             physical_device: PhysicalDevice,
             properties: *mut PhysicalDeviceProperties,
+        );
+        pub fn vkGetPhysicalDeviceQueueFamilyProperties(
+            physical_device: PhysicalDevice,
+            queue_family_property_count: *mut c_uint,
+            queue_family_properties: *mut QueueFamilyProperties,
+        );
+        pub fn vkCreateDevice(
+            physical_device: PhysicalDevice,
+            create_info: *const DeviceCreateInfo,
+            allocator: *const c_void,
+            device: *mut Device,
+        ) -> Result;
+        pub fn vkDestroyDevice(device: Device, allocator: *const c_void);
+        pub fn vkGetDeviceQueue(
+            device: Device,
+            queue_family_index: c_uint,
+            queue_index: c_uint,
+            queue: *mut Queue,
         );
     }
 }
@@ -380,6 +442,9 @@ pub const DEBUG_UTILS_MESSAGE_SEVERITY_ERROR: u32 = 0x00001000;
 pub const DEBUG_UTILS_MESSAGE_TYPE_GENERAL: u32 = 0x00000001;
 pub const DEBUG_UTILS_MESSAGE_TYPE_VALIDATION: u32 = 0x00000002;
 pub const DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE: u32 = 0x00000004;
+
+pub const QUEUE_GRAPHICS: u32 = 0x00000001;
+pub const QUEUE_COMPUTE: u32 = 0x00000002;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -667,8 +732,6 @@ pub struct PhysicalDeviceFeatures {}
 
 pub struct PhysicalDevice {
     handle: ffi::PhysicalDevice,
-    pub properties: PhysicalDeviceProperties,
-    pub features: PhysicalDeviceFeatures,
 }
 
 impl PhysicalDevice {
@@ -691,22 +754,15 @@ impl PhysicalDevice {
 
         unsafe { handles.set_len(handle_count as _) };
 
-        let physical_devices = handles
-            .iter()
-            .map(|&handle| Self {
-                handle,
-                properties: Self::properties(handle),
-                features: Self::features(handle),
-            })
-            .collect();
+        let physical_devices = handles.iter().map(|&handle| Self { handle }).collect();
 
         physical_devices
     }
 
-    fn properties(handle: ffi::PhysicalDevice) -> PhysicalDeviceProperties {
+    pub fn properties(&self) -> PhysicalDeviceProperties {
         let mut properties = MaybeUninit::<ffi::PhysicalDeviceProperties>::uninit();
 
-        unsafe { ffi::vkGetPhysicalDeviceProperties(handle, properties.as_mut_ptr()) };
+        unsafe { ffi::vkGetPhysicalDeviceProperties(self.handle, properties.as_mut_ptr()) };
 
         let properties = unsafe { properties.assume_init() };
 
@@ -736,7 +792,171 @@ impl PhysicalDevice {
     }
 
     //TODO
-    fn features(handle: ffi::PhysicalDevice) -> PhysicalDeviceFeatures {
+    pub fn features(&self) -> PhysicalDeviceFeatures {
         PhysicalDeviceFeatures {}
     }
+
+    pub fn queue_families(&self) -> Vec<QueueFamilyProperties> {
+        let mut queue_family_count: u32 = 0;
+
+        unsafe {
+            ffi::vkGetPhysicalDeviceQueueFamilyProperties(
+                self.handle,
+                &mut queue_family_count,
+                ptr::null_mut(),
+            )
+        };
+
+        let mut queue_families =
+            Vec::<ffi::QueueFamilyProperties>::with_capacity(queue_family_count as _);
+
+        unsafe {
+            ffi::vkGetPhysicalDeviceQueueFamilyProperties(
+                self.handle,
+                &mut queue_family_count,
+                queue_families.as_mut_ptr(),
+            )
+        };
+
+        unsafe { queue_families.set_len(queue_family_count as _) };
+
+        let queue_families = queue_families
+            .into_iter()
+            .map(|queue_family| QueueFamilyProperties {
+                queue_flags: queue_family.queue_flags,
+                queue_count: queue_family.queue_count,
+            })
+            .collect::<Vec<_>>();
+
+        queue_families
+    }
+}
+
+pub struct QueueFamilyProperties {
+    pub queue_flags: u32,
+    pub queue_count: u32,
+}
+
+pub struct DeviceQueueCreateInfo<'a> {
+    pub queue_family_index: u32,
+    pub queue_priorities: &'a [f32],
+}
+
+pub struct DeviceCreateInfo<'a> {
+    pub queues: &'a [DeviceQueueCreateInfo<'a>],
+    pub enabled_features: &'a PhysicalDeviceFeatures,
+    pub extensions: &'a [&'a str],
+    pub layers: &'a [&'a str],
+}
+
+pub struct Device {
+    handle: ffi::Device,
+}
+
+impl Device {
+    pub fn new(
+        physical_device: PhysicalDevice,
+        create_info: DeviceCreateInfo<'_>,
+    ) -> Result<Rc<Device>, Error> {
+        let queue_create_infos = create_info
+            .queues
+            .iter()
+            .map(|create_info| ffi::DeviceQueueCreateInfo {
+                structure_type: ffi::StructureType::DeviceQueueCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                queue_family_index: create_info.queue_family_index,
+                queue_count: create_info.queue_priorities.len() as _,
+                queue_priorities: create_info.queue_priorities.as_ptr(),
+            })
+            .collect::<Vec<_>>();
+
+        let layer_names = create_info
+            .layers
+            .iter()
+            .map(|layer_name| CString::new(*layer_name).unwrap())
+            .collect::<Vec<_>>();
+
+        let enabled_layer_names = layer_names
+            .iter()
+            .map(|string| string.as_ptr())
+            .collect::<Vec<_>>();
+
+        let extension_names = create_info
+            .extensions
+            .iter()
+            .map(|extension_name| CString::new(*extension_name).unwrap())
+            .collect::<Vec<_>>();
+
+        let enabled_extension_names = extension_names
+            .iter()
+            .map(|string| string.as_ptr())
+            .collect::<Vec<_>>();
+
+        let create_info = ffi::DeviceCreateInfo {
+            structure_type: ffi::StructureType::DeviceCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            queue_create_info_count: queue_create_infos.len() as _,
+            queue_create_infos: queue_create_infos.as_ptr(),
+            enabled_layer_count: create_info.layers.len() as _,
+            enabled_layer_names: enabled_layer_names.as_ptr(),
+            enabled_extension_count: create_info.extensions.len() as _,
+            enabled_extension_names: enabled_extension_names.as_ptr(),
+            enabled_features: ptr::null(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::Device>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateDevice(
+                physical_device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let device = Self { handle };
+
+                let device = Rc::new(device);
+
+                Ok(device)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InitializationFailed => Err(Error::InitializationFailed),
+            ffi::Result::ExtensionNotPresent => Err(Error::ExtensionNotPresent),
+            ffi::Result::FeatureNotPresent => Err(Error::FeatureNotPresent),
+            ffi::Result::TooManyObjects => Err(Error::TooManyObjects),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn queue(&self, queue_family_index: u32) -> Queue {
+        let mut handle = MaybeUninit::<ffi::Queue>::uninit();
+
+        unsafe {
+            ffi::vkGetDeviceQueue(self.handle, queue_family_index as _, 0, handle.as_mut_ptr())
+        };
+
+        let handle = unsafe { handle.assume_init() };
+
+        Queue { handle }
+    }
+}
+
+impl Drop for Device {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyDevice(self.handle, ptr::null()) };
+    }
+}
+
+pub struct Queue {
+    handle: ffi::Queue,
 }
