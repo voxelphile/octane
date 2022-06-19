@@ -20,7 +20,7 @@ struct Logger;
 
 impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Info
+        metadata.level() <= log::Level::Trace
     }
 
     fn log(&self, record: &log::Record) {
@@ -37,8 +37,8 @@ static LOGGER: Logger = Logger;
 fn main() {
     println!("Hello, world!");
 
-    log::set_max_level(log::LevelFilter::Trace);
-    log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Info);
+    log::set_logger(&LOGGER).expect("failed to set logger");
 
     let mut window = Window::new();
 
@@ -143,16 +143,55 @@ fn main() {
     let device_create_info = vk::DeviceCreateInfo {
         queues: &[queue_create_info],
         enabled_features: &physical_device_features,
-        extensions: &[],
+        extensions: &[vk::KHR_SWAPCHAIN],
         layers: &layers[..],
     };
 
-    let device = vk::Device::new(physical_device, device_create_info)
+    let device = vk::Device::new(&physical_device, device_create_info)
         .expect("failed to create logical device");
 
     let queue = device.queue(graphics_queue_family_index);
 
     let surface = vk::Surface::new(instance.clone(), &window);
+
+    let surface_capabilities = physical_device.surface_capabilities(&surface);
+
+    //TODO query and choose system compatible
+    let surface_format = vk::SurfaceFormat {
+        format: vk::Format::Bgra8Srgb,
+        color_space: vk::ColorSpace::SrgbNonlinear,
+    };
+
+    //TODO query and choose system compatible
+    let present_mode = vk::PresentMode::Fifo;
+
+    //TODO add dynamic size
+    let extent = (1920, 1080);
+
+    let image_count = surface_capabilities.min_image_count + 1;
+
+    let swapchain_create_info = vk::SwapchainCreateInfo {
+        surface: &surface,
+        min_image_count: image_count,
+        image_format: surface_format.format,
+        image_color_space: surface_format.color_space,
+        image_extent: extent,
+        image_array_layers: 1,
+        image_usage: vk::ImageUsage::ColorAttachment,
+        //TODO support concurrent image sharing mode
+        image_sharing_mode: vk::SharingMode::Exclusive,
+        queue_family_indices: &[],
+        pre_transform: surface_capabilities.current_transform,
+        composite_alpha: vk::CompositeAlpha::Opaque,
+        present_mode,
+        clipped: true,
+        old_swapchain: None,
+    };
+
+    let swapchain = vk::Swapchain::new(device.clone(), swapchain_create_info)
+        .expect("failed to create swapchain");
+
+    let swapchain_images = swapchain.images();
 
     loop {
         let event = window.next_event();
@@ -165,6 +204,12 @@ fn main() {
         }
     }
 
+    //TODO figure out surface dependency on window
+    //window is dropped before surface which causes segfault
+    //explicit drop fixes this but it is not ideal
+    drop(swapchain);
+    drop(surface);
+    drop(window);
     //vk shutdown happens during implicit Drop.
     //Rc ensures shutdown happens in right order.
 }

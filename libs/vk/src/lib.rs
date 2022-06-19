@@ -7,9 +7,87 @@ use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
 mod ffi {
     use std::ffi::{CStr, CString};
+    use std::fmt;
     use std::mem;
 
     use libc::{c_char, c_float, c_int, c_uint, c_ulong, c_void, size_t};
+
+    macro_rules! handle {
+        ($ name : ident) => {
+            #[repr(transparent)]
+            #[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash)]
+            pub struct $name(*mut u8);
+
+            impl Default for $name {
+                fn default() -> Self {
+                    Self::null()
+                }
+            }
+
+            unsafe impl Send for $name {}
+            unsafe impl Sync for $name {}
+
+            impl $name {
+                pub const fn null() -> Self {
+                    Self(::std::ptr::null_mut())
+                }
+            }
+
+            impl fmt::Pointer for $name {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+                    ::std::fmt::Pointer::fmt(&self.0, f)
+                }
+            }
+
+            impl fmt::Debug for $name {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+                    ::std::fmt::Debug::fmt(&self.0, f)
+                }
+            }
+        };
+    }
+
+    macro_rules! handle_nondispatchable {
+        ($ name : ident) => {
+            #[repr(transparent)]
+            #[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash)]
+            pub struct $name(u64);
+
+            impl Default for $name {
+                fn default() -> Self {
+                    Self::null()
+                }
+            }
+
+            impl $name {
+                pub const fn null() -> Self {
+                    Self(0)
+                }
+            }
+
+            impl ::std::fmt::Pointer for $name {
+                fn fmt(&self, f: &mut fmt::Formatter) -> ::std::fmt::Result {
+                    write!(f, "0x{:x}", self.0)
+                }
+            }
+
+            impl ::std::fmt::Debug for $name {
+                fn fmt(&self, f: &mut fmt::Formatter) -> ::std::fmt::Result {
+                    write!(f, "0x{:x}", self.0)
+                }
+            }
+        };
+    }
+
+    handle!(Instance);
+    handle!(PhysicalDevice);
+    handle!(Device);
+    handle!(Queue);
+
+    handle_nondispatchable!(DebugUtilsMessenger);
+    handle_nondispatchable!(Surface);
+    handle_nondispatchable!(Swapchain);
+    handle_nondispatchable!(Image);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -33,6 +111,9 @@ mod ffi {
         FormatNotSupported = -11,
         FragmentedPool = -12,
         Unknown = -13,
+        SurfaceLost = -1000000000,
+        NativeWindowInUse = -1000000001,
+        CompressionExhausted = -1000338000,
     }
 
     #[derive(Clone, Copy)]
@@ -42,6 +123,7 @@ mod ffi {
         InstanceCreateInfo = 1,
         DeviceQueueCreateInfo = 2,
         DeviceCreateInfo = 3,
+        SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
     }
@@ -79,27 +161,69 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct Instance(*mut u8);
+    pub enum Format {
+        Bgra8Srgb = 50,
+    }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct PhysicalDevice(*mut u8);
+    pub enum ColorSpace {
+        SrgbNonlinear = 0,
+    }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct Device(*mut u8);
+    pub enum PresentMode {
+        Immediate = 0,
+        Mailbox = 1,
+        Fifo = 2,
+        FifoRelaxed = 3,
+    }
+
+    pub type Extent2d = [c_uint; 2];
+    pub type Extent3d = [c_uint; 3];
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct Queue(*mut u8);
+    pub struct SurfaceCapabilities {
+        pub min_image_count: c_uint,
+        pub max_image_count: c_uint,
+        pub current_extent: Extent2d,
+        pub min_image_extent: Extent2d,
+        pub max_image_extent: Extent2d,
+        pub max_image_array_layers: c_uint,
+        pub supported_transforms: c_uint,
+        pub current_transform: c_uint,
+        pub supported_composite_alpha: c_uint,
+        pub supported_usage_flags: c_uint,
+    }
 
     #[derive(Clone, Copy)]
-    #[repr(transparent)]
-    pub struct DebugUtilsMessenger(u64);
+    #[repr(C)]
+    pub struct SurfaceFormat {
+        pub format: Format,
+        pub color_space: ColorSpace,
+    }
 
     #[derive(Clone, Copy)]
-    #[repr(transparent)]
-    pub struct Surface(u64);
+    #[repr(C)]
+    pub enum ImageUsage {
+        ColorAttachment = 0x00000010,
+        DepthStencilAttachment = 0x00000020,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum SharingMode {
+        Exclusive = 0,
+        Concurrent = 1,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum CompositeAlpha {
+        Opaque = 0x00000001,
+    }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -402,6 +526,29 @@ mod ffi {
         pub window: c_ulong,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct SwapchainCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub surface: Surface,
+        pub min_image_count: c_uint,
+        pub image_format: Format,
+        pub image_color_space: ColorSpace,
+        pub image_extent: Extent2d,
+        pub image_array_layers: c_uint,
+        pub image_usage: ImageUsage,
+        pub image_sharing_mode: SharingMode,
+        pub queue_family_index_count: c_uint,
+        pub queue_family_indices: *const c_uint,
+        pub pre_transform: c_uint,
+        pub composite_alpha: CompositeAlpha,
+        pub present_mode: PresentMode,
+        pub clipped: bool,
+        pub old_swapchain: Swapchain,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -427,6 +574,11 @@ mod ffi {
             queue_family_property_count: *mut c_uint,
             queue_family_properties: *mut QueueFamilyProperties,
         );
+        pub fn vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+            physical_device: PhysicalDevice,
+            surface: Surface,
+            surface_capabilities: *mut SurfaceCapabilities,
+        );
         pub fn vkCreateDevice(
             physical_device: PhysicalDevice,
             create_info: *const DeviceCreateInfo,
@@ -448,11 +600,29 @@ mod ffi {
             surface: *mut Surface,
         );
         pub fn vkDestroySurfaceKHR(instance: Instance, surface: Surface, allocator: *const c_void);
+        pub fn vkCreateSwapchainKHR(
+            device: Device,
+            create_info: *const SwapchainCreateInfo,
+            allocator: *const c_void,
+            swapchain: *mut Swapchain,
+        ) -> Result;
+        pub fn vkDestroySwapchainKHR(
+            device: Device,
+            swapchain: Swapchain,
+            allocator: *const c_void,
+        );
+        pub fn vkGetSwapchainImagesKHR(
+            device: Device,
+            swapchain: Swapchain,
+            swapchain_image_count: *mut c_uint,
+            swapchain_images: *mut Image,
+        );
     }
 }
 
 pub const KHR_SURFACE: &str = "VK_KHR_surface";
 pub const KHR_XLIB_SURFACE: &str = "VK_KHR_xlib_surface";
+pub const KHR_SWAPCHAIN: &str = "VK_KHR_swapchain";
 
 pub const EXT_DEBUG_REPORT: &str = "VK_EXT_debug_report";
 pub const EXT_DEBUG_UTILS: &str = "VK_EXT_debug_utils";
@@ -476,19 +646,79 @@ pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> b
 
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
-    OutOfHostMemory = -1,
-    OutOfDeviceMemory = -2,
-    InitializationFailed = -3,
-    DeviceLost = -4,
-    MemoryMapFailed = -5,
-    LayerNotPresent = -6,
-    ExtensionNotPresent = -7,
-    FeatureNotPresent = -8,
-    IncompatibleDriver = -9,
-    TooManyObjects = -10,
-    FormatNotSupported = -11,
-    FragmentedPool = -12,
-    Unknown = -13,
+    OutOfHostMemory,
+    OutOfDeviceMemory,
+    InitializationFailed,
+    DeviceLost,
+    MemoryMapFailed,
+    LayerNotPresent,
+    ExtensionNotPresent,
+    FeatureNotPresent,
+    IncompatibleDriver,
+    TooManyObjects,
+    FormatNotSupported,
+    FragmentedPool,
+    Unknown,
+    SurfaceLost,
+    NativeWindowInUse,
+    CompressionExhausted,
+}
+
+#[derive(Clone, Copy)]
+pub enum Format {
+    Bgra8Srgb,
+}
+
+#[derive(Clone, Copy)]
+pub enum ColorSpace {
+    SrgbNonlinear,
+}
+
+#[derive(Clone, Copy)]
+pub enum PresentMode {
+    Immediate,
+    Mailbox,
+    Fifo,
+    FifoRelaxed,
+}
+
+pub type Extent2d = (u32, u32);
+pub type Extent3d = (u32, u32, u32);
+
+#[derive(Clone, Copy)]
+pub struct SurfaceCapabilities {
+    pub min_image_count: u32,
+    pub max_image_count: u32,
+    pub current_extent: Extent2d,
+    pub min_image_extent: Extent2d,
+    pub max_image_extent: Extent2d,
+    pub max_image_array_layers: u32,
+    pub supported_transforms: u32,
+    pub current_transform: u32,
+    pub supported_composite_alpha: u32,
+    pub supported_usage_flags: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct SurfaceFormat {
+    pub format: Format,
+    pub color_space: ColorSpace,
+}
+
+#[derive(Clone, Copy)]
+pub enum ImageUsage {
+    ColorAttachment,
+    DepthStencilAttachment,
+}
+
+#[derive(Clone, Copy)]
+pub enum SharingMode {
+    Exclusive,
+}
+
+#[derive(Clone, Copy)]
+pub enum CompositeAlpha {
+    Opaque,
 }
 
 #[derive(Clone, Copy)]
@@ -856,6 +1086,59 @@ impl PhysicalDevice {
 
         queue_families
     }
+
+    //TODO
+    pub fn surface_capabilities(&self, surface: &Surface) -> SurfaceCapabilities {
+        let mut surface_capabilities = MaybeUninit::<ffi::SurfaceCapabilities>::uninit();
+
+        unsafe {
+            ffi::vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                self.handle,
+                surface.handle,
+                surface_capabilities.as_mut_ptr(),
+            )
+        };
+
+        let surface_capabilities = unsafe { surface_capabilities.assume_init() };
+
+        let current_extent = (
+            surface_capabilities.current_extent[0],
+            surface_capabilities.current_extent[1],
+        );
+
+        let min_image_extent = (
+            surface_capabilities.min_image_extent[0],
+            surface_capabilities.min_image_extent[1],
+        );
+
+        let max_image_extent = (
+            surface_capabilities.max_image_extent[0],
+            surface_capabilities.max_image_extent[1],
+        );
+
+        SurfaceCapabilities {
+            min_image_count: surface_capabilities.min_image_count,
+            max_image_count: surface_capabilities.max_image_count,
+            current_extent,
+            min_image_extent,
+            max_image_extent,
+            max_image_array_layers: surface_capabilities.max_image_array_layers,
+            supported_transforms: surface_capabilities.supported_transforms,
+            current_transform: surface_capabilities.current_transform,
+            supported_composite_alpha: surface_capabilities.supported_composite_alpha,
+            supported_usage_flags: surface_capabilities.supported_usage_flags,
+        }
+    }
+
+    //TODO
+    pub fn surface_formats(&self, surface: &Surface) -> Vec<SurfaceFormat> {
+        unimplemented!();
+    }
+
+    //TODO
+    pub fn surface_present_modes(&self, surface: &Surface) -> Vec<PresentMode> {
+        unimplemented!();
+    }
 }
 
 pub struct QueueFamilyProperties {
@@ -881,7 +1164,7 @@ pub struct Device {
 
 impl Device {
     pub fn new(
-        physical_device: PhysicalDevice,
+        physical_device: &PhysicalDevice,
         create_info: DeviceCreateInfo<'_>,
     ) -> Result<Rc<Device>, Error> {
         let queue_create_infos = create_info
@@ -1031,4 +1314,165 @@ impl Drop for Surface {
     fn drop(&mut self) {
         unsafe { ffi::vkDestroySurfaceKHR(self.instance.handle, self.handle, ptr::null()) };
     }
+}
+
+pub struct SwapchainCreateInfo<'a> {
+    pub surface: &'a Surface,
+    pub min_image_count: u32,
+    pub image_format: Format,
+    pub image_color_space: ColorSpace,
+    pub image_extent: Extent2d,
+    pub image_array_layers: u32,
+    pub image_usage: ImageUsage,
+    pub image_sharing_mode: SharingMode,
+    pub queue_family_indices: &'a [u32],
+    pub pre_transform: u32,
+    pub composite_alpha: CompositeAlpha,
+    pub present_mode: PresentMode,
+    pub clipped: bool,
+    pub old_swapchain: Option<Swapchain>,
+}
+
+pub struct Swapchain {
+    device: Rc<Device>,
+    handle: ffi::Swapchain,
+}
+
+impl Swapchain {
+    pub fn new(device: Rc<Device>, create_info: SwapchainCreateInfo<'_>) -> Result<Self, Error> {
+        let image_format = match create_info.image_format {
+            Format::Bgra8Srgb => ffi::Format::Bgra8Srgb,
+            _ => unimplemented!(),
+        };
+
+        let image_color_space = match create_info.image_color_space {
+            ColorSpace::SrgbNonlinear => ffi::ColorSpace::SrgbNonlinear,
+            _ => unimplemented!(),
+        };
+
+        let image_extent = [
+            create_info.image_extent.0 as _,
+            create_info.image_extent.1 as _,
+        ];
+
+        let image_usage = match create_info.image_usage {
+            ImageUsage::ColorAttachment => ffi::ImageUsage::ColorAttachment,
+            _ => unimplemented!(),
+        };
+
+        let image_sharing_mode = match create_info.image_sharing_mode {
+            SharingMode::Exclusive => ffi::SharingMode::Exclusive,
+            _ => unimplemented!(),
+        };
+
+        let queue_family_indices = unsafe { mem::transmute(&create_info.queue_family_indices) };
+
+        let composite_alpha = match create_info.composite_alpha {
+            CompositeAlpha::Opaque => ffi::CompositeAlpha::Opaque,
+            _ => unimplemented!(),
+        };
+
+        let present_mode = match create_info.present_mode {
+            PresentMode::Mailbox => ffi::PresentMode::Mailbox,
+            PresentMode::Fifo => ffi::PresentMode::Fifo,
+            _ => unimplemented!(),
+        };
+
+        let old_swapchain = create_info
+            .old_swapchain
+            .map_or(ffi::Swapchain::null(), |swapchain| swapchain.handle);
+
+        let create_info = ffi::SwapchainCreateInfo {
+            structure_type: ffi::StructureType::SwapchainCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            surface: create_info.surface.handle,
+            min_image_count: create_info.min_image_count,
+            image_format,
+            image_color_space,
+            image_extent,
+            image_array_layers: create_info.image_array_layers,
+            image_usage,
+            image_sharing_mode,
+            queue_family_index_count: create_info.queue_family_indices.len() as _,
+            queue_family_indices,
+            pre_transform: create_info.pre_transform,
+            composite_alpha,
+            present_mode,
+            clipped: create_info.clipped,
+            old_swapchain,
+        };
+
+        let mut handle = MaybeUninit::<ffi::Swapchain>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateSwapchainKHR(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let swapchain = Self { device, handle };
+
+                Ok(swapchain)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
+            ffi::Result::NativeWindowInUse => Err(Error::NativeWindowInUse),
+            ffi::Result::InitializationFailed => Err(Error::InitializationFailed),
+            ffi::Result::CompressionExhausted => Err(Error::CompressionExhausted),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn images(&self) -> Vec<Image> {
+        let mut swapchain_image_count: u32 = 0;
+
+        unsafe {
+            ffi::vkGetSwapchainImagesKHR(
+                self.device.handle,
+                self.handle,
+                &mut swapchain_image_count,
+                ptr::null_mut(),
+            )
+        };
+
+        let mut swapchain_images = Vec::<ffi::Image>::with_capacity(swapchain_image_count as _);
+
+        unsafe {
+            ffi::vkGetSwapchainImagesKHR(
+                self.device.handle,
+                self.handle,
+                &mut swapchain_image_count,
+                swapchain_images.as_mut_ptr(),
+            )
+        };
+
+        unsafe { swapchain_images.set_len(swapchain_image_count as _) };
+
+        let swapchain_images = swapchain_images
+            .into_iter()
+            .map(|handle| Image { handle })
+            .collect::<Vec<_>>();
+
+        swapchain_images
+    }
+}
+
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroySwapchainKHR(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct Image {
+    handle: ffi::Image,
 }

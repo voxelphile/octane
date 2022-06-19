@@ -11,6 +11,7 @@ mod linux {
     use super::Event;
 
     use std::mem;
+    use std::rc::Rc;
 
     use raw_window_handle::{HasRawWindowHandle, RawWindowHandle, XlibHandle};
 
