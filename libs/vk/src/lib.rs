@@ -3,6 +3,8 @@ use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::rc::Rc;
 
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+
 mod ffi {
     use std::ffi::{CStr, CString};
     use std::mem;
@@ -40,6 +42,7 @@ mod ffi {
         InstanceCreateInfo = 1,
         DeviceQueueCreateInfo = 2,
         DeviceCreateInfo = 3,
+        XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
     }
 
@@ -93,6 +96,10 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(transparent)]
     pub struct DebugUtilsMessenger(u64);
+
+    #[derive(Clone, Copy)]
+    #[repr(transparent)]
+    pub struct Surface(u64);
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -384,6 +391,17 @@ mod ffi {
         pub enabled_features: *const c_void,
     }
 
+    #[cfg(target_os = "linux")]
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct XlibSurfaceCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub display: *const c_void,
+        pub window: c_ulong,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -422,6 +440,14 @@ mod ffi {
             queue_index: c_uint,
             queue: *mut Queue,
         );
+        #[cfg(target_os = "linux")]
+        pub fn vkCreateXlibSurfaceKHR(
+            instance: Instance,
+            create_info: *const XlibSurfaceCreateInfo,
+            allocator: *const c_void,
+            surface: *mut Surface,
+        );
+        pub fn vkDestroySurfaceKHR(instance: Instance, surface: Surface, allocator: *const c_void);
     }
 }
 
@@ -959,4 +985,50 @@ impl Drop for Device {
 
 pub struct Queue {
     handle: ffi::Queue,
+}
+
+pub struct Surface {
+    instance: Rc<Instance>,
+    handle: ffi::Surface,
+}
+
+#[cfg(target_os = "linux")]
+impl Surface {
+    pub fn new(instance: Rc<Instance>, window: &impl HasRawWindowHandle) -> Self {
+        match window.raw_window_handle() {
+            RawWindowHandle::Xlib(xlib_handle) => {
+                let create_info = ffi::XlibSurfaceCreateInfo {
+                    structure_type: ffi::StructureType::XlibSurfaceCreateInfo,
+                    p_next: ptr::null(),
+                    flags: 0,
+                    display: xlib_handle.display,
+                    window: xlib_handle.window,
+                };
+
+                let mut handle = MaybeUninit::<ffi::Surface>::uninit();
+
+                unsafe {
+                    ffi::vkCreateXlibSurfaceKHR(
+                        instance.handle,
+                        &create_info,
+                        ptr::null(),
+                        handle.as_mut_ptr(),
+                    )
+                };
+
+                let handle = unsafe { handle.assume_init() };
+
+                Self { instance, handle }
+            }
+            RawWindowHandle::Xcb(_) => unimplemented!("xcb unimplemented"),
+            RawWindowHandle::Wayland(_) => unimplemented!("wayland unimplemented"),
+            _ => panic!("unsupported window handle"),
+        }
+    }
+}
+
+impl Drop for Surface {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroySurfaceKHR(self.instance.handle, self.handle, ptr::null()) };
+    }
 }

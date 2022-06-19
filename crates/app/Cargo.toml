@@ -6,6 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "*"
 x11 	= { path = "../../libs/x11" }
 vk 	= { path = "../../libs/vk" }
+
+log = "*"
+raw-window-handle = "*"
+

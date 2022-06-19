@@ -10,6 +10,10 @@ pub use linux::Window;
 mod linux {
     use super::Event;
 
+    use std::mem;
+
+    use raw_window_handle::{HasRawWindowHandle, RawWindowHandle, XlibHandle};
+
     pub struct Window {
         display: x11::Display,
         window: x11::Window,
@@ -96,6 +100,18 @@ mod linux {
     impl Drop for Window {
         fn drop(&mut self) {
             x11::close_display(self.display);
+        }
+    }
+
+    unsafe impl HasRawWindowHandle for Window {
+        fn raw_window_handle(&self) -> RawWindowHandle {
+            //xlib handle is non exhaustive
+            let mut xlib_handle = XlibHandle::empty();
+
+            xlib_handle.window = self.window;
+            xlib_handle.display = unsafe { mem::transmute(self.display) };
+
+            RawWindowHandle::Xlib(xlib_handle)
         }
     }
 }

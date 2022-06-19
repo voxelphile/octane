@@ -33,6 +33,7 @@ impl log::Log for Logger {
 
 static LOGGER: Logger = Logger;
 
+//TODO identify why release segfaults
 fn main() {
     println!("Hello, world!");
 
@@ -89,7 +90,7 @@ fn main() {
             .expect("failed to create debug utils messenger");
 
     let physical_device = {
-        let mut candidates = vk::PhysicalDevice::enumerate(instance)
+        let mut candidates = vk::PhysicalDevice::enumerate(instance.clone())
             .into_iter()
             .map(|x| (0, x.properties(), x)) // suitability of 0, pd properties, pd
             .collect::<Vec<_>>();
@@ -150,6 +151,8 @@ fn main() {
         .expect("failed to create logical device");
 
     let queue = device.queue(graphics_queue_family_index);
+
+    let surface = vk::Surface::new(instance.clone(), &window);
 
     loop {
         let event = window.next_event();
