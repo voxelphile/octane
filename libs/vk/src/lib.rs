@@ -88,6 +88,7 @@ mod ffi {
     handle_nondispatchable!(Surface);
     handle_nondispatchable!(Swapchain);
     handle_nondispatchable!(Image);
+    handle_nondispatchable!(ImageView);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -123,6 +124,7 @@ mod ffi {
         InstanceCreateInfo = 1,
         DeviceQueueCreateInfo = 2,
         DeviceCreateInfo = 3,
+        ImageViewCreateInfo = 15,
         SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
@@ -549,6 +551,62 @@ mod ffi {
         pub old_swapchain: Swapchain,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum ImageViewType {
+        OneDim = 0,
+        TwoDim = 1,
+        ThreeDim = 2,
+        Cube = 3,
+        OneDimArray = 4,
+        TwoDimArray = 5,
+        ThreeDimArray = 6,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum ComponentSwizzle {
+        Identity = 0,
+        Zero = 1,
+        One = 2,
+        R = 3,
+        G = 4,
+        B = 5,
+        A = 6,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ComponentMapping {
+        pub r: ComponentSwizzle,
+        pub g: ComponentSwizzle,
+        pub b: ComponentSwizzle,
+        pub a: ComponentSwizzle,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ImageSubresourceRange {
+        pub aspect_mask: c_uint,
+        pub base_mip_level: c_uint,
+        pub level_count: c_uint,
+        pub base_array_layer: c_uint,
+        pub layer_count: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ImageViewCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub image: Image,
+        pub view_type: ImageViewType,
+        pub format: Format,
+        pub components: ComponentMapping,
+        pub subresource_range: ImageSubresourceRange,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -617,6 +675,13 @@ mod ffi {
             swapchain_image_count: *mut c_uint,
             swapchain_images: *mut Image,
         );
+        pub fn vkCreateImageView(
+            device: Device,
+            create_info: *const ImageViewCreateInfo,
+            allocator: *const c_void,
+            image_view: *mut ImageView,
+        ) -> Result;
+        pub fn vkDestroyImageView(device: Device, image_view: ImageView, allocator: *const c_void);
     }
 }
 
@@ -641,6 +706,8 @@ pub const DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE: u32 = 0x00000004;
 
 pub const QUEUE_GRAPHICS: u32 = 0x00000001;
 pub const QUEUE_COMPUTE: u32 = 0x00000002;
+
+pub const IMAGE_ASPECT_COLOR: u32 = 0x00000001;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -1475,4 +1542,136 @@ impl Drop for Swapchain {
 
 pub struct Image {
     handle: ffi::Image,
+}
+
+pub enum ImageViewType {
+    OneDim,
+    TwoDim,
+    ThreeDim,
+    Cube,
+    OneDimArray,
+    TwoDimArray,
+    ThreeDimArray,
+}
+
+pub enum ComponentSwizzle {
+    Identity,
+    Zero,
+    One,
+    R,
+    G,
+    B,
+    A,
+}
+pub struct ComponentMapping {
+    pub r: ComponentSwizzle,
+    pub g: ComponentSwizzle,
+    pub b: ComponentSwizzle,
+    pub a: ComponentSwizzle,
+}
+
+pub struct ImageSubresourceRange {
+    pub aspect_mask: u32,
+    pub base_mip_level: u32,
+    pub level_count: u32,
+    pub base_array_layer: u32,
+    pub layer_count: u32,
+}
+
+pub struct ImageViewCreateInfo<'a> {
+    pub image: &'a Image,
+    pub view_type: ImageViewType,
+    pub format: Format,
+    pub components: ComponentMapping,
+    pub subresource_range: ImageSubresourceRange,
+}
+
+pub struct ImageView {
+    device: Rc<Device>,
+    handle: ffi::ImageView,
+}
+
+impl ImageView {
+    pub fn new(device: Rc<Device>, create_info: ImageViewCreateInfo) -> Result<Self, Error> {
+        let view_type = match create_info.view_type {
+            ImageViewType::OneDim => ffi::ImageViewType::OneDim,
+            ImageViewType::TwoDim => ffi::ImageViewType::TwoDim,
+            ImageViewType::ThreeDim => ffi::ImageViewType::ThreeDim,
+            ImageViewType::Cube => ffi::ImageViewType::Cube,
+            ImageViewType::OneDimArray => ffi::ImageViewType::OneDimArray,
+            ImageViewType::TwoDimArray => ffi::ImageViewType::TwoDimArray,
+            ImageViewType::ThreeDimArray => ffi::ImageViewType::ThreeDimArray,
+        };
+
+        let format = match create_info.format {
+            Format::Bgra8Srgb => ffi::Format::Bgra8Srgb,
+        };
+
+        //TODO convert to From<non-ffi> for ffi
+        let swizzle_f = |component| match component {
+            ComponentSwizzle::Identity => ffi::ComponentSwizzle::Identity,
+            ComponentSwizzle::Zero => ffi::ComponentSwizzle::Zero,
+            ComponentSwizzle::One => ffi::ComponentSwizzle::One,
+            ComponentSwizzle::R => ffi::ComponentSwizzle::R,
+            ComponentSwizzle::G => ffi::ComponentSwizzle::G,
+            ComponentSwizzle::B => ffi::ComponentSwizzle::B,
+            ComponentSwizzle::A => ffi::ComponentSwizzle::A,
+        };
+
+        let components = ffi::ComponentMapping {
+            r: swizzle_f(create_info.components.r),
+            g: swizzle_f(create_info.components.g),
+            b: swizzle_f(create_info.components.b),
+            a: swizzle_f(create_info.components.a),
+        };
+
+        let subresource_range = ffi::ImageSubresourceRange {
+            aspect_mask: create_info.subresource_range.aspect_mask,
+            base_mip_level: create_info.subresource_range.base_mip_level,
+            level_count: create_info.subresource_range.level_count,
+            base_array_layer: create_info.subresource_range.base_array_layer,
+            layer_count: create_info.subresource_range.layer_count,
+        };
+
+        let create_info = ffi::ImageViewCreateInfo {
+            structure_type: ffi::StructureType::ImageViewCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            image: create_info.image.handle,
+            view_type,
+            format,
+            components,
+            subresource_range,
+        };
+
+        let mut handle = MaybeUninit::<ffi::ImageView>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateImageView(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let image_view = Self { device, handle };
+
+                Ok(image_view)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for ImageView {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyImageView(self.device.handle, self.handle, ptr::null()) };
+    }
 }

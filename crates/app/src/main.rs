@@ -193,6 +193,32 @@ fn main() {
 
     let swapchain_images = swapchain.images();
 
+    let swapchain_image_views = swapchain_images
+        .iter()
+        .map(|image| {
+            let create_info = vk::ImageViewCreateInfo {
+                image,
+                view_type: vk::ImageViewType::TwoDim,
+                format: surface_format.format,
+                components: vk::ComponentMapping {
+                    r: vk::ComponentSwizzle::Identity,
+                    g: vk::ComponentSwizzle::Identity,
+                    b: vk::ComponentSwizzle::Identity,
+                    a: vk::ComponentSwizzle::Identity,
+                },
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+            };
+
+            vk::ImageView::new(device.clone(), create_info).expect("failed to create image view")
+        })
+        .collect::<Vec<_>>();
+
     loop {
         let event = window.next_event();
 
