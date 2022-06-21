@@ -12,3 +12,5 @@ vk 	= { path = "../../libs/vk" }
 log = "*"
 raw-window-handle = "*"
 
+[build-dependencies]
+glsl-to-spirv = "*"

@@ -89,6 +89,7 @@ mod ffi {
     handle_nondispatchable!(Swapchain);
     handle_nondispatchable!(Image);
     handle_nondispatchable!(ImageView);
+    handle_nondispatchable!(ShaderModule);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -114,6 +115,7 @@ mod ffi {
         Unknown = -13,
         SurfaceLost = -1000000000,
         NativeWindowInUse = -1000000001,
+        InvalidShader = -1000012000,
         CompressionExhausted = -1000338000,
     }
 
@@ -125,6 +127,7 @@ mod ffi {
         DeviceQueueCreateInfo = 2,
         DeviceCreateInfo = 3,
         ImageViewCreateInfo = 15,
+        ShaderModuleCreateInfo = 16,
         SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
@@ -607,6 +610,16 @@ mod ffi {
         pub subresource_range: ImageSubresourceRange,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ShaderModuleCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub code_size: size_t,
+        pub code: *const c_uint,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -682,6 +695,17 @@ mod ffi {
             image_view: *mut ImageView,
         ) -> Result;
         pub fn vkDestroyImageView(device: Device, image_view: ImageView, allocator: *const c_void);
+        pub fn vkCreateShaderModule(
+            device: Device,
+            create_info: *const ShaderModuleCreateInfo,
+            allocator: *const c_void,
+            shader_module: *mut ShaderModule,
+        ) -> Result;
+        pub fn vkDestroyShaderModule(
+            device: Device,
+            shader_module: ShaderModule,
+            allocator: *const c_void,
+        );
     }
 }
 
@@ -728,6 +752,7 @@ pub enum Error {
     Unknown,
     SurfaceLost,
     NativeWindowInUse,
+    InvalidShader,
     CompressionExhausted,
 }
 
@@ -1673,5 +1698,57 @@ impl ImageView {
 impl Drop for ImageView {
     fn drop(&mut self) {
         unsafe { ffi::vkDestroyImageView(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct ShaderModuleCreateInfo<'a> {
+    pub code: &'a [u32],
+}
+
+pub struct ShaderModule {
+    device: Rc<Device>,
+    handle: ffi::ShaderModule,
+}
+
+impl ShaderModule {
+    pub fn new(device: Rc<Device>, create_info: ShaderModuleCreateInfo<'_>) -> Result<Self, Error> {
+        let create_info = ffi::ShaderModuleCreateInfo {
+            structure_type: ffi::StructureType::ShaderModuleCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            code_size: create_info.code.len() * mem::size_of::<u32>(),
+            code: create_info.code.as_ptr(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::ShaderModule>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateShaderModule(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let shader_module = Self { device, handle };
+
+                Ok(shader_module)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidShader => Err(Error::InvalidShader),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for ShaderModule {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyShaderModule(self.device.handle, self.handle, ptr::null()) };
     }
 }

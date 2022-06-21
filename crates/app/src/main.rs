@@ -2,6 +2,9 @@ mod window;
 
 use crate::window::{Event as WindowEvent, Window};
 
+use std::fs;
+use std::mem;
+
 use log::{error, info, trace, warn};
 
 fn debug_utils_messenger_callback(data: &vk::DebugUtilsMessengerCallbackData) -> bool {
@@ -218,6 +221,55 @@ fn main() {
             vk::ImageView::new(device.clone(), create_info).expect("failed to create image view")
         })
         .collect::<Vec<_>>();
+
+    let convert_bytes_to_spv_data = |bytes: Vec<u8>| {
+        let endian = mem::size_of::<u32>() / mem::size_of::<u8>();
+        let bits_per_byte = 8;
+
+        if bytes.len() % endian != 0 {
+            panic!("cannot convert bytes to int; too few or too many")
+        }
+
+        let mut buffer = Vec::with_capacity(bytes.len() / endian);
+
+        for (i, byte) in bytes.into_iter().enumerate() {
+            let data = byte as u32;
+
+            if i % endian == 0 {
+                buffer.push(0);
+            }
+
+            buffer[i / endian] |= data << i % endian * bits_per_byte;
+        }
+
+        buffer
+    };
+
+    let vertex_shader_code = convert_bytes_to_spv_data(
+        fs::read("/home/brynn/dev/octane/assets/default.vs.spv")
+            .expect("failed to read fragment shader"),
+    );
+
+    let vertex_shader_module_create_info = vk::ShaderModuleCreateInfo {
+        code: &vertex_shader_code[..],
+    };
+
+    let vertex_shader_module =
+        vk::ShaderModule::new(device.clone(), vertex_shader_module_create_info)
+            .expect("failed to create vertex shader module");
+
+    let fragment_shader_code = convert_bytes_to_spv_data(
+        fs::read("/home/brynn/dev/octane/assets/default.fs.spv")
+            .expect("failed to read fragment shader"),
+    );
+
+    let fragment_shader_module_create_info = vk::ShaderModuleCreateInfo {
+        code: &fragment_shader_code[..],
+    };
+
+    let fragment_shader_module =
+        vk::ShaderModule::new(device.clone(), fragment_shader_module_create_info)
+            .expect("failed to create fragment shader module");
 
     loop {
         let event = window.next_event();
