@@ -285,6 +285,77 @@ fn main() {
 
     let shader_stages = [vertex_shader_stage_info, fragment_shader_stage_info];
 
+    let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {};
+
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
+        topology: vk::PrimitiveTopology::TriangleList,
+        primitive_restart_enable: false,
+    };
+
+    let viewport = vk::Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+
+    let scissor = vk::Rect2d {
+        offset: (0, 0),
+        extent,
+    };
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo {
+        viewports: &[viewport],
+        scissors: &[scissor],
+    };
+
+    let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+        depth_clamp_enable: false,
+        rasterizer_discard_enable: false,
+        polygon_mode: vk::PolygonMode::Fill,
+        //TODO change to front and project raymarch onto backface
+        cull_mode: vk::CULL_MODE_BACK,
+        front_face: vk::FrontFace::Clockwise,
+        depth_bias_enable: false,
+        depth_bias_constant_factor: 0.0,
+        depth_bias_clamp: 0.0,
+        depth_bias_slope_factor: 0.0,
+        line_width: 1.0,
+    };
+
+    let multisampling = vk::PipelineMultisampleStateCreateInfo {};
+
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {};
+
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+        color_write_mask: vk::COLOR_COMPONENT_R
+            | vk::COLOR_COMPONENT_G
+            | vk::COLOR_COMPONENT_B
+            | vk::COLOR_COMPONENT_A,
+        blend_enable: false,
+        src_color_blend_factor: vk::BlendFactor::SrcAlpha,
+        dst_color_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
+        color_blend_op: vk::BlendOp::Add,
+        src_alpha_blend_factor: vk::BlendFactor::One,
+        dst_alpha_blend_factor: vk::BlendFactor::Zero,
+        alpha_blend_op: vk::BlendOp::Add,
+    };
+
+    let color_blending = vk::PipelineColorBlendStateCreateInfo {
+        logic_op_enable: false,
+        logic_op: vk::LogicOp::Copy,
+        attachments: &[color_blend_attachment],
+        blend_constants: &[0.0, 0.0, 0.0, 0.0],
+    };
+
+    let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+        dynamic_states: &[],
+    };
+
+    let pipeline_layout_info = vk::PipelineLayoutCreateInfo {};
+
     loop {
         let event = window.next_event();
 

@@ -753,6 +753,16 @@ pub const QUEUE_COMPUTE: u32 = 0x00000002;
 
 pub const IMAGE_ASPECT_COLOR: u32 = 0x00000001;
 
+pub const CULL_MODE_NONE: u32 = 0;
+pub const CULL_MODE_FRONT: u32 = 0x00000001;
+pub const CULL_MODE_BACK: u32 = 0x00000002;
+pub const CULL_MODE_FRONT_AND_BACK: u32 = 0x00000003;
+
+pub const COLOR_COMPONENT_R: u32 = 0x00000001;
+pub const COLOR_COMPONENT_G: u32 = 0x00000002;
+pub const COLOR_COMPONENT_B: u32 = 0x00000004;
+pub const COLOR_COMPONENT_A: u32 = 0x00000008;
+
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
 #[derive(Clone, Copy, Debug)]
@@ -796,6 +806,9 @@ pub enum PresentMode {
 
 pub type Extent2d = (u32, u32);
 pub type Extent3d = (u32, u32, u32);
+
+pub type Offset2d = (i32, i32);
+pub type Offset3d = (i32, i32, i32);
 
 #[derive(Clone, Copy)]
 pub struct SurfaceCapabilities {
@@ -1783,3 +1796,106 @@ pub struct PipelineShaderStageCreateInfo<'a> {
     pub module: &'a ShaderModule,
     pub entry_point: &'a str,
 }
+
+pub struct PipelineVertexInputStateCreateInfo {}
+
+pub enum PrimitiveTopology {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+}
+
+pub struct PipelineInputAssemblyStateCreateInfo {
+    pub topology: PrimitiveTopology,
+    pub primitive_restart_enable: bool,
+}
+
+pub struct Viewport {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub min_depth: f32,
+    pub max_depth: f32,
+}
+
+pub struct Rect2d {
+    pub offset: Offset2d,
+    pub extent: Extent2d,
+}
+
+pub struct PipelineViewportStateCreateInfo<'a> {
+    pub viewports: &'a [Viewport],
+    pub scissors: &'a [Rect2d],
+}
+
+pub enum PolygonMode {
+    Fill,
+    Line,
+    Point,
+}
+
+pub enum FrontFace {
+    Clockwise,
+    CounterClockwise,
+}
+
+pub struct PipelineRasterizationStateCreateInfo {
+    pub depth_clamp_enable: bool,
+    pub rasterizer_discard_enable: bool,
+    pub polygon_mode: PolygonMode,
+    pub cull_mode: u32,
+    pub front_face: FrontFace,
+    pub depth_bias_enable: bool,
+    pub depth_bias_constant_factor: f32,
+    pub depth_bias_clamp: f32,
+    pub depth_bias_slope_factor: f32,
+    pub line_width: f32,
+}
+
+pub struct PipelineMultisampleStateCreateInfo {}
+
+pub struct PipelineDepthStencilStateCreateInfo {}
+
+pub enum BlendFactor {
+    One,
+    Zero,
+    SrcAlpha,
+    OneMinusSrcAlpha,
+}
+
+pub enum BlendOp {
+    Add,
+}
+
+pub struct PipelineColorBlendAttachmentState {
+    pub color_write_mask: u32,
+    pub blend_enable: bool,
+    pub src_color_blend_factor: BlendFactor,
+    pub dst_color_blend_factor: BlendFactor,
+    pub color_blend_op: BlendOp,
+    pub src_alpha_blend_factor: BlendFactor,
+    pub dst_alpha_blend_factor: BlendFactor,
+    pub alpha_blend_op: BlendOp,
+}
+
+pub enum LogicOp {
+    Copy,
+}
+
+pub struct PipelineColorBlendStateCreateInfo<'a> {
+    pub logic_op_enable: bool,
+    pub logic_op: LogicOp,
+    pub attachments: &'a [PipelineColorBlendAttachmentState],
+    pub blend_constants: &'a [f32; 4],
+}
+
+pub enum DynamicState {}
+
+pub struct PipelineDynamicStateCreateInfo<'a> {
+    pub dynamic_states: &'a [DynamicState],
+}
+
+pub struct PipelineLayoutCreateInfo {}
