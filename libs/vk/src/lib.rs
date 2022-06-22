@@ -128,6 +128,7 @@ mod ffi {
         DeviceCreateInfo = 3,
         ImageViewCreateInfo = 15,
         ShaderModuleCreateInfo = 16,
+        PipelineShaderStageCreateInfo = 18,
         SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
@@ -618,6 +619,25 @@ mod ffi {
         pub flags: c_uint,
         pub code_size: size_t,
         pub code: *const c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum ShaderStage {
+        Vertex = 0x00000008,
+        Fragment = 0x00000080,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineShaderStageCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub stage: ShaderStage,
+        pub module: ShaderModule,
+        pub entry_point: *const c_char,
+        pub specialization_info: *const c_void,
     }
 
     #[link(name = "vulkan")]
@@ -1751,4 +1771,15 @@ impl Drop for ShaderModule {
     fn drop(&mut self) {
         unsafe { ffi::vkDestroyShaderModule(self.device.handle, self.handle, ptr::null()) };
     }
+}
+
+pub enum ShaderStage {
+    Vertex,
+    Fragment,
+}
+
+pub struct PipelineShaderStageCreateInfo<'a> {
+    pub stage: ShaderStage,
+    pub module: &'a ShaderModule,
+    pub entry_point: &'a str,
 }

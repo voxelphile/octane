@@ -271,6 +271,20 @@ fn main() {
         vk::ShaderModule::new(device.clone(), fragment_shader_module_create_info)
             .expect("failed to create fragment shader module");
 
+    let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo {
+        stage: vk::ShaderStage::Vertex,
+        module: &vertex_shader_module,
+        entry_point: "main",
+    };
+
+    let fragment_shader_stage_info = vk::PipelineShaderStageCreateInfo {
+        stage: vk::ShaderStage::Fragment,
+        module: &fragment_shader_module,
+        entry_point: "main",
+    };
+
+    let shader_stages = [vertex_shader_stage_info, fragment_shader_stage_info];
+
     loop {
         let event = window.next_event();
 
