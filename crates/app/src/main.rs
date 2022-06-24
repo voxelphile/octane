@@ -222,7 +222,7 @@ fn main() {
         })
         .collect::<Vec<_>>();
 
-    let convert_bytes_to_spv_data = |bytes: Vec<u8>| {
+    let convert_bytes_to_spirv_data = |bytes: Vec<u8>| {
         let endian = mem::size_of::<u32>() / mem::size_of::<u8>();
         let bits_per_byte = 8;
 
@@ -245,8 +245,8 @@ fn main() {
         buffer
     };
 
-    let vertex_shader_code = convert_bytes_to_spv_data(
-        fs::read("/home/brynn/dev/octane/assets/default.vs.spv")
+    let vertex_shader_code = convert_bytes_to_spirv_data(
+        fs::read("/home/brynn/dev/octane/assets/default.vs.spirv")
             .expect("failed to read fragment shader"),
     );
 
@@ -258,8 +258,8 @@ fn main() {
         vk::ShaderModule::new(device.clone(), vertex_shader_module_create_info)
             .expect("failed to create vertex shader module");
 
-    let fragment_shader_code = convert_bytes_to_spv_data(
-        fs::read("/home/brynn/dev/octane/assets/default.fs.spv")
+    let fragment_shader_code = convert_bytes_to_spirv_data(
+        fs::read("/home/brynn/dev/octane/assets/default.fs.spirv")
             .expect("failed to read fragment shader"),
     );
 

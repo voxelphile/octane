@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             compilation.read_to_end(&mut compiled_bytes)?;
 
             let out_path = format!(
-                "{}/{}.spv",
+                "{}/{}.spirv",
                 assets_path,
                 in_path.file_name().unwrap().to_string_lossy(),
             );
