@@ -4,7 +4,11 @@ use std::fs;
 use std::io::Read;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    for entry in fs::read_dir("/home/brynn/dev/octane/resources")? {
+    let base_path = "/home/brynn/dev/octane";
+    let resources_path = format!("{}/{}/", base_path, "resources");
+    let assets_path = format!("{}/{}/", base_path, "assets");
+
+    for entry in fs::read_dir(resources_path)? {
         let entry = entry?;
 
         if entry.file_type()?.is_file() {
@@ -32,9 +36,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             compilation.read_to_end(&mut compiled_bytes)?;
 
             let out_path = format!(
-                "/home/brynn/dev/octane/assets/{}.spv",
+                "{}/{}.spv",
+                assets_path,
                 in_path.file_name().unwrap().to_string_lossy(),
             );
+
+            if fs::metadata(&assets_path).is_err() {
+                fs::create_dir("/home/brynn/dev/octane/assets/")?;
+            }
+
+            if fs::metadata(&out_path).is_ok() {
+                println!("hello");
+                fs::remove_file(&out_path)?;
+            }
 
             fs::write(&out_path, &compiled_bytes)?;
         }

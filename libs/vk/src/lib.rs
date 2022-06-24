@@ -1,3 +1,5 @@
+//TODO implement From for ffi types
+
 use std::ffi::{CStr, CString};
 use std::mem::{self, MaybeUninit};
 use std::ptr;
@@ -90,6 +92,9 @@ mod ffi {
     handle_nondispatchable!(Image);
     handle_nondispatchable!(ImageView);
     handle_nondispatchable!(ShaderModule);
+    handle_nondispatchable!(DescriptorSetLayout);
+    handle_nondispatchable!(PipelineLayout);
+    handle_nondispatchable!(RenderPass);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -129,6 +134,8 @@ mod ffi {
         ImageViewCreateInfo = 15,
         ShaderModuleCreateInfo = 16,
         PipelineShaderStageCreateInfo = 18,
+        PipelineLayoutCreateInfo = 30,
+        RenderPassCreateInfo = 38,
         SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
@@ -169,6 +176,14 @@ mod ffi {
     #[repr(C)]
     pub enum Format {
         Bgra8Srgb = 50,
+    }
+
+    impl From<super::Format> for Format {
+        fn from(format: super::Format) -> Self {
+            match format {
+                super::Format::Bgra8Srgb => Self::Bgra8Srgb,
+            }
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -640,6 +655,184 @@ mod ffi {
         pub specialization_info: *const c_void,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PushConstantRange {
+        pub stage_flags: c_uint,
+        pub offset: c_uint,
+        pub size: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineLayoutCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub set_layout_count: c_uint,
+        pub set_layouts: *const DescriptorSetLayout,
+        pub push_constant_range_count: c_uint,
+        pub push_constant_ranges: *const PushConstantRange,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum AttachmentLoadOp {
+        Load = 0,
+        Clear = 1,
+        DontCare = 2,
+    }
+
+    impl From<super::AttachmentLoadOp> for AttachmentLoadOp {
+        fn from(load_op: super::AttachmentLoadOp) -> Self {
+            match load_op {
+                super::AttachmentLoadOp::Load => Self::Load,
+                super::AttachmentLoadOp::Clear => Self::Clear,
+                super::AttachmentLoadOp::DontCare => Self::DontCare,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum AttachmentStoreOp {
+        Store = 0,
+        DontCare = 1,
+    }
+
+    impl From<super::AttachmentStoreOp> for AttachmentStoreOp {
+        fn from(store_op: super::AttachmentStoreOp) -> Self {
+            match store_op {
+                super::AttachmentStoreOp::Store => Self::Store,
+                super::AttachmentStoreOp::DontCare => Self::DontCare,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum ImageLayout {
+        Undefined = 0,
+        General = 1,
+        ColorAttachment = 2,
+        DepthStencilAttachment = 3,
+        DepthStencilReadOnly = 4,
+        ShaderReadOnly = 5,
+        TransferSrc = 6,
+        TransferDst = 7,
+        Preinitialized = 8,
+        PresentSrc = 1000001002,
+    }
+
+    impl From<super::ImageLayout> for ImageLayout {
+        fn from(image_layout: super::ImageLayout) -> Self {
+            match image_layout {
+                super::ImageLayout::Undefined => Self::Undefined,
+                super::ImageLayout::General => Self::General,
+                super::ImageLayout::ColorAttachment => Self::ColorAttachment,
+                super::ImageLayout::DepthStencilAttachment => Self::DepthStencilAttachment,
+                super::ImageLayout::DepthStencilReadOnly => Self::DepthStencilReadOnly,
+                super::ImageLayout::ShaderReadOnly => Self::ShaderReadOnly,
+                super::ImageLayout::TransferSrc => Self::TransferSrc,
+                super::ImageLayout::TransferDst => Self::TransferDst,
+                super::ImageLayout::Preinitialized => Self::Preinitialized,
+                super::ImageLayout::PresentSrc => Self::PresentSrc,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct AttachmentDescription {
+        flags: c_uint,
+        format: Format,
+        samples: c_uint,
+        load_op: AttachmentLoadOp,
+        store_op: AttachmentStoreOp,
+        stencil_load_op: AttachmentLoadOp,
+        stencil_store_op: AttachmentStoreOp,
+        initial_layout: ImageLayout,
+        final_layout: ImageLayout,
+    }
+
+    impl From<super::AttachmentDescription> for AttachmentDescription {
+        fn from(attachment_description: super::AttachmentDescription) -> Self {
+            Self {
+                flags: 0,
+                format: attachment_description.format.into(),
+                samples: attachment_description.samples as _,
+                load_op: attachment_description.load_op.into(),
+                store_op: attachment_description.store_op.into(),
+                stencil_load_op: attachment_description.stencil_load_op.into(),
+                stencil_store_op: attachment_description.stencil_store_op.into(),
+                initial_layout: attachment_description.initial_layout.into(),
+                final_layout: attachment_description.final_layout.into(),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct AttachmentReference {
+        pub attachment: c_uint,
+        pub layout: ImageLayout,
+    }
+
+    impl From<super::AttachmentReference> for AttachmentReference {
+        fn from(attachment_reference: super::AttachmentReference) -> Self {
+            Self {
+                attachment: attachment_reference.attachment as _,
+                layout: attachment_reference.layout.into(),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum PipelineBindPoint {
+        Graphics = 0,
+        Compute = 1,
+    }
+
+    impl From<super::PipelineBindPoint> for PipelineBindPoint {
+        fn from(pipeline_bind_point: super::PipelineBindPoint) -> Self {
+            match pipeline_bind_point {
+                super::PipelineBindPoint::Graphics => Self::Graphics,
+                super::PipelineBindPoint::Compute => Self::Compute,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct SubpassDescription {
+        pub flags: c_uint,
+        pub pipeline_bind_point: PipelineBindPoint,
+        pub input_attachment_count: c_uint,
+        pub input_attachments: *const AttachmentReference,
+        pub color_attachment_count: c_uint,
+        pub color_attachments: *const AttachmentReference,
+        pub resolve_attachments: *const AttachmentReference,
+        pub depth_stencil_attachment: *const AttachmentReference,
+        pub preserve_attachment_count: c_uint,
+        pub preserve_attachments: *const u32,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct RenderPassCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub attachment_count: c_uint,
+        pub attachments: *const AttachmentDescription,
+        pub subpass_count: c_uint,
+        pub subpasses: *const SubpassDescription,
+        pub dependency_count: c_uint,
+        //TODO implement dependencies
+        pub dependencies: *const c_void,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -726,6 +919,28 @@ mod ffi {
             shader_module: ShaderModule,
             allocator: *const c_void,
         );
+        pub fn vkCreatePipelineLayout(
+            device: Device,
+            create_info: *const PipelineLayoutCreateInfo,
+            allocator: *const c_void,
+            pipeline_layout: *mut PipelineLayout,
+        ) -> Result;
+        pub fn vkDestroyPipelineLayout(
+            device: Device,
+            pipeline_layout: PipelineLayout,
+            allocator: *const c_void,
+        );
+        pub fn vkCreateRenderPass(
+            device: Device,
+            create_info: *const RenderPassCreateInfo,
+            allocator: *const c_void,
+            render_pass: *mut RenderPass,
+        ) -> Result;
+        pub fn vkDestroyRenderPass(
+            device: Device,
+            render_pass: RenderPass,
+            allocator: *const c_void,
+        );
     }
 }
 
@@ -762,6 +977,8 @@ pub const COLOR_COMPONENT_R: u32 = 0x00000001;
 pub const COLOR_COMPONENT_G: u32 = 0x00000002;
 pub const COLOR_COMPONENT_B: u32 = 0x00000004;
 pub const COLOR_COMPONENT_A: u32 = 0x00000008;
+
+pub const SAMPLE_COUNT_1: u32 = 0x00000001;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -1812,6 +2029,8 @@ pub struct PipelineInputAssemblyStateCreateInfo {
     pub primitive_restart_enable: bool,
 }
 
+pub struct PipelineTessellationStateCreateInfo {}
+
 pub struct Viewport {
     pub x: f32,
     pub y: f32,
@@ -1899,3 +2118,342 @@ pub struct PipelineDynamicStateCreateInfo<'a> {
 }
 
 pub struct PipelineLayoutCreateInfo {}
+
+pub struct PipelineLayout {
+    device: Rc<Device>,
+    handle: ffi::PipelineLayout,
+}
+
+impl PipelineLayout {
+    pub fn new(device: Rc<Device>, create_info: PipelineLayoutCreateInfo) -> Result<Self, Error> {
+        let create_info = ffi::PipelineLayoutCreateInfo {
+            structure_type: ffi::StructureType::PipelineLayoutCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            set_layout_count: 0,
+            set_layouts: ptr::null(),
+            push_constant_range_count: 0,
+            push_constant_ranges: ptr::null(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::PipelineLayout>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreatePipelineLayout(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let pipeline_layout = Self { device, handle };
+
+                Ok(pipeline_layout)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for PipelineLayout {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyPipelineLayout(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum AttachmentLoadOp {
+    Load,
+    Clear,
+    DontCare,
+}
+
+#[derive(Clone, Copy)]
+pub enum AttachmentStoreOp {
+    Store,
+    DontCare,
+}
+
+#[derive(Clone, Copy)]
+pub enum ImageLayout {
+    Undefined,
+    General,
+    ColorAttachment,
+    DepthStencilAttachment,
+    DepthStencilReadOnly,
+    ShaderReadOnly,
+    TransferSrc,
+    TransferDst,
+    Preinitialized,
+    PresentSrc,
+}
+
+#[derive(Clone, Copy)]
+pub struct AttachmentDescription {
+    pub format: Format,
+    pub samples: u32,
+    pub load_op: AttachmentLoadOp,
+    pub store_op: AttachmentStoreOp,
+    pub stencil_load_op: AttachmentLoadOp,
+    pub stencil_store_op: AttachmentStoreOp,
+    pub initial_layout: ImageLayout,
+    pub final_layout: ImageLayout,
+}
+
+#[derive(Clone, Copy)]
+pub struct AttachmentReference {
+    pub attachment: u32,
+    pub layout: ImageLayout,
+}
+
+#[derive(Clone, Copy)]
+pub enum PipelineBindPoint {
+    Graphics,
+    Compute,
+}
+
+#[derive(Clone, Copy)]
+pub struct SubpassDescription<'a> {
+    pub pipeline_bind_point: PipelineBindPoint,
+    pub input_attachments: &'a [AttachmentReference],
+    pub color_attachments: &'a [AttachmentReference],
+    pub resolve_attachments: &'a [AttachmentReference],
+    pub depth_stencil_attachment: Option<&'a AttachmentReference>,
+    pub preserve_attachments: &'a [u32],
+}
+
+pub struct RenderPassCreateInfo<'a> {
+    pub attachments: &'a [AttachmentDescription],
+    pub subpasses: &'a [SubpassDescription<'a>],
+}
+
+pub struct RenderPass {
+    device: Rc<Device>,
+    handle: ffi::RenderPass,
+}
+
+impl RenderPass {
+    pub fn new(device: Rc<Device>, create_info: RenderPassCreateInfo<'_>) -> Result<Self, Error> {
+        let attachment_descriptions = create_info
+            .attachments
+            .iter()
+            .map(|&attachment| attachment.into())
+            .collect::<Vec<_>>();
+
+        let input_attachments = create_info
+            .subpasses
+            .iter()
+            .map(|subpass| {
+                subpass
+                    .input_attachments
+                    .iter()
+                    .map(|&attachment| attachment.into())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let color_attachments = create_info
+            .subpasses
+            .iter()
+            .map(|subpass| {
+                subpass
+                    .color_attachments
+                    .iter()
+                    .map(|&attachment| attachment.into())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let resolve_attachments = create_info
+            .subpasses
+            .iter()
+            .map(|subpass| {
+                subpass
+                    .resolve_attachments
+                    .iter()
+                    .map(|&attachment| attachment.into())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let depth_stencil_attachments = create_info
+            .subpasses
+            .iter()
+            .map(|subpass| {
+                subpass
+                    .depth_stencil_attachment
+                    .map(|&attachment| attachment.into())
+            })
+            .collect::<Vec<_>>();
+
+        let preserve_attachments = create_info
+            .subpasses
+            .iter()
+            .map(|subpass| {
+                subpass
+                    .preserve_attachments
+                    .iter()
+                    .map(|&attachment| attachment as _)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let subpasses = create_info
+            .subpasses
+            .iter()
+            .enumerate()
+            .map(|(i, subpass)| {
+                let input_attachment_count = input_attachments[i].len() as u32;
+
+                let input_attachments = if input_attachment_count > 0 {
+                    input_attachments[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                let color_attachment_count = color_attachments[i].len() as u32;
+
+                let color_attachments = if color_attachment_count > 0 {
+                    color_attachments[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                let resolve_attachment_count = resolve_attachments[i].len() as u32;
+
+                let resolve_attachments = if resolve_attachment_count > 0 {
+                    resolve_attachments[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                let depth_stencil_attachment =
+                    depth_stencil_attachments[i].map_or(ptr::null(), |attachment| &attachment);
+
+                let preserve_attachment_count = preserve_attachments[i].len() as u32;
+
+                let preserve_attachments = if preserve_attachment_count > 0 {
+                    preserve_attachments[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                ffi::SubpassDescription {
+                    flags: 0,
+                    pipeline_bind_point: subpass.pipeline_bind_point.into(),
+                    input_attachment_count,
+                    input_attachments,
+                    color_attachment_count,
+                    color_attachments,
+                    resolve_attachments,
+                    depth_stencil_attachment,
+                    preserve_attachment_count,
+                    preserve_attachments,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let subpasses = create_info
+            .subpasses
+            .iter()
+            .enumerate()
+            .map(|(i, subpass)| ffi::SubpassDescription {
+                flags: 0,
+                pipeline_bind_point: subpass.pipeline_bind_point.into(),
+                input_attachment_count: input_attachments[i].len() as _,
+                input_attachments: ptr::null(),
+                color_attachment_count: color_attachments[i].len() as _,
+                color_attachments: color_attachments[i].as_ptr(),
+                resolve_attachments: ptr::null(),
+                depth_stencil_attachment: depth_stencil_attachments[i]
+                    .map_or(ptr::null(), |attachment| &attachment),
+                preserve_attachment_count: preserve_attachments[i].len() as _,
+                preserve_attachments: ptr::null(),
+            })
+            .collect::<Vec<_>>();
+
+        let create_info = ffi::RenderPassCreateInfo {
+            structure_type: ffi::StructureType::RenderPassCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            attachment_count: attachment_descriptions.len() as _,
+            attachments: attachment_descriptions.as_ptr(),
+            subpass_count: subpasses.len() as _,
+            subpasses: subpasses.as_ptr(),
+            dependency_count: 0,
+            dependencies: ptr::null(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::RenderPass>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateRenderPass(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let render_pass = Self { device, handle };
+
+                Ok(render_pass)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for RenderPass {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyRenderPass(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct GraphicsPipelineCreateInfo<'a> {
+    stages: &'a [PipelineShaderStageCreateInfo<'a>],
+    vertex_input_stage: &'a PipelineVertexInputStateCreateInfo,
+    input_assembly_state: &'a PipelineInputAssemblyStateCreateInfo,
+    tessellation_state: &'a PipelineTessellationStateCreateInfo,
+    viewport_state: &'a PipelineViewportStateCreateInfo<'a>,
+    rasterization_state: &'a PipelineRasterizationStateCreateInfo,
+    multisample_state: &'a PipelineMultisampleStateCreateInfo,
+    depth_stencil_state: &'a PipelineDepthStencilStateCreateInfo,
+    color_blend_state: &'a PipelineColorBlendStateCreateInfo<'a>,
+    dynamic_state: &'a PipelineDynamicStateCreateInfo<'a>,
+    layout: &'a PipelineLayout,
+    render_pass: &'a RenderPass,
+    subpass: u32,
+    base_pipeline_handle: Option<Pipeline>,
+    base_pipeline_index: u32,
+}
+
+pub struct PipelineCache {
+    handle: ffi::PipelineCache,
+}
+
+pub struct Pipeline {
+    handle: ffi::Pipeline,
+}
+
+impl Pipeline {
+    pub fn new_graphics_pipelines(
+        device: Rc<Device>,
+        cache: Option<PipelineCache>,
+        create_infos: &'_ [GraphicsPipelineCreateInfo],
+    ) -> Result<Vec<Self>, Error> {
+    }
+}

@@ -354,7 +354,43 @@ fn main() {
         dynamic_states: &[],
     };
 
-    let pipeline_layout_info = vk::PipelineLayoutCreateInfo {};
+    let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {};
+
+    let pipeline_layout = vk::PipelineLayout::new(device.clone(), pipeline_layout_create_info)
+        .expect("failed to create pipeline layout");
+
+    let color_attachment_description = vk::AttachmentDescription {
+        format: surface_format.format,
+        samples: vk::SAMPLE_COUNT_1,
+        load_op: vk::AttachmentLoadOp::Clear,
+        store_op: vk::AttachmentStoreOp::Store,
+        stencil_load_op: vk::AttachmentLoadOp::DontCare,
+        stencil_store_op: vk::AttachmentStoreOp::DontCare,
+        initial_layout: vk::ImageLayout::Undefined,
+        final_layout: vk::ImageLayout::PresentSrc,
+    };
+
+    let color_attachment_reference = vk::AttachmentReference {
+        attachment: 0,
+        layout: vk::ImageLayout::ColorAttachment,
+    };
+
+    let subpass_description = vk::SubpassDescription {
+        pipeline_bind_point: vk::PipelineBindPoint::Graphics,
+        input_attachments: &[],
+        color_attachments: &[color_attachment_reference],
+        resolve_attachments: &[],
+        depth_stencil_attachment: None,
+        preserve_attachments: &[],
+    };
+
+    let render_pass_create_info = vk::RenderPassCreateInfo {
+        attachments: &[color_attachment_description],
+        subpasses: &[subpass_description],
+    };
+
+    let render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
+        .expect("failed to create render pass");
 
     loop {
         let event = window.next_event();
