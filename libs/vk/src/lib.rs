@@ -219,7 +219,7 @@ mod ffi {
     pub type Offset2d = [c_int; 2];
     pub type Offset3d = [c_int; 3];
 
-    pub type Bool = u32;
+    pub type Bool = c_uint;
 
     #[derive(Clone, Copy)]
     #[repr(C)]
