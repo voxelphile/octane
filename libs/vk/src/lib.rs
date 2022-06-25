@@ -95,6 +95,8 @@ mod ffi {
     handle_nondispatchable!(DescriptorSetLayout);
     handle_nondispatchable!(PipelineLayout);
     handle_nondispatchable!(RenderPass);
+    handle_nondispatchable!(PipelineCache);
+    handle_nondispatchable!(Pipeline);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -641,6 +643,15 @@ mod ffi {
     pub enum ShaderStage {
         Vertex = 0x00000008,
         Fragment = 0x00000080,
+    }
+
+    impl From<super::ShaderStage> for ShaderStage {
+        fn from(stage: super::ShaderStage) -> Self {
+            match stage {
+                super::ShaderStage::Vertex => Self::Vertex,
+                super::ShaderStage::Fragment => Self::Fragment,
+            }
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -2003,6 +2014,7 @@ impl Drop for ShaderModule {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum ShaderStage {
     Vertex,
     Fragment,
@@ -2455,5 +2467,48 @@ impl Pipeline {
         cache: Option<PipelineCache>,
         create_infos: &'_ [GraphicsPipelineCreateInfo],
     ) -> Result<Vec<Self>, Error> {
+        let entry_points = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .stages
+                    .iter()
+                    .map(|stage| CString::new(stage.entry_point).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let entry_point_ptrs = entry_points
+            .iter()
+            .map(|entry_points| {
+                entry_points
+                    .iter()
+                    .map(|entry_point| entry_point.as_ptr())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let stages = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, create_info)| {
+                create_info
+                    .stages
+                    .iter()
+                    .enumerate()
+                    .map(|(j, stage)| ffi::PipelineShaderStageCreateInfo {
+                        structure_type: ffi::StructureType::PipelineShaderStageCreateInfo,
+                        p_next: ptr::null(),
+                        flags: 0,
+                        stage: stage.stage.into(),
+                        module: stage.module.handle,
+                        entry_point: entry_point_ptrs[i][j],
+                        specialization_info: ptr::null(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        Ok(vec![])
     }
 }
