@@ -136,6 +136,16 @@ mod ffi {
         ImageViewCreateInfo = 15,
         ShaderModuleCreateInfo = 16,
         PipelineShaderStageCreateInfo = 18,
+        PipelineVertexInputStateCreateInfo = 19,
+        PipelineInputAssemblyStateCreateInfo = 20,
+        PipelineTessellationStateCreateInfo = 21,
+        PipelineViewportStateCreateInfo = 22,
+        PipelineRasterizationStateCreateInfo = 23,
+        PipelineMultisampleStateCreateInfo = 24,
+        PipelineDepthStencilStateCreateInfo = 25,
+        PipelineColorBlendStateCreateInfo = 26,
+        PipelineDynamicStateCreateInfo = 27,
+        GraphicsPipelineCreateInfo = 28,
         PipelineLayoutCreateInfo = 30,
         RenderPassCreateInfo = 38,
         SwapchainCreateInfo = 1000001000,
@@ -205,6 +215,11 @@ mod ffi {
 
     pub type Extent2d = [c_uint; 2];
     pub type Extent3d = [c_uint; 3];
+
+    pub type Offset2d = [c_int; 2];
+    pub type Offset3d = [c_int; 3];
+
+    pub type Bool = u32;
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -324,7 +339,7 @@ mod ffi {
         c_uint,
         *const DebugUtilsMessengerCallbackData,
         *const c_void,
-    ) -> bool;
+    ) -> Bool;
 
     pub type CreateDebugUtilsMessenger = unsafe extern "system" fn(
         Instance,
@@ -341,7 +356,7 @@ mod ffi {
         message_type: c_uint,
         callback_data: *const DebugUtilsMessengerCallbackData,
         user_data: *const c_void,
-    ) -> bool {
+    ) -> Bool {
         let callback_data = callback_data.as_ref().unwrap();
 
         let f = mem::transmute::<_, super::DebugUtilsMessengerCallback>(user_data);
@@ -356,7 +371,7 @@ mod ffi {
             message: &message,
         };
 
-        f(&exposed_callback_data)
+        f(&exposed_callback_data) as _
     }
 
     #[derive(Clone, Copy)]
@@ -462,7 +477,7 @@ mod ffi {
         pub sampled_image_stencil_sample_counts: c_uint,
         pub storage_image_sample_counts: c_uint,
         pub max_sample_mask_words: c_uint,
-        pub timestamp_compute_and_graphics: bool,
+        pub timestamp_compute_and_graphics: Bool,
         pub timestamp_period: c_float,
         pub max_clip_distances: c_uint,
         pub max_cull_distances: c_uint,
@@ -472,8 +487,8 @@ mod ffi {
         pub line_width_range: [c_float; 2],
         pub point_size_granularity: c_float,
         pub line_width_granularity: c_float,
-        pub strict_lines: bool,
-        pub standard_sample_locations: bool,
+        pub strict_lines: Bool,
+        pub standard_sample_locations: Bool,
         pub optimal_buffer_copy_offset_alignment: c_uint,
         pub optimal_buffer_copy_row_pitch_alignment: c_uint,
         pub non_coherent_atom_size: c_uint,
@@ -482,11 +497,11 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceSparseProperties {
-        pub residency_standard_2d_block_shape: bool,
-        pub residency_standard_2d_multisample_block_shape: bool,
-        pub residency_standard_3d_block_shape: bool,
-        pub residency_aligned_mip_size: bool,
-        pub residency_non_resident_strict: bool,
+        pub residency_standard_2d_block_shape: Bool,
+        pub residency_standard_2d_multisample_block_shape: Bool,
+        pub residency_standard_3d_block_shape: Bool,
+        pub residency_aligned_mip_size: Bool,
+        pub residency_non_resident_strict: Bool,
     }
 
     #[derive(Clone, Copy)]
@@ -568,7 +583,7 @@ mod ffi {
         pub pre_transform: c_uint,
         pub composite_alpha: CompositeAlpha,
         pub present_mode: PresentMode,
-        pub clipped: bool,
+        pub clipped: Bool,
         pub old_swapchain: Swapchain,
     }
 
@@ -638,11 +653,11 @@ mod ffi {
         pub code: *const c_uint,
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     #[repr(C)]
     pub enum ShaderStage {
-        Vertex = 0x00000008,
-        Fragment = 0x00000080,
+        Vertex = 0x00000001,
+        Fragment = 0x00000010,
     }
 
     impl From<super::ShaderStage> for ShaderStage {
@@ -844,6 +859,356 @@ mod ffi {
         pub dependencies: *const c_void,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum VertexInputRate {
+        Vertex = 0,
+        Instance = 1,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct VertexInputBindingDescription {
+        pub binding: c_uint,
+        pub stride: c_uint,
+        pub input_rate: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct VertexInputAttributeDescription {
+        pub location: c_uint,
+        pub binding: c_uint,
+        pub format: Format,
+        pub offset: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineVertexInputStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub vertex_binding_description_count: c_uint,
+        pub vertex_binding_descriptions: *const VertexInputBindingDescription,
+        pub vertex_attribute_description_count: c_uint,
+        pub vertex_attribute_descriptions: *const VertexInputAttributeDescription,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum PrimitiveTopology {
+        PointList = 0,
+        LineList = 1,
+        LineStrip = 2,
+        TriangleList = 3,
+        TriangleStrip = 4,
+    }
+
+    impl From<super::PrimitiveTopology> for PrimitiveTopology {
+        fn from(topology: super::PrimitiveTopology) -> Self {
+            match topology {
+                super::PrimitiveTopology::PointList => Self::PointList,
+                super::PrimitiveTopology::LineList => Self::LineList,
+                super::PrimitiveTopology::LineStrip => Self::LineStrip,
+                super::PrimitiveTopology::TriangleList => Self::TriangleList,
+                super::PrimitiveTopology::TriangleStrip => Self::TriangleStrip,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineInputAssemblyStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub topology: PrimitiveTopology,
+        pub primitive_restart_enable: Bool,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineTessellationStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub patch_control_points: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct Viewport {
+        pub x: c_float,
+        pub y: c_float,
+        pub width: c_float,
+        pub height: c_float,
+        pub min_depth: c_float,
+        pub max_depth: c_float,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct Rect2d {
+        pub offset: Offset2d,
+        pub extent: Extent2d,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineViewportStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub viewport_count: c_uint,
+        pub viewports: *const Viewport,
+        pub scissor_count: c_uint,
+        pub scissors: *const Rect2d,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum PolygonMode {
+        Fill = 0,
+        Line = 1,
+        Point = 2,
+    }
+
+    impl From<super::PolygonMode> for PolygonMode {
+        fn from(polygon_mode: super::PolygonMode) -> Self {
+            match polygon_mode {
+                super::PolygonMode::Fill => Self::Fill,
+                super::PolygonMode::Line => Self::Line,
+                super::PolygonMode::Point => Self::Point,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum FrontFace {
+        CounterClockwise = 0,
+        Clockwise = 1,
+    }
+
+    impl From<super::FrontFace> for FrontFace {
+        fn from(front_face: super::FrontFace) -> Self {
+            match front_face {
+                super::FrontFace::CounterClockwise => Self::CounterClockwise,
+                super::FrontFace::Clockwise => Self::Clockwise,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineRasterizationStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub depth_clamp_enable: Bool,
+        pub rasterizer_discard_enable: Bool,
+        pub polygon_mode: PolygonMode,
+        pub cull_mode: c_uint,
+        pub front_face: FrontFace,
+        pub depth_bias_enable: Bool,
+        pub depth_bias_constant_factor: c_float,
+        pub depth_bias_clamp: c_float,
+        pub depth_bias_slope_factor: c_float,
+        pub line_width: c_float,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineMultisampleStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub rasterization_samples: c_uint,
+        pub sample_shading_enable: Bool,
+        pub min_sample_shading: c_float,
+        pub sample_mask: *const c_uint,
+        pub alpha_to_coverage_enable: Bool,
+        pub alpha_to_one_enable: Bool,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum CompareOp {
+        Never = 0,
+        Less = 1,
+        Equal = 2,
+        LessOrEqual = 3,
+        Greater = 4,
+        NotEqual = 5,
+        GreaterOrEqual = 6,
+        Always = 7,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum StencilOp {
+        Keep = 0,
+        Zero = 1,
+        Replace = 2,
+        IncrementAndClamp = 3,
+        DecrementAndClamp = 4,
+        Invert = 5,
+        IncrementAndWrap = 6,
+        DecrementAndWrap = 7,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct StencilOpState {
+        fail_op: StencilOp,
+        pass_op: StencilOp,
+        depth_fail_op: StencilOp,
+        compare_op: CompareOp,
+        compare_mask: c_uint,
+        write_mask: c_uint,
+        reference: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineDepthStencilStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub depth_test_enable: Bool,
+        pub depth_write_enable: Bool,
+        pub depth_compare_op: CompareOp,
+        pub depth_bounds_test_enable: Bool,
+        pub stencil_test_enable: Bool,
+        pub front: StencilOpState,
+        pub back: StencilOpState,
+        pub min_depth_bounds: c_float,
+        pub max_depth_bounds: c_float,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum BlendFactor {
+        Zero = 0,
+        One = 1,
+        SrcAlpha = 6,
+        OneMinusSrcAlpha = 7,
+    }
+
+    impl From<super::BlendFactor> for BlendFactor {
+        fn from(blend_factor: super::BlendFactor) -> Self {
+            match blend_factor {
+                super::BlendFactor::Zero => Self::Zero,
+                super::BlendFactor::One => Self::One,
+                super::BlendFactor::SrcAlpha => Self::SrcAlpha,
+                super::BlendFactor::OneMinusSrcAlpha => Self::OneMinusSrcAlpha,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum BlendOp {
+        Add = 0,
+    }
+
+    impl From<super::BlendOp> for BlendOp {
+        fn from(blend_op: super::BlendOp) -> Self {
+            match blend_op {
+                super::BlendOp::Add => Self::Add,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineColorBlendAttachmentState {
+        pub blend_enable: Bool,
+        pub src_color_blend_factor: BlendFactor,
+        pub dst_color_blend_factor: BlendFactor,
+        pub color_blend_op: BlendOp,
+        pub src_alpha_blend_factor: BlendFactor,
+        pub dst_alpha_blend_factor: BlendFactor,
+        pub alpha_blend_op: BlendOp,
+        pub color_write_mask: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum LogicOp {
+        Copy = 3,
+    }
+
+    impl From<super::LogicOp> for LogicOp {
+        fn from(logic_op: super::LogicOp) -> Self {
+            match logic_op {
+                super::LogicOp::Copy => Self::Copy,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineColorBlendStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub logic_op_enable: Bool,
+        pub logic_op: LogicOp,
+        pub attachment_count: c_uint,
+        pub attachments: *const PipelineColorBlendAttachmentState,
+        pub blend_constants: [c_float; 4],
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum DynamicState {
+        Viewport = 0,
+    }
+
+    impl From<super::DynamicState> for DynamicState {
+        fn from(dynamic_state: super::DynamicState) -> Self {
+            match dynamic_state {
+                super::DynamicState::Viewport => Self::Viewport,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PipelineDynamicStateCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub dynamic_state_count: c_uint,
+        pub dynamic_states: *const DynamicState,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct GraphicsPipelineCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub stage_count: c_uint,
+        pub stages: *const PipelineShaderStageCreateInfo,
+        pub vertex_input_state: *const PipelineVertexInputStateCreateInfo,
+        pub input_assembly_state: *const PipelineInputAssemblyStateCreateInfo,
+        pub tessellation_state: *const PipelineTessellationStateCreateInfo,
+        pub viewport_state: *const PipelineViewportStateCreateInfo,
+        pub rasterization_state: *const PipelineRasterizationStateCreateInfo,
+        pub multisample_state: *const PipelineMultisampleStateCreateInfo,
+        pub depth_stencil_state: *const PipelineDepthStencilStateCreateInfo,
+        pub color_blend_state: *const PipelineColorBlendStateCreateInfo,
+        pub dynamic_state: *const PipelineDynamicStateCreateInfo,
+        pub layout: PipelineLayout,
+        pub render_pass: RenderPass,
+        pub subpass: c_uint,
+        pub base_pipeline_handle: Pipeline,
+        pub base_pipeline_index: c_int,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -952,6 +1317,15 @@ mod ffi {
             render_pass: RenderPass,
             allocator: *const c_void,
         );
+        pub fn vkCreateGraphicsPipelines(
+            device: Device,
+            pipeline_cache: PipelineCache,
+            create_info_count: c_uint,
+            create_infos: *const GraphicsPipelineCreateInfo,
+            allocator: *const c_void,
+            pipelines: *mut Pipeline,
+        ) -> Result;
+        pub fn vkDestroyPipeline(device: Device, pipeline: Pipeline, allocator: *const c_void);
     }
 }
 
@@ -1752,7 +2126,7 @@ impl Swapchain {
             pre_transform: create_info.pre_transform,
             composite_alpha,
             present_mode,
-            clipped: create_info.clipped,
+            clipped: create_info.clipped as _,
             old_swapchain,
         };
 
@@ -2028,6 +2402,7 @@ pub struct PipelineShaderStageCreateInfo<'a> {
 
 pub struct PipelineVertexInputStateCreateInfo {}
 
+#[derive(Clone, Copy)]
 pub enum PrimitiveTopology {
     PointList,
     LineList,
@@ -2062,12 +2437,14 @@ pub struct PipelineViewportStateCreateInfo<'a> {
     pub scissors: &'a [Rect2d],
 }
 
+#[derive(Clone, Copy)]
 pub enum PolygonMode {
     Fill,
     Line,
     Point,
 }
 
+#[derive(Clone, Copy)]
 pub enum FrontFace {
     Clockwise,
     CounterClockwise,
@@ -2090,6 +2467,7 @@ pub struct PipelineMultisampleStateCreateInfo {}
 
 pub struct PipelineDepthStencilStateCreateInfo {}
 
+#[derive(Clone, Copy)]
 pub enum BlendFactor {
     One,
     Zero,
@@ -2097,6 +2475,7 @@ pub enum BlendFactor {
     OneMinusSrcAlpha,
 }
 
+#[derive(Clone, Copy)]
 pub enum BlendOp {
     Add,
 }
@@ -2112,6 +2491,7 @@ pub struct PipelineColorBlendAttachmentState {
     pub alpha_blend_op: BlendOp,
 }
 
+#[derive(Clone, Copy)]
 pub enum LogicOp {
     Copy,
 }
@@ -2123,7 +2503,10 @@ pub struct PipelineColorBlendStateCreateInfo<'a> {
     pub blend_constants: &'a [f32; 4],
 }
 
-pub enum DynamicState {}
+#[derive(Clone, Copy)]
+pub enum DynamicState {
+    Viewport,
+}
 
 pub struct PipelineDynamicStateCreateInfo<'a> {
     pub dynamic_states: &'a [DynamicState],
@@ -2436,21 +2819,21 @@ impl Drop for RenderPass {
 }
 
 pub struct GraphicsPipelineCreateInfo<'a> {
-    stages: &'a [PipelineShaderStageCreateInfo<'a>],
-    vertex_input_stage: &'a PipelineVertexInputStateCreateInfo,
-    input_assembly_state: &'a PipelineInputAssemblyStateCreateInfo,
-    tessellation_state: &'a PipelineTessellationStateCreateInfo,
-    viewport_state: &'a PipelineViewportStateCreateInfo<'a>,
-    rasterization_state: &'a PipelineRasterizationStateCreateInfo,
-    multisample_state: &'a PipelineMultisampleStateCreateInfo,
-    depth_stencil_state: &'a PipelineDepthStencilStateCreateInfo,
-    color_blend_state: &'a PipelineColorBlendStateCreateInfo<'a>,
-    dynamic_state: &'a PipelineDynamicStateCreateInfo<'a>,
-    layout: &'a PipelineLayout,
-    render_pass: &'a RenderPass,
-    subpass: u32,
-    base_pipeline_handle: Option<Pipeline>,
-    base_pipeline_index: u32,
+    pub stages: &'a [PipelineShaderStageCreateInfo<'a>],
+    pub vertex_input_state: &'a PipelineVertexInputStateCreateInfo,
+    pub input_assembly_state: &'a PipelineInputAssemblyStateCreateInfo,
+    pub tessellation_state: &'a PipelineTessellationStateCreateInfo,
+    pub viewport_state: &'a PipelineViewportStateCreateInfo<'a>,
+    pub rasterization_state: &'a PipelineRasterizationStateCreateInfo,
+    pub multisample_state: &'a PipelineMultisampleStateCreateInfo,
+    pub depth_stencil_state: &'a PipelineDepthStencilStateCreateInfo,
+    pub color_blend_state: &'a PipelineColorBlendStateCreateInfo<'a>,
+    pub dynamic_state: &'a PipelineDynamicStateCreateInfo<'a>,
+    pub layout: &'a PipelineLayout,
+    pub render_pass: &'a RenderPass,
+    pub subpass: u32,
+    pub base_pipeline_handle: Option<Pipeline>,
+    pub base_pipeline_index: i32,
 }
 
 pub struct PipelineCache {
@@ -2458,6 +2841,7 @@ pub struct PipelineCache {
 }
 
 pub struct Pipeline {
+    device: Rc<Device>,
     handle: ffi::Pipeline,
 }
 
@@ -2478,16 +2862,6 @@ impl Pipeline {
             })
             .collect::<Vec<_>>();
 
-        let entry_point_ptrs = entry_points
-            .iter()
-            .map(|entry_points| {
-                entry_points
-                    .iter()
-                    .map(|entry_point| entry_point.as_ptr())
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
         let stages = create_infos
             .iter()
             .enumerate()
@@ -2502,13 +2876,299 @@ impl Pipeline {
                         flags: 0,
                         stage: stage.stage.into(),
                         module: stage.module.handle,
-                        entry_point: entry_point_ptrs[i][j],
+                        entry_point: entry_points[i][j].as_ptr(),
                         specialization_info: ptr::null(),
                     })
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
 
-        Ok(vec![])
+        let vertex_input_states = create_infos
+            .iter()
+            .map(|create_info| ffi::PipelineVertexInputStateCreateInfo {
+                structure_type: ffi::StructureType::PipelineVertexInputStateCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                vertex_binding_description_count: 0,
+                vertex_binding_descriptions: ptr::null(),
+                vertex_attribute_description_count: 0,
+                vertex_attribute_descriptions: ptr::null(),
+            })
+            .collect::<Vec<_>>();
+
+        let input_assembly_states = create_infos
+            .iter()
+            .map(|create_info| ffi::PipelineInputAssemblyStateCreateInfo {
+                structure_type: ffi::StructureType::PipelineInputAssemblyStateCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                topology: create_info.input_assembly_state.topology.into(),
+                primitive_restart_enable: create_info.input_assembly_state.primitive_restart_enable
+                    as _,
+            })
+            .collect::<Vec<_>>();
+
+        //TODO
+        let tessellation_states = 0;
+
+        let viewports = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .viewport_state
+                    .viewports
+                    .iter()
+                    .map(|viewport| ffi::Viewport {
+                        x: viewport.x,
+                        y: viewport.y,
+                        width: viewport.width,
+                        height: viewport.height,
+                        min_depth: viewport.min_depth,
+                        max_depth: viewport.max_depth,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let scissors = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .viewport_state
+                    .scissors
+                    .iter()
+                    .map(|scissor| ffi::Rect2d {
+                        offset: [scissor.offset.0, scissor.offset.1],
+                        extent: [scissor.extent.0, scissor.extent.1],
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let viewport_states = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, create_info)| {
+                let viewport_count = viewports[i].len() as _;
+
+                let viewports = if viewport_count > 0 {
+                    viewports[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                let scissor_count = scissors[i].len() as _;
+
+                let scissors = if scissor_count > 0 {
+                    scissors[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                ffi::PipelineViewportStateCreateInfo {
+                    structure_type: ffi::StructureType::PipelineViewportStateCreateInfo,
+                    p_next: ptr::null(),
+                    flags: 0,
+                    viewport_count,
+                    viewports,
+                    scissor_count,
+                    scissors,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let rasterization_states = create_infos
+            .iter()
+            .map(|create_info| ffi::PipelineRasterizationStateCreateInfo {
+                structure_type: ffi::StructureType::PipelineRasterizationStateCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                depth_clamp_enable: create_info.rasterization_state.depth_clamp_enable as _,
+                rasterizer_discard_enable: create_info.rasterization_state.rasterizer_discard_enable
+                    as _,
+                polygon_mode: create_info.rasterization_state.polygon_mode.into(),
+                cull_mode: create_info.rasterization_state.cull_mode,
+                front_face: create_info.rasterization_state.front_face.into(),
+                depth_bias_enable: create_info.rasterization_state.depth_bias_enable as _,
+                depth_bias_constant_factor: create_info
+                    .rasterization_state
+                    .depth_bias_constant_factor,
+                depth_bias_clamp: create_info.rasterization_state.depth_bias_clamp,
+                depth_bias_slope_factor: create_info.rasterization_state.depth_bias_slope_factor,
+                line_width: create_info.rasterization_state.line_width,
+            })
+            .collect::<Vec<_>>();
+
+        let multisample_states = create_infos
+            .iter()
+            .map(|create_info| ffi::PipelineMultisampleStateCreateInfo {
+                structure_type: ffi::StructureType::PipelineMultisampleStateCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                //Disable
+                rasterization_samples: 0x00000001,
+                sample_shading_enable: false as _,
+                min_sample_shading: 1.0,
+                sample_mask: ptr::null(),
+                alpha_to_coverage_enable: false as _,
+                alpha_to_one_enable: false as _,
+            })
+            .collect::<Vec<_>>();
+
+        //TODO
+        let depth_stencil_states = 0;
+
+        let color_blend_attachment_states = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .color_blend_state
+                    .attachments
+                    .iter()
+                    .map(|attachment| ffi::PipelineColorBlendAttachmentState {
+                        blend_enable: attachment.blend_enable as _,
+                        src_color_blend_factor: attachment.src_color_blend_factor.into(),
+                        dst_color_blend_factor: attachment.dst_color_blend_factor.into(),
+                        color_blend_op: attachment.color_blend_op.into(),
+                        src_alpha_blend_factor: attachment.src_alpha_blend_factor.into(),
+                        dst_alpha_blend_factor: attachment.dst_alpha_blend_factor.into(),
+                        alpha_blend_op: attachment.alpha_blend_op.into(),
+                        color_write_mask: attachment.color_write_mask,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let color_blend_states = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, create_info)| {
+                let attachment_count = create_info.color_blend_state.attachments.len() as _;
+
+                let attachments = if attachment_count > 0 {
+                    color_blend_attachment_states[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                ffi::PipelineColorBlendStateCreateInfo {
+                    structure_type: ffi::StructureType::PipelineColorBlendStateCreateInfo,
+                    p_next: ptr::null(),
+                    flags: 0,
+                    logic_op_enable: create_info.color_blend_state.logic_op_enable as _,
+                    logic_op: create_info.color_blend_state.logic_op.into(),
+                    attachment_count,
+                    attachments,
+                    blend_constants: [
+                        create_info.color_blend_state.blend_constants[0],
+                        create_info.color_blend_state.blend_constants[1],
+                        create_info.color_blend_state.blend_constants[2],
+                        create_info.color_blend_state.blend_constants[3],
+                    ],
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let dynamic_state_data = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .dynamic_state
+                    .dynamic_states
+                    .iter()
+                    .map(|&dynamic_state| dynamic_state.into())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let dynamic_states = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let dynamic_state_count = dynamic_state_data[i].len() as _;
+
+                let dynamic_states = if dynamic_state_count > 0 {
+                    dynamic_state_data[i].as_ptr()
+                } else {
+                    ptr::null()
+                };
+
+                ffi::PipelineDynamicStateCreateInfo {
+                    structure_type: ffi::StructureType::PipelineDynamicStateCreateInfo,
+                    p_next: ptr::null(),
+                    flags: 0,
+                    dynamic_state_count,
+                    dynamic_states,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let create_infos = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, create_info)| ffi::GraphicsPipelineCreateInfo {
+                structure_type: ffi::StructureType::GraphicsPipelineCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                stage_count: stages[i].len() as _,
+                stages: stages[i].as_ptr(),
+                vertex_input_state: &vertex_input_states[i],
+                input_assembly_state: &input_assembly_states[i],
+                tessellation_state: ptr::null(),
+                viewport_state: &viewport_states[i],
+                rasterization_state: &rasterization_states[i],
+                multisample_state: &multisample_states[i],
+                depth_stencil_state: ptr::null(),
+                color_blend_state: &color_blend_states[i],
+                dynamic_state: &dynamic_states[i],
+                layout: create_info.layout.handle,
+                render_pass: create_info.render_pass.handle,
+                subpass: create_info.subpass as _,
+                base_pipeline_handle: create_info
+                    .base_pipeline_handle
+                    .as_ref()
+                    .map_or(ffi::Pipeline::null(), |pipeline| pipeline.handle),
+                base_pipeline_index: create_info.base_pipeline_index,
+            })
+            .collect::<Vec<_>>();
+
+        let mut handles = Vec::with_capacity(create_infos.len());
+
+        let result = unsafe {
+            ffi::vkCreateGraphicsPipelines(
+                device.handle,
+                ffi::PipelineCache::null(),
+                create_infos.len() as _,
+                create_infos.as_ptr(),
+                ptr::null(),
+                handles.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                unsafe { handles.set_len(create_infos.len()) };
+
+                let pipelines = handles
+                    .into_iter()
+                    .map(|handle| Pipeline {
+                        device: device.clone(),
+                        handle,
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(pipelines)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidShader => Err(Error::InvalidShader),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyPipeline(self.device.handle, self.handle, ptr::null()) };
     }
 }

@@ -292,6 +292,8 @@ fn main() {
         primitive_restart_enable: false,
     };
 
+    let tessellation_state = vk::PipelineTessellationStateCreateInfo {};
+
     let viewport = vk::Viewport {
         x: 0.0,
         y: 0.0,
@@ -391,6 +393,31 @@ fn main() {
 
     let render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
         .expect("failed to create render pass");
+
+    let graphics_pipeline_create_info = vk::GraphicsPipelineCreateInfo {
+        stages: &shader_stages,
+        vertex_input_state: &vertex_input_info,
+        input_assembly_state: &input_assembly,
+        tessellation_state: &tessellation_state,
+        viewport_state: &viewport_state,
+        rasterization_state: &rasterizer,
+        multisample_state: &multisampling,
+        depth_stencil_state: &depth_stencil,
+        color_blend_state: &color_blending,
+        dynamic_state: &dynamic_state,
+        layout: &pipeline_layout,
+        render_pass: &render_pass,
+        subpass: 0,
+        base_pipeline_handle: None,
+        base_pipeline_index: -1,
+    };
+
+    let graphics_pipeline = &vk::Pipeline::new_graphics_pipelines(
+        device.clone(),
+        None,
+        &[graphics_pipeline_create_info],
+    )
+    .expect("failed to create graphics pipeline")[0];
 
     loop {
         let event = window.next_event();
