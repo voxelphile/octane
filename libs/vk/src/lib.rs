@@ -101,6 +101,9 @@ mod ffi {
     handle_nondispatchable!(Framebuffer);
     handle_nondispatchable!(CommandPool);
 
+    pub type DeviceSize = u64;
+    pub type Flags = u32;
+
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
     pub enum Result {
@@ -406,8 +409,8 @@ mod ffi {
         pub max_push_constants_size: c_uint,
         pub max_memory_allocation_count: c_uint,
         pub max_sampler_allocation_count: c_uint,
-        pub buffer_image_granularity: c_ulong,
-        pub sparse_address_space_size: c_ulong,
+        pub buffer_image_granularity: DeviceSize,
+        pub sparse_address_space_size: DeviceSize,
         pub max_bound_descriptor_sets: c_uint,
         pub max_per_stage_descriptor_samplers: c_uint,
         pub max_per_stage_descriptor_uniform_buffers: c_uint,
@@ -426,6 +429,7 @@ mod ffi {
         pub max_descriptor_set_input_attachments: c_uint,
         pub max_vertex_input_attributes: c_uint,
         pub max_vertex_input_bindings: c_uint,
+        pub max_vertex_input_attribute_offset: c_uint,
         pub max_vertex_input_binding_stride: c_uint,
         pub max_vertex_output_components: c_uint,
         pub max_tessellation_generation_level: c_uint,
@@ -433,7 +437,7 @@ mod ffi {
         pub max_tessellation_control_per_vertex_input_components: c_uint,
         pub max_tessellation_control_per_vertex_output_components: c_uint,
         pub max_tessellation_control_per_patch_output_components: c_uint,
-        pub max_tessellation_total_output_components: c_uint,
+        pub max_tessellation_control_total_output_components: c_uint,
         pub max_tessellation_evaluation_input_components: c_uint,
         pub max_tessellation_evaluation_output_components: c_uint,
         pub max_geometry_shader_invocations: c_uint,
@@ -461,9 +465,9 @@ mod ffi {
         pub viewport_bounds_range: [c_float; 2],
         pub viewport_sub_pixel_bits: c_uint,
         pub min_memory_map_alignment: size_t,
-        pub min_texel_buffer_offset_alignment: c_ulong,
-        pub min_uniform_buffer_offset_alignment: c_ulong,
-        pub min_storage_buffer_offset_alignment: c_ulong,
+        pub min_texel_buffer_offset_alignment: DeviceSize,
+        pub min_uniform_buffer_offset_alignment: DeviceSize,
+        pub min_storage_buffer_offset_alignment: DeviceSize,
         pub min_texel_offset: c_int,
         pub max_texel_offset: c_uint,
         pub min_texel_gather_offset: c_int,
@@ -472,18 +476,18 @@ mod ffi {
         pub max_interpolation_offset: c_float,
         pub sub_pixel_interpolation_offset_bits: c_uint,
         pub max_framebuffer_width: c_uint,
-        pub min_framebuffer_width: c_uint,
-        pub min_framebuffer_layers: c_uint,
-        pub framebuffer_color_sample_counts: c_uint,
-        pub framebuffer_depth_sample_counts: c_uint,
-        pub framebuffer_stencil_sample_counts: c_uint,
-        pub framebuffer_no_attachments_sample_counts: c_uint,
+        pub max_framebuffer_height: c_uint,
+        pub max_framebuffer_layers: c_uint,
+        pub framebuffer_color_sample_counts: Flags,
+        pub framebuffer_depth_sample_counts: Flags,
+        pub framebuffer_stencil_sample_counts: Flags,
+        pub framebuffer_no_attachments_sample_counts: Flags,
         pub max_color_attachments: c_uint,
-        pub sampled_image_color_sample_counts: c_uint,
-        pub sampled_image_integer_sample_counts: c_uint,
-        pub sampled_image_depth_sample_counts: c_uint,
-        pub sampled_image_stencil_sample_counts: c_uint,
-        pub storage_image_sample_counts: c_uint,
+        pub sampled_image_color_sample_counts: Flags,
+        pub sampled_image_integer_sample_counts: Flags,
+        pub sampled_imae_depth_sample_counts: Flags,
+        pub sampled_image_stencil_sample_counts: Flags,
+        pub storage_image_sample_counts: Flags,
         pub max_sample_mask_words: c_uint,
         pub timestamp_compute_and_graphics: Bool,
         pub timestamp_period: c_float,
@@ -497,11 +501,10 @@ mod ffi {
         pub line_width_granularity: c_float,
         pub strict_lines: Bool,
         pub standard_sample_locations: Bool,
-        pub optimal_buffer_copy_offset_alignment: c_uint,
-        pub optimal_buffer_copy_row_pitch_alignment: c_uint,
-        pub non_coherent_atom_size: c_uint,
+        pub optimal_buffer_copy_offset_alignment: DeviceSize,
+        pub optimal_buffer_copy_row_pitch_alignment: DeviceSize,
+        pub non_coherent_atom_size: DeviceSize,
     }
-
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceSparseProperties {
@@ -1649,9 +1652,9 @@ impl Instance {
         let application_info = ffi::ApplicationInfo {
             structure_type: ffi::StructureType::ApplicationInfo,
             p_next: ptr::null(),
-            application_name: application_name.as_c_str().as_ptr(),
+            application_name: application_name.as_ptr(),
             application_version,
-            engine_name: engine_name.as_c_str().as_ptr(),
+            engine_name: engine_name.as_ptr(),
             engine_version,
             api_version,
         };
@@ -1667,6 +1670,12 @@ impl Instance {
             .map(|string| string.as_ptr())
             .collect::<Vec<_>>();
 
+        let enabled_layer_names_ptr = if layer_names.len() > 0 {
+            enabled_layer_names.as_ptr()
+        } else {
+            ptr::null()
+        };
+
         let extension_names = create_info
             .extensions
             .iter()
@@ -1677,6 +1686,12 @@ impl Instance {
             .iter()
             .map(|string| string.as_ptr())
             .collect::<Vec<_>>();
+
+        let enabled_extension_names_ptr = if extension_names.len() > 0 {
+            enabled_extension_names.as_ptr()
+        } else {
+            ptr::null()
+        };
 
         let debug_utils = if let Some(create_info) = create_info.debug_utils {
             let g = unsafe { mem::transmute(create_info.user_callback) };
@@ -1696,8 +1711,8 @@ impl Instance {
             None
         };
 
-        let p_next = if let Some(create_info) = debug_utils {
-            unsafe { mem::transmute::<_, _>(&create_info) }
+        let p_next = if let Some(create_info) = &debug_utils {
+            unsafe { mem::transmute::<_, _>(create_info) }
         } else {
             ptr::null()
         };
@@ -1708,9 +1723,9 @@ impl Instance {
             flags: 0,
             application_info: &application_info,
             enabled_layer_count: create_info.layers.len() as _,
-            enabled_layer_names: enabled_layer_names.as_ptr(),
+            enabled_layer_names: enabled_layer_names_ptr,
             enabled_extension_count: create_info.extensions.len() as _,
-            enabled_extension_names: enabled_extension_names.as_ptr(),
+            enabled_extension_names: enabled_extension_names_ptr,
         };
 
         let mut handle = MaybeUninit::<ffi::Instance>::uninit();
@@ -1818,7 +1833,7 @@ impl Drop for DebugUtilsMessenger {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum PhysicalDeviceType {
     Other,
     Integrated,
@@ -1865,7 +1880,10 @@ impl PhysicalDevice {
 
         unsafe { handles.set_len(handle_count as _) };
 
-        let physical_devices = handles.iter().map(|&handle| Self { handle }).collect();
+        let physical_devices = handles
+            .into_iter()
+            .map(|handle| Self { handle })
+            .collect::<Vec<_>>();
 
         physical_devices
     }
@@ -1885,11 +1903,10 @@ impl PhysicalDevice {
             ffi::PhysicalDeviceType::Cpu => PhysicalDeviceType::Cpu,
         };
 
-        let device_name = properties
-            .device_name
-            .iter()
-            .map(|&c| c as u8 as char)
-            .collect::<String>();
+        let device_name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) }
+            .to_str()
+            .unwrap()
+            .to_owned();
 
         let limits = PhysicalDeviceLimits {
             max_image_dimension_2d: properties.limits.max_image_dimension_2d,

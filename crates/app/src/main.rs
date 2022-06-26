@@ -61,7 +61,6 @@ fn main() {
 
     let mut debug_utils_messenger_create_info = None;
 
-    #[cfg(debug_assertions)]
     {
         extensions.push(vk::EXT_DEBUG_UTILS);
         layers.push(vk::LAYER_KHRONOS_VALIDATION);
@@ -87,7 +86,6 @@ fn main() {
 
     let instance = vk::Instance::new(instance_create_info).expect("failed to create instance");
 
-    #[cfg(debug_assertions)]
     let debug_utils_messenger =
         vk::DebugUtilsMessenger::new(instance.clone(), debug_utils_messenger_create_info.unwrap())
             .expect("failed to create debug utils messenger");

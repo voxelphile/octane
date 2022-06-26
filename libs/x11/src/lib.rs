@@ -71,6 +71,10 @@ mod ffi {
         pub expose: ExposeEvent,
         pub key: KeyEvent,
         pub client_message: ClientMessageEvent,
+        //this is a hack because event is not the right size...
+        //not all implemented
+        //TODO
+        pub padding: [u64; 1024],
     }
 
     #[link(name = "X11")]
