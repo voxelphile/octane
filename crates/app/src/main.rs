@@ -419,6 +419,23 @@ fn main() {
     )
     .expect("failed to create graphics pipeline")[0];
 
+    let framebuffers = swapchain_image_views
+        .into_iter()
+        .map(|image_view| {
+            let attachments = [image_view];
+
+            let framebuffer_create_info = vk::FramebufferCreateInfo {
+                render_pass: &render_pass,
+                attachments: &attachments,
+                width: extent.0,
+                height: extent.1,
+                layers: 1,
+            };
+
+            vk::Framebuffer::new(device.clone(), framebuffer_create_info)
+        })
+        .collect::<Vec<_>>();
+
     loop {
         let event = window.next_event();
 

@@ -97,6 +97,7 @@ mod ffi {
     handle_nondispatchable!(RenderPass);
     handle_nondispatchable!(PipelineCache);
     handle_nondispatchable!(Pipeline);
+    handle_nondispatchable!(Framebuffer);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -147,6 +148,7 @@ mod ffi {
         PipelineDynamicStateCreateInfo = 27,
         GraphicsPipelineCreateInfo = 28,
         PipelineLayoutCreateInfo = 30,
+        FramebufferCreateInfo = 37,
         RenderPassCreateInfo = 38,
         SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
@@ -1209,6 +1211,20 @@ mod ffi {
         pub base_pipeline_index: c_int,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct FramebufferCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub render_pass: RenderPass,
+        pub attachment_count: c_uint,
+        pub attachments: *const ImageView,
+        pub width: c_uint,
+        pub height: c_uint,
+        pub layers: c_uint,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -1326,6 +1342,17 @@ mod ffi {
             pipelines: *mut Pipeline,
         ) -> Result;
         pub fn vkDestroyPipeline(device: Device, pipeline: Pipeline, allocator: *const c_void);
+        pub fn vkCreateFramebuffer(
+            device: Device,
+            create_info: *const FramebufferCreateInfo,
+            allocator: *const c_void,
+            framebuffer: *mut Framebuffer,
+        ) -> Result;
+        pub fn vkDestroyFramebuffer(
+            device: Device,
+            framebuffer: Framebuffer,
+            allocator: *const c_void,
+        );
     }
 }
 
@@ -3170,5 +3197,70 @@ impl Pipeline {
 impl Drop for Pipeline {
     fn drop(&mut self) {
         unsafe { ffi::vkDestroyPipeline(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct FramebufferCreateInfo<'a> {
+    pub render_pass: &'a RenderPass,
+    pub attachments: &'a [ImageView],
+    pub width: u32,
+    pub height: u32,
+    pub layers: u32,
+}
+
+pub struct Framebuffer {
+    device: Rc<Device>,
+    handle: ffi::Framebuffer,
+}
+
+impl Framebuffer {
+    pub fn new(device: Rc<Device>, create_info: FramebufferCreateInfo) -> Result<Self, Error> {
+        let attachments = create_info
+            .attachments
+            .iter()
+            .map(|image_view| image_view.handle)
+            .collect::<Vec<_>>();
+
+        let create_info = ffi::FramebufferCreateInfo {
+            structure_type: ffi::StructureType::FramebufferCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            render_pass: create_info.render_pass.handle,
+            attachment_count: create_info.attachments.len() as _,
+            attachments: attachments.as_ptr(),
+            width: create_info.width,
+            height: create_info.height,
+            layers: create_info.layers,
+        };
+
+        let mut handle = MaybeUninit::<ffi::Framebuffer>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateFramebuffer(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let framebuffer = Self { device, handle };
+
+                Ok(framebuffer)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for Framebuffer {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyFramebuffer(self.device.handle, self.handle, ptr::null()) };
     }
 }
