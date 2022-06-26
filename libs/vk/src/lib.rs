@@ -85,6 +85,7 @@ mod ffi {
     handle!(PhysicalDevice);
     handle!(Device);
     handle!(Queue);
+    handle!(CommandBuffer);
 
     handle_nondispatchable!(DebugUtilsMessenger);
     handle_nondispatchable!(Surface);
@@ -98,6 +99,7 @@ mod ffi {
     handle_nondispatchable!(PipelineCache);
     handle_nondispatchable!(Pipeline);
     handle_nondispatchable!(Framebuffer);
+    handle_nondispatchable!(CommandPool);
 
     #[derive(Clone, Copy, Debug)]
     #[repr(C)]
@@ -150,6 +152,10 @@ mod ffi {
         PipelineLayoutCreateInfo = 30,
         FramebufferCreateInfo = 37,
         RenderPassCreateInfo = 38,
+        CommandPoolCreateInfo = 39,
+        CommandBufferAllocateInfo = 40,
+        CommandBufferBeginInfo = 42,
+        RenderPassBeginInfo = 43,
         SwapchainCreateInfo = 1000001000,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
@@ -1225,6 +1231,67 @@ mod ffi {
         pub layers: c_uint,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct RenderPassBeginInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub render_pass: RenderPass,
+        pub framebuffer: Framebuffer,
+        pub render_area: Rect2d,
+        pub clear_value_count: c_uint,
+        pub clear_values: *const [c_float; 4],
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum SubpassContents {
+        Inline = 0,
+        Secondary = 1,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct CommandBufferBeginInfo {
+        pub structure_type: StructureType,
+        pub flags: c_uint,
+        pub inheritence_info: *const c_void,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct CommandPoolCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub queue_family_index: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum CommandBufferLevel {
+        Primary = 0,
+        Secondary = 1,
+    }
+
+    impl From<super::CommandBufferLevel> for CommandBufferLevel {
+        fn from(level: super::CommandBufferLevel) -> Self {
+            match level {
+                super::CommandBufferLevel::Primary => Self::Primary,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct CommandBufferAllocateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub command_pool: CommandPool,
+        pub level: CommandBufferLevel,
+        pub command_buffer_count: c_uint,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -1352,6 +1419,40 @@ mod ffi {
             device: Device,
             framebuffer: Framebuffer,
             allocator: *const c_void,
+        );
+        pub fn vkCreateCommandPool(
+            device: Device,
+            create_info: *const CommandPoolCreateInfo,
+            allocator: *const c_void,
+            command_pool: *mut CommandPool,
+        ) -> Result;
+        pub fn vkDestroyCommandPool(
+            device: Device,
+            command_pool: CommandPool,
+            allocator: *const c_void,
+        );
+        pub fn vkAllocateCommandBuffers(
+            device: Device,
+            allocate_info: *const CommandBufferAllocateInfo,
+            command_buffers: *mut CommandBuffer,
+        ) -> Result;
+        pub fn vkBeginCommandBuffer(
+            command_buffer: CommandBuffer,
+            begin_info: *const CommandBufferBeginInfo,
+        ) -> Result;
+        pub fn vkEndCommandBuffer(command_buffer: CommandBuffer) -> Result;
+        pub fn vkCmdBeginRenderPass(
+            command_buffer: CommandBuffer,
+            begin_info: *const RenderPassBeginInfo,
+            contents: SubpassContents,
+        );
+        pub fn vkCmdEndRenderPass(command_buffer: CommandBuffer);
+        pub fn vkCmdBindPipeline(command_buffer: CommandBuffer, pipeline: Pipeline);
+        pub fn vkCmdDraw(
+            vertex_count: c_uint,
+            instance_count: c_uint,
+            first_vertex: c_uint,
+            first_instance: c_uint,
         );
     }
 }
@@ -2454,6 +2555,7 @@ pub struct Viewport {
     pub max_depth: f32,
 }
 
+#[derive(Copy, Clone)]
 pub struct Rect2d {
     pub offset: Offset2d,
     pub extent: Extent2d,
@@ -3263,4 +3365,202 @@ impl Drop for Framebuffer {
     fn drop(&mut self) {
         unsafe { ffi::vkDestroyFramebuffer(self.device.handle, self.handle, ptr::null()) };
     }
+}
+
+pub struct CommandPoolCreateInfo {
+    pub queue_family_index: u32,
+}
+
+pub struct CommandPool {
+    device: Rc<Device>,
+    handle: ffi::CommandPool,
+}
+
+impl CommandPool {
+    pub fn new(device: Rc<Device>, create_info: CommandPoolCreateInfo) -> Result<Self, Error> {
+        let create_info = ffi::CommandPoolCreateInfo {
+            structure_type: ffi::StructureType::CommandPoolCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            queue_family_index: create_info.queue_family_index,
+        };
+
+        let mut handle = MaybeUninit::<ffi::CommandPool>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateCommandPool(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let command_pool = Self { device, handle };
+
+                Ok(command_pool)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for CommandPool {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyCommandPool(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum CommandBufferLevel {
+    Primary,
+}
+
+pub struct CommandBufferAllocateInfo<'a> {
+    pub command_pool: &'a CommandPool,
+    pub level: CommandBufferLevel,
+    pub count: u32,
+}
+
+pub struct CommandBuffer {
+    device: Rc<Device>,
+    handle: ffi::CommandBuffer,
+}
+
+impl CommandBuffer {
+    pub fn allocate(
+        device: Rc<Device>,
+        allocate_info: CommandBufferAllocateInfo<'_>,
+    ) -> Result<Vec<Self>, Error> {
+        let allocate_info = ffi::CommandBufferAllocateInfo {
+            structure_type: ffi::StructureType::CommandBufferAllocateInfo,
+            p_next: ptr::null(),
+            command_pool: allocate_info.command_pool.handle,
+            level: allocate_info.level.into(),
+            command_buffer_count: allocate_info.count,
+        };
+
+        let mut handles = Vec::with_capacity(allocate_info.command_buffer_count as _);
+
+        let result = unsafe {
+            ffi::vkAllocateCommandBuffers(device.handle, &allocate_info, handles.as_mut_ptr())
+        };
+
+        match result {
+            ffi::Result::Success => {
+                unsafe { handles.set_len(allocate_info.command_buffer_count as _) };
+
+                let command_pools = handles
+                    .into_iter()
+                    .map(|handle| Self {
+                        device: device.clone(),
+                        handle,
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(command_pools)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn record(&mut self, script: impl Fn(&mut Commands)) -> Result<(), Error> {
+        let begin_info = ffi::CommandBufferBeginInfo {
+            structure_type: ffi::StructureType::CommandBufferBeginInfo,
+            flags: 0,
+            inheritence_info: ptr::null(),
+        };
+
+        let result = unsafe { ffi::vkBeginCommandBuffer(self.handle, &begin_info) };
+
+        match result {
+            ffi::Result::Success => {}
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            _ => panic!("unexpected result"),
+        }
+
+        let mut commands = Commands {
+            command_buffer: self,
+        };
+
+        script(&mut commands);
+
+        let result = unsafe { ffi::vkEndCommandBuffer(self.handle) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+pub struct Commands<'a> {
+    command_buffer: &'a mut CommandBuffer,
+}
+
+impl Commands<'_> {
+    pub fn begin_render_pass(&mut self, begin_info: RenderPassBeginInfo<'_>) {
+        let begin_info = ffi::RenderPassBeginInfo {
+            structure_type: ffi::StructureType::RenderPassBeginInfo,
+            p_next: ptr::null(),
+            render_pass: begin_info.render_pass.handle,
+            framebuffer: begin_info.framebuffer.handle,
+            render_area: ffi::Rect2d {
+                offset: [
+                    begin_info.render_area.offset.0,
+                    begin_info.render_area.offset.1,
+                ],
+                extent: [
+                    begin_info.render_area.extent.0,
+                    begin_info.render_area.extent.1,
+                ],
+            },
+            clear_value_count: begin_info.clear_values.len() as _,
+            clear_values: begin_info.clear_values.as_ptr() as _,
+        };
+
+        unsafe {
+            ffi::vkCmdBeginRenderPass(
+                self.command_buffer.handle,
+                &begin_info,
+                ffi::SubpassContents::Inline,
+            )
+        };
+    }
+
+    pub fn end_render_pass(&mut self) {
+        unsafe { ffi::vkCmdEndRenderPass(self.command_buffer.handle) };
+    }
+
+    pub fn bind_pipeline(&mut self, pipeline: &Pipeline) {
+        unsafe { ffi::vkCmdBindPipeline(self.command_buffer.handle, pipeline.handle) };
+    }
+
+    pub fn draw(
+        &mut self,
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+    ) {
+        unsafe { ffi::vkCmdDraw(vertex_count, instance_count, first_vertex, first_instance) };
+    }
+}
+
+pub struct RenderPassBeginInfo<'a> {
+    pub render_pass: &'a RenderPass,
+    pub framebuffer: &'a Framebuffer,
+    pub render_area: Rect2d,
+    pub clear_values: &'a [[f32; 4]],
 }

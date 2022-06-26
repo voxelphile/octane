@@ -433,8 +433,49 @@ fn main() {
             };
 
             vk::Framebuffer::new(device.clone(), framebuffer_create_info)
+                .expect("failed to create framebuffer")
         })
         .collect::<Vec<_>>();
+
+    let command_pool_create_info = vk::CommandPoolCreateInfo {
+        queue_family_index: graphics_queue_family_index,
+    };
+
+    let command_pool = vk::CommandPool::new(device.clone(), command_pool_create_info)
+        .expect("failed to create command pool");
+
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
+        command_pool: &command_pool,
+        level: vk::CommandBufferLevel::Primary,
+        count: 1,
+    };
+
+    let command_buffer = &vk::CommandBuffer::allocate(device.clone(), command_buffer_allocate_info)
+        .expect("failed to create command buffer")[0];
+
+    let record_command_buffer = |command_buffer: &mut vk::CommandBuffer,
+                                 render_pass: &vk::RenderPass,
+                                 framebuffer: &vk::Framebuffer,
+                                 graphics_pipeline: &vk::Pipeline| {
+        command_buffer
+            .record(|commands| {
+                let render_pass_begin_info = vk::RenderPassBeginInfo {
+                    render_pass: &render_pass,
+                    framebuffer: &framebuffer,
+                    render_area: scissor,
+                    clear_values: &[[0.0, 0.0, 0.0, 1.0]],
+                };
+
+                commands.begin_render_pass(render_pass_begin_info);
+
+                commands.bind_pipeline(graphics_pipeline);
+
+                commands.draw(3, 1, 0, 0);
+
+                commands.end_render_pass();
+            })
+            .expect("failed to record command buffer");
+    };
 
     loop {
         let event = window.next_event();
