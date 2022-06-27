@@ -222,7 +222,6 @@ fn main() {
 
     let convert_bytes_to_spirv_data = |bytes: Vec<u8>| {
         let endian = mem::size_of::<u32>() / mem::size_of::<u8>();
-        let bits_per_byte = 8;
 
         if bytes.len() % endian != 0 {
             panic!("cannot convert bytes to int; too few or too many")
@@ -230,14 +229,8 @@ fn main() {
 
         let mut buffer = Vec::with_capacity(bytes.len() / endian);
 
-        for (i, byte) in bytes.into_iter().enumerate() {
-            let data = byte as u32;
-
-            if i % endian == 0 {
-                buffer.push(0);
-            }
-
-            buffer[i / endian] |= data << i % endian * bits_per_byte;
+        for slice in bytes.chunks(endian) {
+            buffer.push(u32::from_le_bytes(slice.try_into().unwrap()));
         }
 
         buffer
