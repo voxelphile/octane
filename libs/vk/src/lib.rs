@@ -100,6 +100,8 @@ mod ffi {
     handle_nondispatchable!(Pipeline);
     handle_nondispatchable!(Framebuffer);
     handle_nondispatchable!(CommandPool);
+    handle_nondispatchable!(Fence);
+    handle_nondispatchable!(Semaphore);
 
     pub type DeviceSize = u64;
     pub type Flags = u32;
@@ -128,8 +130,11 @@ mod ffi {
         Unknown = -13,
         SurfaceLost = -1000000000,
         NativeWindowInUse = -1000000001,
+        Suboptimal = 1000001003,
+        OutOfDate = -1000001004,
         InvalidShader = -1000012000,
         CompressionExhausted = -1000338000,
+        FullScreenExclusiveModeLost = -1000255000,
     }
 
     #[derive(Clone, Copy)]
@@ -139,6 +144,9 @@ mod ffi {
         InstanceCreateInfo = 1,
         DeviceQueueCreateInfo = 2,
         DeviceCreateInfo = 3,
+        SubmitInfo = 4,
+        FenceCreateInfo = 8,
+        SemaphoreCreateInfo = 9,
         ImageViewCreateInfo = 15,
         ShaderModuleCreateInfo = 16,
         PipelineShaderStageCreateInfo = 18,
@@ -160,6 +168,7 @@ mod ffi {
         CommandBufferBeginInfo = 42,
         RenderPassBeginInfo = 43,
         SwapchainCreateInfo = 1000001000,
+        PresentInfo = 1000001001,
         XlibSurfaceCreateInfo = 1000004000,
         DebugUtilsMessengerCreateInfo = 1000128004,
     }
@@ -852,7 +861,19 @@ mod ffi {
         pub resolve_attachments: *const AttachmentReference,
         pub depth_stencil_attachment: *const AttachmentReference,
         pub preserve_attachment_count: c_uint,
-        pub preserve_attachments: *const u32,
+        pub preserve_attachments: *const c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct SubpassDependency {
+        pub src_subpass: c_uint,
+        pub dst_subpass: c_uint,
+        pub src_stage_mask: c_uint,
+        pub dst_stage_mask: c_uint,
+        pub src_access_mask: c_uint,
+        pub dst_access_mask: c_uint,
+        pub dependency_flags: c_uint,
     }
 
     #[derive(Clone, Copy)]
@@ -866,8 +887,7 @@ mod ffi {
         pub subpass_count: c_uint,
         pub subpasses: *const SubpassDescription,
         pub dependency_count: c_uint,
-        //TODO implement dependencies
-        pub dependencies: *const c_void,
+        pub dependencies: *const SubpassDependency,
     }
 
     #[derive(Clone, Copy)]
@@ -1257,6 +1277,7 @@ mod ffi {
     #[repr(C)]
     pub struct CommandBufferBeginInfo {
         pub structure_type: StructureType,
+        pub p_next: *const c_void,
         pub flags: c_uint,
         pub inheritence_info: *const c_void,
     }
@@ -1293,6 +1314,49 @@ mod ffi {
         pub command_pool: CommandPool,
         pub level: CommandBufferLevel,
         pub command_buffer_count: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct FenceCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct SemaphoreCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct SubmitInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub wait_semaphore_count: c_uint,
+        pub wait_semaphores: *const Semaphore,
+        pub wait_dst_stage_mask: *const Flags,
+        pub command_buffer_count: c_uint,
+        pub command_buffers: *const CommandBuffer,
+        pub signal_semaphore_count: c_uint,
+        pub signal_semaphores: *const Semaphore,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PresentInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub wait_semaphore_count: c_uint,
+        pub wait_semaphores: *const Semaphore,
+        pub swapchain_count: c_uint,
+        pub swapchains: *const Swapchain,
+        pub image_indices: *const c_uint,
+        pub results: *const Result,
     }
 
     #[link(name = "vulkan")]
@@ -1450,13 +1514,56 @@ mod ffi {
             contents: SubpassContents,
         );
         pub fn vkCmdEndRenderPass(command_buffer: CommandBuffer);
-        pub fn vkCmdBindPipeline(command_buffer: CommandBuffer, pipeline: Pipeline);
+        pub fn vkCmdBindPipeline(
+            command_buffer: CommandBuffer,
+            bind_point: PipelineBindPoint,
+            pipeline: Pipeline,
+        );
         pub fn vkCmdDraw(
+            command_buffer: CommandBuffer,
             vertex_count: c_uint,
             instance_count: c_uint,
             first_vertex: c_uint,
             first_instance: c_uint,
         );
+        pub fn vkCreateFence(
+            device: Device,
+            create_info: *const FenceCreateInfo,
+            allocator: *const c_void,
+            fence: *mut Fence,
+        ) -> Result;
+        pub fn vkDestroyFence(device: Device, fence: Fence, allocator: *const c_void);
+        pub fn vkCreateSemaphore(
+            device: Device,
+            create_info: *const SemaphoreCreateInfo,
+            allocator: *const c_void,
+            semaphore: *mut Semaphore,
+        ) -> Result;
+        pub fn vkDestroySemaphore(device: Device, semaphore: Semaphore, allocator: *const c_void);
+        pub fn vkWaitForFences(
+            device: Device,
+            fence_count: c_uint,
+            fence: *const Fence,
+            wait_all: Bool,
+            timeout: c_ulong,
+        ) -> Result;
+        pub fn vkResetFences(device: Device, fence_count: c_uint, fence: *const Fence) -> Result;
+        pub fn vkAcquireNextImageKHR(
+            device: Device,
+            swapchain: Swapchain,
+            timeout: c_ulong,
+            semaphore: Semaphore,
+            fence: Fence,
+            image_index: *mut c_uint,
+        ) -> Result;
+        pub fn vkQueueSubmit(
+            queue: Queue,
+            submit_count: c_uint,
+            submit_infos: *const SubmitInfo,
+            fence: Fence,
+        ) -> Result;
+        pub fn vkQueuePresentKHR(queue: Queue, present_info: *const PresentInfo) -> Result;
+        pub fn vkResetCommandBuffer(command_buffer: CommandBuffer, flags: Flags) -> Result;
     }
 }
 
@@ -1496,6 +1603,12 @@ pub const COLOR_COMPONENT_A: u32 = 0x00000008;
 
 pub const SAMPLE_COUNT_1: u32 = 0x00000001;
 
+pub const SUBPASS_EXTERNAL: u32 = u32::MAX;
+
+pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
+
+pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
+
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
 #[derive(Clone, Copy, Debug)]
@@ -1515,8 +1628,11 @@ pub enum Error {
     Unknown,
     SurfaceLost,
     NativeWindowInUse,
+    Suboptimal,
+    OutOfDate,
     InvalidShader,
     CompressionExhausted,
+    FullScreenExclusiveModeLost,
 }
 
 #[derive(Clone, Copy)]
@@ -2142,6 +2258,122 @@ pub struct Queue {
     handle: ffi::Queue,
 }
 
+impl Queue {
+    pub fn submit(
+        &mut self,
+        submit_infos: &'_ [SubmitInfo],
+        fence: Option<&'_ mut Fence>,
+    ) -> Result<(), Error> {
+        let wait_semaphores = submit_infos
+            .iter()
+            .map(|submit_info| {
+                submit_info
+                    .wait_semaphores
+                    .iter()
+                    .map(|semaphore| semaphore.handle)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let command_buffers = submit_infos
+            .iter()
+            .map(|submit_info| {
+                submit_info
+                    .command_buffers
+                    .iter()
+                    .map(|command_buffer| command_buffer.handle)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let signal_semaphores = submit_infos
+            .iter()
+            .map(|submit_info| {
+                submit_info
+                    .signal_semaphores
+                    .iter()
+                    .map(|semaphore| semaphore.handle)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let submit_infos = submit_infos
+            .iter()
+            .enumerate()
+            .map(|(i, submit_info)| ffi::SubmitInfo {
+                structure_type: ffi::StructureType::SubmitInfo,
+                p_next: ptr::null(),
+                wait_semaphore_count: wait_semaphores[i].len() as _,
+                wait_semaphores: wait_semaphores[i].as_ptr(),
+                wait_dst_stage_mask: submit_info.wait_stages.as_ptr() as _,
+                command_buffer_count: command_buffers[i].len() as _,
+                command_buffers: command_buffers[i].as_ptr(),
+                signal_semaphore_count: signal_semaphores[i].len() as _,
+                signal_semaphores: signal_semaphores[i].as_ptr(),
+            })
+            .collect::<Vec<_>>();
+
+        let fence = fence.map_or(ffi::Fence::null(), |fence| fence.handle);
+
+        let result = unsafe {
+            ffi::vkQueueSubmit(
+                self.handle,
+                submit_infos.len() as _,
+                submit_infos.as_ptr(),
+                fence,
+            )
+        };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn present(&mut self, present_info: PresentInfo) -> Result<(), Error> {
+        let wait_semaphores = present_info
+            .wait_semaphores
+            .iter()
+            .map(|semaphore| semaphore.handle)
+            .collect::<Vec<_>>();
+
+        let swapchains = present_info
+            .swapchains
+            .iter()
+            .map(|swapchain| swapchain.handle)
+            .collect::<Vec<_>>();
+
+        let present_info = ffi::PresentInfo {
+            structure_type: ffi::StructureType::PresentInfo,
+            p_next: ptr::null(),
+            wait_semaphore_count: wait_semaphores.len() as _,
+            wait_semaphores: wait_semaphores.as_ptr(),
+            swapchain_count: swapchains.len() as _,
+            swapchains: swapchains.as_ptr(),
+            image_indices: present_info.image_indices.as_ptr() as _,
+            //TODO
+            results: ptr::null(),
+        };
+
+        let result = unsafe { ffi::vkQueuePresentKHR(self.handle, &present_info) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::Suboptimal => Err(Error::Suboptimal),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            ffi::Result::OutOfDate => Err(Error::OutOfDate),
+            ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
+            ffi::Result::FullScreenExclusiveModeLost => Err(Error::FullScreenExclusiveModeLost),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
 pub struct Surface {
     instance: Rc<Instance>,
     handle: ffi::Surface,
@@ -2337,6 +2569,43 @@ impl Swapchain {
 
         swapchain_images
     }
+
+    pub fn acquire_next_image(
+        &mut self,
+        timeout: u64,
+        semaphore: Option<&'_ mut Semaphore>,
+        fence: Option<&'_ mut Fence>,
+    ) -> Result<u32, Error> {
+        let mut image_index = 0;
+
+        let semaphore = semaphore.map_or(ffi::Semaphore::null(), |semaphore| semaphore.handle);
+
+        let fence = fence.map_or(ffi::Fence::null(), |fence| fence.handle);
+
+        let result = unsafe {
+            ffi::vkAcquireNextImageKHR(
+                self.device.handle,
+                self.handle,
+                timeout,
+                semaphore,
+                fence,
+                &mut image_index,
+            )
+        };
+
+        //TODO this might be wrong
+        match result {
+            ffi::Result::Success | ffi::Result::Timeout | ffi::Result::NotReady => Ok(image_index),
+            ffi::Result::Suboptimal => Err(Error::Suboptimal),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            ffi::Result::OutOfDate => Err(Error::OutOfDate),
+            ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
+            ffi::Result::FullScreenExclusiveModeLost => Err(Error::FullScreenExclusiveModeLost),
+            _ => panic!("unexpected result"),
+        }
+    }
 }
 
 impl Drop for Swapchain {
@@ -2477,6 +2746,7 @@ impl ImageView {
 
 impl Drop for ImageView {
     fn drop(&mut self) {
+        println!("yoo");
         unsafe { ffi::vkDestroyImageView(self.device.handle, self.handle, ptr::null()) };
     }
 }
@@ -2770,9 +3040,19 @@ pub struct SubpassDescription<'a> {
     pub preserve_attachments: &'a [u32],
 }
 
+pub struct SubpassDependency {
+    pub src_subpass: u32,
+    pub dst_subpass: u32,
+    pub src_stage_mask: u32,
+    pub dst_stage_mask: u32,
+    pub src_access_mask: u32,
+    pub dst_access_mask: u32,
+}
+
 pub struct RenderPassCreateInfo<'a> {
     pub attachments: &'a [AttachmentDescription],
     pub subpasses: &'a [SubpassDescription<'a>],
+    pub dependencies: &'a [SubpassDependency],
 }
 
 pub struct RenderPass {
@@ -2920,6 +3200,20 @@ impl RenderPass {
             })
             .collect::<Vec<_>>();
 
+        let dependencies = create_info
+            .dependencies
+            .iter()
+            .map(|dependency| ffi::SubpassDependency {
+                src_subpass: dependency.src_subpass,
+                dst_subpass: dependency.dst_subpass,
+                src_stage_mask: dependency.src_stage_mask,
+                dst_stage_mask: dependency.dst_stage_mask,
+                src_access_mask: dependency.src_access_mask,
+                dst_access_mask: dependency.dst_access_mask,
+                dependency_flags: 0,
+            })
+            .collect::<Vec<_>>();
+
         let create_info = ffi::RenderPassCreateInfo {
             structure_type: ffi::StructureType::RenderPassCreateInfo,
             p_next: ptr::null(),
@@ -2928,8 +3222,8 @@ impl RenderPass {
             attachments: attachment_descriptions.as_ptr(),
             subpass_count: subpasses.len() as _,
             subpasses: subpasses.as_ptr(),
-            dependency_count: 0,
-            dependencies: ptr::null(),
+            dependency_count: dependencies.len() as _,
+            dependencies: dependencies.as_ptr(),
         };
 
         let mut handle = MaybeUninit::<ffi::RenderPass>::uninit();
@@ -3315,13 +3609,14 @@ impl Pipeline {
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
+        println!("wowwww");
         unsafe { ffi::vkDestroyPipeline(self.device.handle, self.handle, ptr::null()) };
     }
 }
 
 pub struct FramebufferCreateInfo<'a> {
     pub render_pass: &'a RenderPass,
-    pub attachments: &'a [ImageView],
+    pub attachments: &'a [&'a ImageView],
     pub width: u32,
     pub height: u32,
     pub layers: u32,
@@ -3398,7 +3693,7 @@ impl CommandPool {
         let create_info = ffi::CommandPoolCreateInfo {
             structure_type: ffi::StructureType::CommandPoolCreateInfo,
             p_next: ptr::null(),
-            flags: 0,
+            flags: 0x00000002,
             queue_family_index: create_info.queue_family_index,
         };
 
@@ -3492,6 +3787,7 @@ impl CommandBuffer {
     pub fn record(&mut self, script: impl Fn(&mut Commands)) -> Result<(), Error> {
         let begin_info = ffi::CommandBufferBeginInfo {
             structure_type: ffi::StructureType::CommandBufferBeginInfo,
+            p_next: ptr::null(),
             flags: 0,
             inheritence_info: ptr::null(),
         };
@@ -3516,6 +3812,16 @@ impl CommandBuffer {
         match result {
             ffi::Result::Success => Ok(()),
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn reset(&mut self) -> Result<(), Error> {
+        let result = unsafe { ffi::vkResetCommandBuffer(self.handle, 0) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             _ => panic!("unexpected result"),
         }
@@ -3560,8 +3866,14 @@ impl Commands<'_> {
         unsafe { ffi::vkCmdEndRenderPass(self.command_buffer.handle) };
     }
 
-    pub fn bind_pipeline(&mut self, pipeline: &Pipeline) {
-        unsafe { ffi::vkCmdBindPipeline(self.command_buffer.handle, pipeline.handle) };
+    pub fn bind_pipeline(&mut self, bind_point: PipelineBindPoint, pipeline: &Pipeline) {
+        unsafe {
+            ffi::vkCmdBindPipeline(
+                self.command_buffer.handle,
+                bind_point.into(),
+                pipeline.handle,
+            )
+        };
     }
 
     pub fn draw(
@@ -3571,7 +3883,15 @@ impl Commands<'_> {
         first_vertex: u32,
         first_instance: u32,
     ) {
-        unsafe { ffi::vkCmdDraw(vertex_count, instance_count, first_vertex, first_instance) };
+        unsafe {
+            ffi::vkCmdDraw(
+                self.command_buffer.handle,
+                vertex_count,
+                instance_count,
+                first_vertex,
+                first_instance,
+            )
+        };
     }
 }
 
@@ -3580,4 +3900,174 @@ pub struct RenderPassBeginInfo<'a> {
     pub framebuffer: &'a Framebuffer,
     pub render_area: Rect2d,
     pub clear_values: &'a [[f32; 4]],
+}
+
+pub struct SemaphoreCreateInfo {}
+
+pub struct Semaphore {
+    device: Rc<Device>,
+    handle: ffi::Semaphore,
+}
+
+impl Semaphore {
+    pub fn new(device: Rc<Device>, create_info: SemaphoreCreateInfo) -> Result<Self, Error> {
+        let create_info = ffi::SemaphoreCreateInfo {
+            structure_type: ffi::StructureType::SemaphoreCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+        };
+
+        let mut handle = MaybeUninit::<ffi::Semaphore>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateSemaphore(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let semaphore = Self { device, handle };
+
+                Ok(semaphore)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for Semaphore {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroySemaphore(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct FenceCreateInfo {}
+
+pub struct Fence {
+    device: Rc<Device>,
+    handle: ffi::Fence,
+}
+
+impl Fence {
+    pub fn new(device: Rc<Device>, create_info: FenceCreateInfo) -> Result<Self, Error> {
+        let create_info = ffi::FenceCreateInfo {
+            structure_type: ffi::StructureType::FenceCreateInfo,
+            p_next: ptr::null(),
+            flags: 0x00000001,
+        };
+
+        let mut handle = MaybeUninit::<ffi::Fence>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateFence(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let fence = Self { device, handle };
+
+                Ok(fence)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn wait(fences: &'_ [&'_ mut Self], wait_all: bool, timeout: u64) -> Result<(), Error> {
+        if fences.len() == 0 {
+            return Ok(());
+        }
+
+        let same_device = fences
+            .iter()
+            .all(|fence| fence.device.handle == fences[0].device.handle);
+
+        if !same_device {
+            panic!("fences must be for same device");
+        }
+
+        let device_handle = fences[0].device.handle;
+
+        let fences = fences.iter().map(|fence| fence.handle).collect::<Vec<_>>();
+
+        let result = unsafe {
+            ffi::vkWaitForFences(
+                device_handle,
+                fences.len() as _,
+                fences.as_ptr(),
+                wait_all as _,
+                timeout as _,
+            )
+        };
+
+        match result {
+            ffi::Result::Success | ffi::Result::Timeout => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn reset(fences: &'_ [&'_ mut Self]) -> Result<(), Error> {
+        if fences.len() == 0 {
+            return Ok(());
+        }
+
+        let same_device = fences
+            .iter()
+            .all(|fence| fence.device.handle == fences[0].device.handle);
+
+        if !same_device {
+            panic!("fences must be for same device");
+        }
+
+        let device_handle = fences[0].device.handle;
+
+        let fences = fences.iter().map(|fence| fence.handle).collect::<Vec<_>>();
+
+        let result =
+            unsafe { ffi::vkResetFences(device_handle, fences.len() as _, fences.as_ptr()) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for Fence {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyFence(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct SubmitInfo<'a> {
+    pub wait_semaphores: &'a [&'a Semaphore],
+    pub wait_stages: &'a [u32],
+    pub signal_semaphores: &'a [&'a mut Semaphore],
+    pub command_buffers: &'a [&'a CommandBuffer],
+}
+
+pub struct PresentInfo<'a> {
+    pub wait_semaphores: &'a [&'a Semaphore],
+    pub swapchains: &'a [&'a Swapchain],
+    pub image_indices: &'a [u32],
 }

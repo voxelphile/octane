@@ -151,7 +151,7 @@ fn main() {
     let device = vk::Device::new(&physical_device, device_create_info)
         .expect("failed to create logical device");
 
-    let queue = device.queue(graphics_queue_family_index);
+    let mut queue = device.queue(graphics_queue_family_index);
 
     let surface = vk::Surface::new(instance.clone(), &window);
 
@@ -167,7 +167,7 @@ fn main() {
     let present_mode = vk::PresentMode::Fifo;
 
     //TODO add dynamic size
-    let extent = (1920, 1080);
+    let extent = (2560, 1440);
 
     let image_count = surface_capabilities.min_image_count + 1;
 
@@ -189,7 +189,7 @@ fn main() {
         old_swapchain: None,
     };
 
-    let swapchain = vk::Swapchain::new(device.clone(), swapchain_create_info)
+    let mut swapchain = vk::Swapchain::new(device.clone(), swapchain_create_info)
         .expect("failed to create swapchain");
 
     let swapchain_images = swapchain.images();
@@ -295,8 +295,8 @@ fn main() {
     let viewport = vk::Viewport {
         x: 0.0,
         y: 0.0,
-        width: 1920.0,
-        height: 1080.0,
+        width: extent.0 as _,
+        height: extent.1 as _,
         min_depth: 0.0,
         max_depth: 1.0,
     };
@@ -384,9 +384,19 @@ fn main() {
         preserve_attachments: &[],
     };
 
+    let subpass_dependency = vk::SubpassDependency {
+        src_subpass: vk::SUBPASS_EXTERNAL,
+        dst_subpass: 0,
+        src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+        src_access_mask: 0,
+        dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+        dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE,
+    };
+
     let render_pass_create_info = vk::RenderPassCreateInfo {
         attachments: &[color_attachment_description],
         subpasses: &[subpass_description],
+        dependencies: &[subpass_dependency],
     };
 
     let render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
@@ -410,21 +420,20 @@ fn main() {
         base_pipeline_index: -1,
     };
 
-    let graphics_pipeline = &vk::Pipeline::new_graphics_pipelines(
+    let graphics_pipeline = vk::Pipeline::new_graphics_pipelines(
         device.clone(),
         None,
         &[graphics_pipeline_create_info],
     )
-    .expect("failed to create graphics pipeline")[0];
+    .expect("failed to create graphics pipeline")
+    .remove(0);
 
     let framebuffers = swapchain_image_views
-        .into_iter()
+        .iter()
         .map(|image_view| {
-            let attachments = [image_view];
-
             let framebuffer_create_info = vk::FramebufferCreateInfo {
                 render_pass: &render_pass,
-                attachments: &attachments,
+                attachments: &[image_view],
                 width: extent.0,
                 height: extent.1,
                 layers: 1,
@@ -448,49 +457,122 @@ fn main() {
         count: 1,
     };
 
-    let command_buffer = &vk::CommandBuffer::allocate(device.clone(), command_buffer_allocate_info)
-        .expect("failed to create command buffer")[0];
+    let mut command_buffer =
+        vk::CommandBuffer::allocate(device.clone(), command_buffer_allocate_info)
+            .expect("failed to create command buffer")
+            .remove(0);
 
     let record_command_buffer = |command_buffer: &mut vk::CommandBuffer,
                                  render_pass: &vk::RenderPass,
                                  framebuffer: &vk::Framebuffer,
                                  graphics_pipeline: &vk::Pipeline| {
+        command_buffer.reset();
+
         command_buffer
             .record(|commands| {
                 let render_pass_begin_info = vk::RenderPassBeginInfo {
                     render_pass: &render_pass,
                     framebuffer: &framebuffer,
                     render_area: scissor,
-                    clear_values: &[[0.0, 0.0, 0.0, 1.0]],
+                    clear_values: &[[1.0, 1.0, 1.0, 1.0]],
                 };
 
                 commands.begin_render_pass(render_pass_begin_info);
 
-                commands.bind_pipeline(graphics_pipeline);
+                commands.bind_pipeline(vk::PipelineBindPoint::Graphics, graphics_pipeline);
 
                 commands.draw(3, 1, 0, 0);
+                println!("yo4");
 
                 commands.end_render_pass();
             })
             .expect("failed to record command buffer");
     };
+    println!("yo1");
+    let semaphore_create_info = vk::SemaphoreCreateInfo {};
+
+    let mut image_available_semaphore = vk::Semaphore::new(device.clone(), semaphore_create_info)
+        .expect("failed to create semaphore");
+
+    let semaphore_create_info = vk::SemaphoreCreateInfo {};
+
+    let mut render_finished_semaphore = vk::Semaphore::new(device.clone(), semaphore_create_info)
+        .expect("failed to create semaphore");
+
+    let fence_create_info = vk::FenceCreateInfo {};
+
+    let mut in_flight_fence =
+        vk::Fence::new(device.clone(), fence_create_info).expect("failed to create fence");
+    println!("yo2");
 
     loop {
+        vk::Fence::wait(&[&mut in_flight_fence], true, u64::MAX).expect("failed to wait for fence");
+
+        vk::Fence::reset(&[&mut in_flight_fence]).expect("failed to reset fence");
+
+        let image_index = swapchain
+            .acquire_next_image(u64::MAX, Some(&mut image_available_semaphore), None)
+            .expect("failed to retrieve image index");
+
+        record_command_buffer(
+            &mut command_buffer,
+            &render_pass,
+            &framebuffers[image_index as usize],
+            &graphics_pipeline,
+        );
+        println!("yo3");
+
+        let submit_info = vk::SubmitInfo {
+            wait_semaphores: &[&image_available_semaphore],
+            wait_stages: &[vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT],
+            command_buffers: &[&command_buffer],
+            signal_semaphores: &[&mut render_finished_semaphore],
+        };
+
+        queue
+            .submit(&[submit_info], Some(&mut in_flight_fence))
+            .expect("failed to submit draw comman buffer");
+
+        let present_info = vk::PresentInfo {
+            wait_semaphores: &[&render_finished_semaphore],
+            swapchains: &[&swapchain],
+            image_indices: &[image_index],
+        };
+
+        queue
+            .present(present_info)
+            .expect("failed to present to screen");
+
         let event = window.next_event();
 
         match event {
-            Some(WindowEvent::KeyPress) | Some(WindowEvent::CloseRequested) => {
+            Some(WindowEvent::CloseRequested) => {
                 break;
             }
             None => {}
+            _ => {}
         }
     }
 
     //TODO figure out surface dependency on window
     //window is dropped before surface which causes segfault
     //explicit drop fixes this but it is not ideal
+    drop(render_finished_semaphore);
+    drop(image_available_semaphore);
+    drop(in_flight_fence);
+    drop(command_pool);
+    drop(framebuffers);
+    drop(graphics_pipeline);
+    drop(pipeline_layout);
+    drop(render_pass);
+    drop(swapchain_image_views);
     drop(swapchain);
+    drop(vertex_shader_module);
+    drop(fragment_shader_module);
+    drop(device);
+    drop(debug_utils_messenger);
     drop(surface);
+    drop(instance);
     drop(window);
     //vk shutdown happens during implicit Drop.
     //Rc ensures shutdown happens in right order.
