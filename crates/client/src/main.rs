@@ -1,5 +1,13 @@
 mod window;
 
+mod term {
+    pub const RESET: &str = "\x1b[1;0m";
+    pub const BOLDMAGENTA: &str = "\x1b[1;35m";
+    pub const BOLDCYAN: &str = "\x1b[1;36m";
+    pub const BOLDYELLOW: &str = "\x1b[1;33m";
+    pub const BOLDRED: &str = "\x1b[1;31m";
+}
+
 use crate::window::{Event as WindowEvent, Window};
 
 use std::fs;
@@ -28,7 +36,19 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            println!("{} - {}", record.level(), record.args());
+            println!(
+                "{}{}{}: {}",
+                match record.level() {
+                    log::Level::Trace => term::BOLDMAGENTA,
+                    log::Level::Info => term::BOLDCYAN,
+                    log::Level::Warn => term::BOLDYELLOW,
+                    log::Level::Error => term::BOLDRED,
+                    _ => term::RESET,
+                },
+                record.level().as_str().to_lowercase(),
+                term::RESET,
+                record.args()
+            );
         }
     }
     fn flush(&self) {}
@@ -40,7 +60,7 @@ static LOGGER: Logger = Logger;
 fn main() {
     println!("Hello, world!");
 
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(log::LevelFilter::Trace);
     log::set_logger(&LOGGER).expect("failed to set logger");
 
     let mut window = Window::new();
@@ -475,13 +495,12 @@ fn main() {
                 commands.bind_pipeline(vk::PipelineBindPoint::Graphics, graphics_pipeline);
 
                 commands.draw(3, 1, 0, 0);
-                println!("yo4");
 
                 commands.end_render_pass();
             })
             .expect("failed to record command buffer");
     };
-    println!("yo1");
+
     let semaphore_create_info = vk::SemaphoreCreateInfo {};
 
     let mut image_available_semaphore = vk::Semaphore::new(device.clone(), semaphore_create_info)
@@ -496,7 +515,6 @@ fn main() {
 
     let mut in_flight_fence =
         vk::Fence::new(device.clone(), fence_create_info).expect("failed to create fence");
-    println!("yo2");
 
     loop {
         vk::Fence::wait(&[&mut in_flight_fence], true, u64::MAX).expect("failed to wait for fence");
@@ -513,7 +531,6 @@ fn main() {
             &framebuffers[image_index as usize],
             &graphics_pipeline,
         );
-        println!("yo3");
 
         let submit_info = vk::SubmitInfo {
             wait_semaphores: &[&image_available_semaphore],
