@@ -52,7 +52,7 @@ static LOGGER: Logger = Logger;
 fn main() {
     println!("Hello, world!");
 
-    log::set_max_level(log::LevelFilter::Trace);
+    log::set_max_level(log::LevelFilter::Info);
     log::set_logger(&LOGGER).expect("failed to set logger");
 
     let mut window = Window::new();

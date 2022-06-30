@@ -8,6 +8,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let resources_path = format!("{}/{}/", base_path, "resources");
     let assets_path = format!("{}/{}/", base_path, "assets");
 
+    println!("cargo:rerun-if-changed={}*", resources_path);
+
     for entry in fs::read_dir(resources_path)? {
         let entry = entry?;
 

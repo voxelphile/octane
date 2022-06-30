@@ -24,7 +24,7 @@ pub struct Entry<'a> {
 }
 
 //TODO add dynamic EXTENT
-const EXTENT: (u32, u32) = (2560, 1440);
+const EXTENT: (u32, u32) = (960, 540);
 
 fn convert_bytes_to_spirv_data(bytes: Vec<u8>) -> Vec<u32> {
     let endian = mem::size_of::<u32>() / mem::size_of::<u8>();
@@ -176,7 +176,6 @@ pub struct Vulkan {
     instance: Rc<vk::Instance>,
     #[cfg(debug_assertions)]
     debug_utils_messenger: vk::DebugUtilsMessenger,
-    surface: vk::Surface,
     device: Rc<vk::Device>,
     queue: vk::Queue,
     shaders: HashMap<&'static str, vk::ShaderModule>,
@@ -193,6 +192,7 @@ pub struct Vulkan {
     image_available_semaphore: vk::Semaphore,
     buffer: vk::Buffer,
     last_batch: Batch,
+    surface: vk::Surface,
 }
 
 impl Vulkan {
@@ -243,6 +243,8 @@ impl Vulkan {
         )
         .expect("failed to create debug utils messenger");
 
+        let surface = vk::Surface::new(instance.clone(), &window);
+
         let physical_device = {
             let mut candidates = vk::PhysicalDevice::enumerate(instance.clone())
                 .into_iter()
@@ -281,10 +283,17 @@ impl Vulkan {
         let mut graphics_queue_family_index = 0;
 
         for (i, queue_family) in queue_families.iter().enumerate() {
-            if queue_family.queue_flags & vk::QUEUE_GRAPHICS != 0 {
-                graphics_queue_family_index = i as u32;
-                break;
+            if queue_family.queue_flags & vk::QUEUE_GRAPHICS == 0 {
+                continue;
             }
+            if !physical_device
+                .surface_supported(&surface, i as _)
+                .expect("failed to query surface support")
+            {
+                continue;
+            }
+            graphics_queue_family_index = i as u32;
+            break;
         }
 
         let queue_create_info = vk::DeviceQueueCreateInfo {
@@ -307,8 +316,6 @@ impl Vulkan {
         let mut queue = device.queue(graphics_queue_family_index);
 
         let shaders = HashMap::new();
-
-        let surface = vk::Surface::new(instance.clone(), &window);
 
         let surface_capabilities = physical_device.surface_capabilities(&surface);
 
@@ -475,17 +482,13 @@ impl Vulkan {
 
         let last_batch = Batch::default();
 
-        let vertices: [Vertex; 3] = [[0.0, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]];
-
         let buffer = vk::Buffer::allocate(
             device.clone(),
             &physical_device,
-            vertices.len() * mem::size_of::<Vertex>(),
-            vk::BUFFER_USAGE_VERTEX,
+            32768,
+            vk::BUFFER_USAGE_VERTEX | vk::BUFFER_USAGE_INDEX,
         )
         .expect("failed to allocate buffer");
-
-        buffer.copy(0, &vertices).expect("failed to copy to buffer");
 
         Self {
             instance,
@@ -514,6 +517,40 @@ impl Vulkan {
 
 impl Renderer for Vulkan {
     fn draw_batch(&mut self, batch: Batch, entries: &'_ [Entry<'_>]) {
+        self.device.wait_idle().expect("failed to wait on device");
+
+        let mut num_vertices = 0;
+
+        for entry in entries {
+            let (vertices, _) = entry.mesh.get();
+
+            self.buffer
+                .copy(num_vertices * mem::size_of::<Vertex>(), &vertices[..])
+                .expect("failed to copy to buffer");
+
+            num_vertices += vertices.len();
+        }
+
+        let mut num_indices = 0;
+
+        for entry in entries {
+            let (_, indices) = entry.mesh.get();
+
+            let indices = indices
+                .iter()
+                .map(|i| i + num_indices as u16)
+                .collect::<Vec<_>>();
+
+            self.buffer
+                .copy(
+                    num_vertices * mem::size_of::<Vertex>() + num_indices * mem::size_of::<u16>(),
+                    &indices[..],
+                )
+                .expect("failed to copy to buffer");
+
+            num_indices += indices.len();
+        }
+
         self.shaders.entry(batch.vertex_shader).or_insert_with(|| {
             let bytes = fs::read(batch.vertex_shader).expect("failed to read shader");
 
@@ -607,7 +644,13 @@ impl Renderer for Vulkan {
 
                 commands.bind_vertex_buffers(0, 1, &[&self.buffer], &[0]);
 
-                commands.draw(3, 1, 0, 0);
+                commands.bind_index_buffer(
+                    &self.buffer,
+                    num_vertices * mem::size_of::<Vertex>(),
+                    vk::IndexType::Uint16,
+                );
+
+                commands.draw_indexed(num_indices as _, 1, 0, 0, 0);
 
                 commands.end_render_pass();
             })
@@ -633,5 +676,11 @@ impl Renderer for Vulkan {
         self.queue
             .present(present_info)
             .expect("failed to present to screen");
+    }
+}
+
+impl Drop for Vulkan {
+    fn drop(&mut self) {
+        self.device.wait_idle().expect("failed to wait on device");
     }
 }

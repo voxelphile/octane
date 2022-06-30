@@ -228,6 +228,22 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub enum IndexType {
+        Uint16 = 0,
+        Uint32 = 1,
+    }
+
+    impl From<super::IndexType> for IndexType {
+        fn from(index_type: super::IndexType) -> Self {
+            match index_type {
+                super::IndexType::Uint16 => Self::Uint16,
+                super::IndexType::Uint32 => Self::Uint32,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub enum ColorSpace {
         SrgbNonlinear = 0,
     }
@@ -1459,6 +1475,12 @@ mod ffi {
             surface: Surface,
             surface_capabilities: *mut SurfaceCapabilities,
         );
+        pub fn vkGetPhysicalDeviceSurfaceSupportKHR(
+            physical_device: PhysicalDevice,
+            queue_family_index: c_uint,
+            surface: Surface,
+            supported: *mut Bool,
+        ) -> Result;
         pub fn vkGetPhysicalDeviceMemoryProperties(
             physical_device: PhysicalDevice,
             memory_properties: *mut PhysicalDeviceMemoryProperties,
@@ -1470,6 +1492,7 @@ mod ffi {
             device: *mut Device,
         ) -> Result;
         pub fn vkDestroyDevice(device: Device, allocator: *const c_void);
+        pub fn vkDeviceWaitIdle(device: Device) -> Result;
         pub fn vkGetDeviceQueue(
             device: Device,
             queue_family_index: c_uint,
@@ -1590,6 +1613,7 @@ mod ffi {
             allocator: *const c_void,
             memory: *mut DeviceMemory,
         ) -> Result;
+        pub fn vkFreeMemory(device: Device, memory: DeviceMemory, allocator: *const c_void);
         pub fn vkBindBufferMemory(
             device: Device,
             buffer: Buffer,
@@ -1624,12 +1648,26 @@ mod ffi {
             first_vertex: c_uint,
             first_instance: c_uint,
         );
+        pub fn vkCmdDrawIndexed(
+            command_buffer: CommandBuffer,
+            index_count: c_uint,
+            instance_count: c_uint,
+            first_index: c_uint,
+            vertex_offset: c_int,
+            first_instance: c_uint,
+        );
         pub fn vkCmdBindVertexBuffers(
             command_buffer: CommandBuffer,
             first_binding: c_uint,
             binding_count: c_uint,
             buffers: *const Buffer,
             offsets: *const DeviceSize,
+        );
+        pub fn vkCmdBindIndexBuffer(
+            command_buffer: CommandBuffer,
+            buffer: Buffer,
+            offset: DeviceSize,
+            index_type: IndexType,
         );
         pub fn vkCreateFence(
             device: Device,
@@ -1758,6 +1796,12 @@ pub enum Error {
 pub enum Format {
     Bgra8Srgb,
     Rgb32Sfloat,
+}
+
+#[derive(Clone, Copy)]
+pub enum IndexType {
+    Uint16,
+    Uint32,
 }
 
 #[derive(Clone, Copy)]
@@ -2238,6 +2282,37 @@ impl PhysicalDevice {
         }
     }
 
+    pub fn surface_supported(
+        &self,
+        surface: &Surface,
+        queue_family_index: u32,
+    ) -> Result<bool, Error> {
+        let mut supported = MaybeUninit::<ffi::Bool>::uninit();
+
+        let result = unsafe {
+            ffi::vkGetPhysicalDeviceSurfaceSupportKHR(
+                self.handle,
+                queue_family_index,
+                surface.handle,
+                supported.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let supported = unsafe { supported.assume_init() };
+
+                let supported = supported != 0;
+
+                Ok(supported)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
+            _ => panic!("unexpected result"),
+        }
+    }
+
     //TODO
     pub fn surface_formats(&self, surface: &Surface) -> Vec<SurfaceFormat> {
         unimplemented!();
@@ -2365,6 +2440,18 @@ impl Device {
         let handle = unsafe { handle.assume_init() };
 
         Queue { handle }
+    }
+
+    pub fn wait_idle(&self) -> Result<(), Error> {
+        let result = unsafe { ffi::vkDeviceWaitIdle(self.handle) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            _ => panic!("unexpected result"),
+        }
     }
 }
 
@@ -2867,7 +2954,6 @@ impl ImageView {
 
 impl Drop for ImageView {
     fn drop(&mut self) {
-        println!("yoo");
         unsafe { ffi::vkDestroyImageView(self.device.handle, self.handle, ptr::null()) };
     }
 }
@@ -4079,6 +4165,17 @@ impl Commands<'_> {
         };
     }
 
+    pub fn bind_index_buffer(&mut self, buffer: &'_ Buffer, offset: usize, index_type: IndexType) {
+        unsafe {
+            ffi::vkCmdBindIndexBuffer(
+                self.command_buffer.handle,
+                buffer.handle,
+                offset as _,
+                index_type.into(),
+            )
+        };
+    }
+
     pub fn draw(
         &mut self,
         vertex_count: u32,
@@ -4092,6 +4189,26 @@ impl Commands<'_> {
                 vertex_count,
                 instance_count,
                 first_vertex,
+                first_instance,
+            )
+        };
+    }
+
+    pub fn draw_indexed(
+        &mut self,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        vertex_offset: i32,
+        first_instance: u32,
+    ) {
+        unsafe {
+            ffi::vkCmdDrawIndexed(
+                self.command_buffer.handle,
+                index_count,
+                instance_count,
+                first_index,
+                vertex_offset,
                 first_instance,
             )
         };
@@ -4412,7 +4529,7 @@ impl Buffer {
     }
 
     pub fn copy<T>(&self, offset: usize, data: &'_ [T]) -> Result<(), Error> {
-        if offset + data.len() > self.size {
+        if offset + data.len() * mem::size_of::<T>() > self.size {
             panic!("attempt to overrun buffer");
         }
 
@@ -4437,10 +4554,23 @@ impl Buffer {
             _ => panic!("unexpected result"),
         }
 
-        unsafe { ptr::copy(data.as_ptr().cast::<u8>().add(offset), buf, data.len()) };
+        unsafe {
+            ptr::copy(
+                data.as_ptr() as _,
+                buf.add(offset),
+                data.len() * mem::size_of::<T>(),
+            )
+        };
 
         unsafe { ffi::vkUnmapMemory(self.device.handle, self.memory.unwrap()) };
 
         Ok(())
+    }
+}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        unsafe { ffi::vkFreeMemory(self.device.handle, self.memory.unwrap(), ptr::null()) };
+        unsafe { ffi::vkDestroyBuffer(self.device.handle, self.handle, ptr::null()) };
     }
 }
