@@ -21,7 +21,10 @@ impl Mesh {
         //not a totally accurate obj reader. made to read a single cube
         for line in buf_reader.lines() {
             let line = line.expect("failed to read line");
-            let segments = line.split(" ").collect::<Vec<_>>();
+            let segments = line.split_whitespace().collect::<Vec<_>>();
+            if segments.len() != 4 {
+                continue;
+            }
 
             match segments[0] {
                 "v" => {
@@ -37,7 +40,10 @@ impl Mesh {
                     let parse_index = |id: &str| {
                         let y = id.split("/").collect::<Vec<_>>();
 
-                        y[0].parse::<u16>().expect("failed to parse usize")
+                        let i = y[0].parse::<u16>().expect("failed to parse usize");
+
+                        //obj indices start at 1
+                        i - 1
                     };
 
                     indices.push(parse_index(segments[1]));

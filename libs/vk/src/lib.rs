@@ -104,6 +104,8 @@ mod ffi {
     handle_nondispatchable!(Semaphore);
     handle_nondispatchable!(Buffer);
     handle_nondispatchable!(DeviceMemory);
+    handle_nondispatchable!(DescriptorPool);
+    handle_nondispatchable!(DescriptorSet);
 
     pub type DeviceSize = u64;
     pub type Flags = u32;
@@ -130,6 +132,8 @@ mod ffi {
         FormatNotSupported = -11,
         FragmentedPool = -12,
         Unknown = -13,
+        OutOfPoolMemory = -1000069000,
+        Fragmentation = -1000161000,
         InvalidExternalHandle = -1000072003,
         SurfaceLost = -1000000000,
         NativeWindowInUse = -1000000001,
@@ -167,6 +171,11 @@ mod ffi {
         PipelineDynamicStateCreateInfo = 27,
         GraphicsPipelineCreateInfo = 28,
         PipelineLayoutCreateInfo = 30,
+        DescriptorSetLayoutCreateInfo = 32,
+        DescriptorPoolCreateInfo = 33,
+        DescriptorSetAllocateInfo = 34,
+        WriteDescriptorSet = 35,
+        CopyDescriptorSet = 36,
         FramebufferCreateInfo = 37,
         RenderPassCreateInfo = 38,
         CommandPoolCreateInfo = 39,
@@ -1397,7 +1406,7 @@ mod ffi {
     pub struct BufferCreateInfo {
         pub structure_type: StructureType,
         pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub flags: Flags,
         pub size: DeviceSize,
         pub usage: Flags,
         pub sharing_mode: SharingMode,
@@ -1443,6 +1452,105 @@ mod ffi {
         pub memory_types: [MemoryType; 32],
         pub memory_heap_count: c_uint,
         pub memory_heaps: [MemoryHeap; 32],
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum DescriptorType {
+        UniformBuffer = 6,
+    }
+
+    impl From<super::DescriptorType> for DescriptorType {
+        fn from(descriptor_type: super::DescriptorType) -> Self {
+            match descriptor_type {
+                super::DescriptorType::UniformBuffer => Self::UniformBuffer,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DescriptorSetLayoutBinding {
+        pub binding: c_uint,
+        pub descriptor_type: DescriptorType,
+        pub descriptor_count: c_uint,
+        pub stage: ShaderStage,
+        pub immutable_samplers: *const c_void,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DescriptorSetLayoutCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: Flags,
+        pub binding_count: c_uint,
+        pub bindings: *const DescriptorSetLayoutBinding,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DescriptorBufferInfo {
+        pub buffer: Buffer,
+        pub offset: DeviceSize,
+        pub range: DeviceSize,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct WriteDescriptorSet {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub dst_set: DescriptorSet,
+        pub dst_binding: c_uint,
+        pub dst_array_element: c_uint,
+        pub descriptor_count: c_uint,
+        pub descriptor_type: DescriptorType,
+        pub image_infos: *const c_void,
+        pub buffer_infos: *const DescriptorBufferInfo,
+        pub texel_buffer_view: *const c_void,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct CopyDescriptorSet {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub src_set: DescriptorSet,
+        pub src_binding: c_uint,
+        pub src_array_element: c_uint,
+        pub dst_set: DescriptorSet,
+        pub dst_binding: c_uint,
+        pub dst_array_element: c_uint,
+        pub descriptor_count: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DescriptorPoolSize {
+        pub descriptor_type: DescriptorType,
+        pub descriptor_count: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DescriptorSetAllocateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub descriptor_pool: DescriptorPool,
+        pub descriptor_set_count: c_uint,
+        pub set_layouts: *const DescriptorSetLayout,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct DescriptorPoolCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: Flags,
+        pub max_sets: c_uint,
+        pub pool_size_count: c_uint,
+        pub pool_sizes: *const DescriptorPoolSize,
     }
 
     #[link(name = "vulkan")]
@@ -1716,6 +1824,50 @@ mod ffi {
             data: *mut *mut c_void,
         ) -> Result;
         pub fn vkUnmapMemory(device: Device, memory: DeviceMemory);
+        pub fn vkCreateDescriptorSetLayout(
+            device: Device,
+            create_info: *const DescriptorSetLayoutCreateInfo,
+            allocator: *const c_void,
+            set_layout: *mut DescriptorSetLayout,
+        ) -> Result;
+        pub fn vkDestroyDescriptorSetLayout(
+            device: Device,
+            set_layout: DescriptorSetLayout,
+            allocator: *const c_void,
+        );
+        pub fn vkCreateDescriptorPool(
+            device: Device,
+            create_info: *const DescriptorPoolCreateInfo,
+            allocator: *const c_void,
+            descriptor_pool: *mut DescriptorPool,
+        ) -> Result;
+        pub fn vkDestroyDescriptorPool(
+            device: Device,
+            descriptor_pool: DescriptorPool,
+            allocator: *const c_void,
+        );
+        pub fn vkUpdateDescriptorSets(
+            device: Device,
+            write_count: c_uint,
+            writes: *const WriteDescriptorSet,
+            copy_count: c_uint,
+            copies: *const CopyDescriptorSet,
+        );
+        pub fn vkAllocateDescriptorSets(
+            device: Device,
+            allocate_info: *const DescriptorSetAllocateInfo,
+            descriptor_sets: *mut DescriptorSet,
+        ) -> Result;
+        pub fn vkCmdBindDescriptorSets(
+            command_buffer: CommandBuffer,
+            bind_point: PipelineBindPoint,
+            layout: PipelineLayout,
+            first_set: c_uint,
+            descriptor_set_count: c_uint,
+            descriptor_sets: *const DescriptorSet,
+            dynamic_offset_count: c_uint,
+            dynamic_offsets: *const c_uint,
+        );
     }
 }
 
@@ -1763,6 +1915,7 @@ pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
 
 pub const BUFFER_USAGE_VERTEX: u32 = 0x00000080;
 pub const BUFFER_USAGE_INDEX: u32 = 0x00000040;
+pub const BUFFER_USAGE_UNIFORM: u32 = 0x00000010;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -1781,6 +1934,8 @@ pub enum Error {
     FormatNotSupported,
     FragmentedPool,
     Unknown,
+    OutOfPoolMemory,
+    Fragmentation,
     InvalidExternalHandle,
     SurfaceLost,
     NativeWindowInUse,
@@ -3157,7 +3312,9 @@ pub struct PipelineDynamicStateCreateInfo<'a> {
     pub dynamic_states: &'a [DynamicState],
 }
 
-pub struct PipelineLayoutCreateInfo {}
+pub struct PipelineLayoutCreateInfo<'a> {
+    pub set_layouts: &'a [&'a DescriptorSetLayout],
+}
 
 pub struct PipelineLayout {
     device: Rc<Device>,
@@ -3166,12 +3323,18 @@ pub struct PipelineLayout {
 
 impl PipelineLayout {
     pub fn new(device: Rc<Device>, create_info: PipelineLayoutCreateInfo) -> Result<Self, Error> {
+        let set_layouts = create_info
+            .set_layouts
+            .iter()
+            .map(|set_layout| set_layout.handle)
+            .collect::<Vec<_>>();
+
         let create_info = ffi::PipelineLayoutCreateInfo {
             structure_type: ffi::StructureType::PipelineLayoutCreateInfo,
             p_next: ptr::null(),
             flags: 0,
-            set_layout_count: 0,
-            set_layouts: ptr::null(),
+            set_layout_count: create_info.set_layouts.len() as _,
+            set_layouts: set_layouts.as_ptr(),
             push_constant_range_count: 0,
             push_constant_ranges: ptr::null(),
         };
@@ -4138,6 +4301,33 @@ impl Commands<'_> {
         };
     }
 
+    pub fn bind_descriptor_sets(
+        &mut self,
+        bind_point: PipelineBindPoint,
+        layout: &'_ PipelineLayout,
+        first_set: u32,
+        descriptor_sets: &'_ [&'_ DescriptorSet],
+        dynamic_offsets: &'_ [u32],
+    ) {
+        let descriptor_sets = descriptor_sets
+            .iter()
+            .map(|set| set.handle)
+            .collect::<Vec<_>>();
+
+        unsafe {
+            ffi::vkCmdBindDescriptorSets(
+                self.command_buffer.handle,
+                bind_point.into(),
+                layout.handle,
+                first_set as _,
+                descriptor_sets.len() as _,
+                descriptor_sets.as_ptr(),
+                dynamic_offsets.len() as _,
+                dynamic_offsets.as_ptr() as _,
+            )
+        };
+    }
+
     pub fn bind_vertex_buffers(
         &mut self,
         first_binding: u32,
@@ -4572,5 +4762,319 @@ impl Drop for Buffer {
     fn drop(&mut self) {
         unsafe { ffi::vkFreeMemory(self.device.handle, self.memory.unwrap(), ptr::null()) };
         unsafe { ffi::vkDestroyBuffer(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum DescriptorType {
+    UniformBuffer,
+}
+
+pub struct DescriptorSetLayoutBinding {
+    pub binding: u32,
+    pub descriptor_type: DescriptorType,
+    pub descriptor_count: u32,
+    pub stage: ShaderStage,
+}
+
+pub struct DescriptorSetLayoutCreateInfo<'a> {
+    pub bindings: &'a [DescriptorSetLayoutBinding],
+}
+
+pub struct DescriptorSetLayout {
+    device: Rc<Device>,
+    handle: ffi::DescriptorSetLayout,
+}
+
+impl DescriptorSetLayout {
+    pub fn new(
+        device: Rc<Device>,
+        create_info: DescriptorSetLayoutCreateInfo<'_>,
+    ) -> Result<Self, Error> {
+        let bindings = create_info
+            .bindings
+            .iter()
+            .map(|binding| ffi::DescriptorSetLayoutBinding {
+                binding: binding.binding as _,
+                descriptor_type: binding.descriptor_type.into(),
+                descriptor_count: binding.descriptor_count as _,
+                stage: binding.stage.into(),
+                immutable_samplers: ptr::null(),
+            })
+            .collect::<Vec<_>>();
+
+        let create_info = ffi::DescriptorSetLayoutCreateInfo {
+            structure_type: ffi::StructureType::DescriptorSetLayoutCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            binding_count: create_info.bindings.len() as _,
+            bindings: bindings.as_ptr(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::DescriptorSetLayout>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateDescriptorSetLayout(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let descriptor_set_layout = Self { device, handle };
+
+                Ok(descriptor_set_layout)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for DescriptorSetLayout {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyDescriptorSetLayout(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct DescriptorSetAllocateInfo<'a> {
+    pub descriptor_pool: &'a DescriptorPool,
+    pub set_layouts: &'a [&'a DescriptorSetLayout],
+}
+
+pub struct DescriptorSet {
+    device: Rc<Device>,
+    handle: ffi::DescriptorSet,
+}
+
+impl DescriptorSet {
+    pub fn allocate(
+        device: Rc<Device>,
+        allocate_info: DescriptorSetAllocateInfo<'_>,
+    ) -> Result<Vec<Self>, Error> {
+        let set_layouts = allocate_info
+            .set_layouts
+            .iter()
+            .map(|set_layout| set_layout.handle)
+            .collect::<Vec<_>>();
+
+        let allocate_info = ffi::DescriptorSetAllocateInfo {
+            structure_type: ffi::StructureType::DescriptorSetAllocateInfo,
+            p_next: ptr::null(),
+            descriptor_pool: allocate_info.descriptor_pool.handle,
+            descriptor_set_count: set_layouts.len() as _,
+            set_layouts: set_layouts.as_ptr(),
+        };
+
+        let mut handles =
+            Vec::<ffi::DescriptorSet>::with_capacity(allocate_info.descriptor_set_count as _);
+
+        let result = unsafe {
+            ffi::vkAllocateDescriptorSets(device.handle, &allocate_info, handles.as_mut_ptr())
+        };
+
+        match result {
+            ffi::Result::Success => {
+                unsafe { handles.set_len(allocate_info.descriptor_set_count as _) };
+
+                let descriptor_sets = handles
+                    .into_iter()
+                    .map(|handle| Self {
+                        device: device.clone(),
+                        handle,
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(descriptor_sets)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::FragmentedPool => Err(Error::FragmentedPool),
+            ffi::Result::OutOfPoolMemory => Err(Error::OutOfPoolMemory),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    pub fn update(writes: &'_ [WriteDescriptorSet], copies: &'_ [CopyDescriptorSet]) {
+        if writes.len() == 0 && copies.len() == 0 {
+            return;
+        }
+
+        let same_device_writes = writes
+            .iter()
+            .all(|write| write.dst_set.device.handle == writes[0].dst_set.device.handle);
+
+        let same_device_copies = copies
+            .iter()
+            .all(|copy| copy.dst_set.device.handle == copies[0].dst_set.device.handle);
+
+        if !same_device_writes || !same_device_copies {
+            panic!("descriptor set write or copy must be for same device");
+        }
+
+        let device = if writes.len() > 0 {
+            writes[0].dst_set.device.clone()
+        } else {
+            copies[0].dst_set.device.clone()
+        };
+
+        let write_buffer_infos = writes
+            .iter()
+            .map(|write| {
+                write
+                    .buffer_infos
+                    .iter()
+                    .map(|buffer_info| ffi::DescriptorBufferInfo {
+                        buffer: buffer_info.buffer.handle,
+                        offset: buffer_info.offset as _,
+                        range: buffer_info.range as _,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let writes = writes
+            .iter()
+            .enumerate()
+            .map(|(i, write)| ffi::WriteDescriptorSet {
+                structure_type: ffi::StructureType::WriteDescriptorSet,
+                p_next: ptr::null(),
+                dst_set: write.dst_set.handle,
+                dst_binding: write.dst_binding,
+                dst_array_element: write.dst_array_element,
+                descriptor_count: write.descriptor_count,
+                descriptor_type: write.descriptor_type.into(),
+                image_infos: ptr::null(),
+                buffer_infos: write_buffer_infos[i].as_ptr(),
+                texel_buffer_view: ptr::null(),
+            })
+            .collect::<Vec<_>>();
+
+        let copies = copies
+            .iter()
+            .map(|copy| ffi::CopyDescriptorSet {
+                structure_type: ffi::StructureType::CopyDescriptorSet,
+                p_next: ptr::null(),
+                src_set: copy.src_set.handle,
+                src_binding: copy.src_binding,
+                src_array_element: copy.src_array_element,
+                dst_set: copy.dst_set.handle,
+                dst_binding: copy.dst_binding,
+                dst_array_element: copy.dst_array_element,
+                descriptor_count: copy.descriptor_count,
+            })
+            .collect::<Vec<_>>();
+
+        unsafe {
+            ffi::vkUpdateDescriptorSets(
+                device.handle,
+                writes.len() as _,
+                writes.as_ptr(),
+                copies.len() as _,
+                copies.as_ptr(),
+            )
+        };
+    }
+}
+
+pub struct DescriptorBufferInfo<'a> {
+    pub buffer: &'a Buffer,
+    pub offset: usize,
+    pub range: usize,
+}
+
+pub struct WriteDescriptorSet<'a> {
+    pub dst_set: &'a DescriptorSet,
+    pub dst_binding: u32,
+    pub dst_array_element: u32,
+    pub descriptor_count: u32,
+    pub descriptor_type: DescriptorType,
+    pub buffer_infos: &'a [DescriptorBufferInfo<'a>],
+}
+
+pub struct CopyDescriptorSet<'a> {
+    pub src_set: &'a DescriptorSet,
+    pub src_binding: u32,
+    pub src_array_element: u32,
+    pub dst_set: &'a DescriptorSet,
+    pub dst_binding: u32,
+    pub dst_array_element: u32,
+    pub descriptor_count: u32,
+}
+
+pub struct DescriptorPoolSize {
+    pub descriptor_type: DescriptorType,
+    pub descriptor_count: u32,
+}
+
+pub struct DescriptorPoolCreateInfo<'a> {
+    pub max_sets: u32,
+    pub pool_sizes: &'a [DescriptorPoolSize],
+}
+
+pub struct DescriptorPool {
+    device: Rc<Device>,
+    handle: ffi::DescriptorPool,
+}
+
+impl DescriptorPool {
+    pub fn new(
+        device: Rc<Device>,
+        create_info: DescriptorPoolCreateInfo<'_>,
+    ) -> Result<Self, Error> {
+        let pool_sizes = create_info
+            .pool_sizes
+            .iter()
+            .map(|pool_size| ffi::DescriptorPoolSize {
+                descriptor_type: pool_size.descriptor_type.into(),
+                descriptor_count: pool_size.descriptor_count as _,
+            })
+            .collect::<Vec<_>>();
+
+        let create_info = ffi::DescriptorPoolCreateInfo {
+            structure_type: ffi::StructureType::DescriptorPoolCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            max_sets: create_info.max_sets,
+            pool_size_count: create_info.pool_sizes.len() as _,
+            pool_sizes: pool_sizes.as_ptr(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::DescriptorPool>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateDescriptorPool(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let descriptor_pool = Self { device, handle };
+
+                Ok(descriptor_pool)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::Fragmentation => Err(Error::Fragmentation),
+            _ => panic!("unexpected result"),
+        }
+    }
+}
+
+impl Drop for DescriptorPool {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroyDescriptorPool(self.device.handle, self.handle, ptr::null()) };
     }
 }

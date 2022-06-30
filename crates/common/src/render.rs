@@ -1,12 +1,23 @@
 use crate::mesh::Mesh;
 
+use math::prelude::Matrix;
+
 use std::collections::HashMap;
 use std::fs;
+use std::iter;
 use std::mem;
 use std::rc::Rc;
 
 use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
+
+//temporary for here for now.
+#[derive(Default, Clone, Copy)]
+pub struct UniformBufferObject {
+    pub model: Matrix<f32, 4, 4>,
+    pub view: Matrix<f32, 4, 4>,
+    pub proj: Matrix<f32, 4, 4>,
+}
 
 pub trait Renderer {
     fn draw_batch(&mut self, batch: Batch, entries: &'_ [Entry<'_>]);
@@ -111,7 +122,7 @@ fn create_pipeline(
         rasterizer_discard_enable: false,
         polygon_mode: vk::PolygonMode::Fill,
         //TODO change to front and project raymarch onto backface
-        cull_mode: vk::CULL_MODE_BACK,
+        cull_mode: vk::CULL_MODE_FRONT,
         front_face: vk::FrontFace::Clockwise,
         depth_bias_enable: false,
         depth_bias_constant_factor: 0.0,
@@ -182,6 +193,9 @@ pub struct Vulkan {
     swapchain: vk::Swapchain,
     swapchain_image_views: Vec<vk::ImageView>,
     render_pass: vk::RenderPass,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_sets: Vec<vk::DescriptorSet>,
     pipeline_layout: vk::PipelineLayout,
     graphics_pipeline: Option<vk::Pipeline>,
     framebuffers: Vec<vk::Framebuffer>,
@@ -193,6 +207,7 @@ pub struct Vulkan {
     buffer: vk::Buffer,
     last_batch: Batch,
     surface: vk::Surface,
+    pub ubo: UniformBufferObject,
 }
 
 impl Vulkan {
@@ -379,7 +394,51 @@ impl Vulkan {
                     .expect("failed to create image view")
             })
             .collect::<Vec<_>>();
-        let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {};
+
+        let binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::ShaderStage::Vertex,
+        };
+
+        let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+            bindings: &[binding],
+        };
+
+        let descriptor_set_layout =
+            vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
+                .expect("failed to create descriptor set layout");
+
+        let descriptor_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: swapchain_images.len() as _,
+            pool_sizes: &[descriptor_pool_size],
+        };
+
+        let descriptor_pool = vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
+            .expect("failed to create descriptor pool");
+
+        let set_layouts = iter::repeat(&descriptor_set_layout)
+            .take(swapchain_images.len() as _)
+            .collect::<Vec<_>>();
+
+        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: &descriptor_pool,
+            set_layouts: &set_layouts,
+        };
+
+        let descriptor_sets =
+            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
+                .expect("failed to allocate descriptor sets");
+
+        let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+            set_layouts: &[&descriptor_set_layout],
+        };
 
         let pipeline_layout = vk::PipelineLayout::new(device.clone(), pipeline_layout_create_info)
             .expect("failed to create pipeline layout");
@@ -486,9 +545,11 @@ impl Vulkan {
             device.clone(),
             &physical_device,
             32768,
-            vk::BUFFER_USAGE_VERTEX | vk::BUFFER_USAGE_INDEX,
+            vk::BUFFER_USAGE_VERTEX | vk::BUFFER_USAGE_INDEX | vk::BUFFER_USAGE_UNIFORM,
         )
         .expect("failed to allocate buffer");
+
+        let ubo = UniformBufferObject::default();
 
         Self {
             instance,
@@ -501,6 +562,9 @@ impl Vulkan {
             swapchain,
             swapchain_image_views,
             render_pass,
+            descriptor_set_layout,
+            descriptor_pool,
+            descriptor_sets,
             pipeline_layout,
             graphics_pipeline,
             framebuffers,
@@ -511,6 +575,7 @@ impl Vulkan {
             image_available_semaphore,
             last_batch,
             buffer,
+            ubo,
         }
     }
 }
@@ -523,7 +588,6 @@ impl Renderer for Vulkan {
 
         for entry in entries {
             let (vertices, _) = entry.mesh.get();
-
             self.buffer
                 .copy(num_vertices * mem::size_of::<Vertex>(), &vertices[..])
                 .expect("failed to copy to buffer");
@@ -535,7 +599,6 @@ impl Renderer for Vulkan {
 
         for entry in entries {
             let (_, indices) = entry.mesh.get();
-
             let indices = indices
                 .iter()
                 .map(|i| i + num_indices as u16)
@@ -550,6 +613,15 @@ impl Renderer for Vulkan {
 
             num_indices += indices.len();
         }
+
+        let ubo_offset =
+            num_vertices * mem::size_of::<Vertex>() + num_indices * mem::size_of::<u16>();
+
+        let ubo_offset = (ubo_offset as f64 / 16.0).ceil() * 16.0;
+
+        self.buffer
+            .copy(ubo_offset as _, &[self.ubo])
+            .expect("failed to copy to buffer");
 
         self.shaders.entry(batch.vertex_shader).or_insert_with(|| {
             let bytes = fs::read(batch.vertex_shader).expect("failed to read shader");
@@ -619,6 +691,25 @@ impl Renderer for Vulkan {
             .acquire_next_image(u64::MAX, Some(&mut self.image_available_semaphore), None)
             .expect("failed to retrieve image index");
 
+        for i in 0..self.descriptor_sets.len() {
+            let buffer_info = vk::DescriptorBufferInfo {
+                buffer: &self.buffer,
+                offset: ubo_offset as _,
+                range: mem::size_of::<UniformBufferObject>(),
+            };
+
+            let descriptor_write = vk::WriteDescriptorSet {
+                dst_set: &self.descriptor_sets[image_index as usize],
+                dst_binding: 0,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::UniformBuffer,
+                buffer_infos: &[buffer_info],
+            };
+
+            vk::DescriptorSet::update(&[descriptor_write], &[]);
+        }
+
         self.command_buffer
             .reset()
             .expect("failed to reset command buffer");
@@ -648,6 +739,14 @@ impl Renderer for Vulkan {
                     &self.buffer,
                     num_vertices * mem::size_of::<Vertex>(),
                     vk::IndexType::Uint16,
+                );
+
+                commands.bind_descriptor_sets(
+                    vk::PipelineBindPoint::Graphics,
+                    &self.pipeline_layout,
+                    0,
+                    &[&self.descriptor_sets[image_index as usize]],
+                    &[],
                 );
 
                 commands.draw_indexed(num_indices as _, 1, 0, 0, 0);

@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 common 	= { path = "../../crates/common" }
 
+math 	= { path = "../../libs/math" }
 x11 	= { path = "../../libs/x11" }
 vk 	= { path = "../../libs/vk" }
 net 	= { path = "../../libs/net" }
