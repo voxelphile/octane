@@ -46,6 +46,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "client"
 version = "0.1.0"
 dependencies = [
+ "common",
  "glsl-to-spirv",
  "log",
  "net",
@@ -61,6 +62,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8ad8cef104ac57b68b89df3208164d228503abbdce70f6880ffa3d970e7443a"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "common"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "raw-window-handle",
+ "vk",
 ]
 
 [[package]]

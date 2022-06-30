@@ -1,19 +1,12 @@
 [package]
-name = "client"
+name = "common"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common 	= { path = "../../crates/common" }
-
-x11 	= { path = "../../libs/x11" }
 vk 	= { path = "../../libs/vk" }
-net 	= { path = "../../libs/net" }
 
 log = "*"
 raw-window-handle = "*"
-
-[build-dependencies]
-glsl-to-spirv = "*"

@@ -102,6 +102,8 @@ mod ffi {
     handle_nondispatchable!(CommandPool);
     handle_nondispatchable!(Fence);
     handle_nondispatchable!(Semaphore);
+    handle_nondispatchable!(Buffer);
+    handle_nondispatchable!(DeviceMemory);
 
     pub type DeviceSize = u64;
     pub type Flags = u32;
@@ -128,13 +130,15 @@ mod ffi {
         FormatNotSupported = -11,
         FragmentedPool = -12,
         Unknown = -13,
+        InvalidExternalHandle = -1000072003,
         SurfaceLost = -1000000000,
         NativeWindowInUse = -1000000001,
         Suboptimal = 1000001003,
         OutOfDate = -1000001004,
         InvalidShader = -1000012000,
-        CompressionExhausted = -1000338000,
         FullScreenExclusiveModeLost = -1000255000,
+        InvalidOpaqueCaptureAddress = -1000257000,
+        CompressionExhausted = -1000338000,
     }
 
     #[derive(Clone, Copy)]
@@ -145,8 +149,10 @@ mod ffi {
         DeviceQueueCreateInfo = 2,
         DeviceCreateInfo = 3,
         SubmitInfo = 4,
+        MemoryAllocateInfo = 5,
         FenceCreateInfo = 8,
         SemaphoreCreateInfo = 9,
+        BufferCreateInfo = 12,
         ImageViewCreateInfo = 15,
         ShaderModuleCreateInfo = 16,
         PipelineShaderStageCreateInfo = 18,
@@ -208,12 +214,14 @@ mod ffi {
     #[repr(C)]
     pub enum Format {
         Bgra8Srgb = 50,
+        Rgb32Sfloat = 106,
     }
 
     impl From<super::Format> for Format {
         fn from(format: super::Format) -> Self {
             match format {
                 super::Format::Bgra8Srgb => Self::Bgra8Srgb,
+                super::Format::Rgb32Sfloat => Self::Rgb32Sfloat,
             }
         }
     }
@@ -897,12 +905,21 @@ mod ffi {
         Instance = 1,
     }
 
+    impl From<super::VertexInputRate> for VertexInputRate {
+        fn from(input_rate: super::VertexInputRate) -> Self {
+            match input_rate {
+                super::VertexInputRate::Vertex => Self::Vertex,
+                super::VertexInputRate::Instance => Self::Instance,
+            }
+        }
+    }
+
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct VertexInputBindingDescription {
         pub binding: c_uint,
         pub stride: c_uint,
-        pub input_rate: c_uint,
+        pub input_rate: VertexInputRate,
     }
 
     #[derive(Clone, Copy)]
@@ -1359,6 +1376,59 @@ mod ffi {
         pub results: *const Result,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct BufferCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub size: DeviceSize,
+        pub usage: Flags,
+        pub sharing_mode: SharingMode,
+        pub queue_family_index_count: c_uint,
+        pub queue_family_indices: *const c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct MemoryAllocateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub size: DeviceSize,
+        pub memory_type_index: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct MemoryRequirements {
+        pub size: DeviceSize,
+        pub alignment: DeviceSize,
+        pub memory_type: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct MemoryType {
+        pub property_flags: Flags,
+        pub heap_index: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct MemoryHeap {
+        pub size: DeviceSize,
+        pub flags: Flags,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct PhysicalDeviceMemoryProperties {
+        pub memory_type_count: c_uint,
+        pub memory_types: [MemoryType; 32],
+        pub memory_heap_count: c_uint,
+        pub memory_heaps: [MemoryHeap; 32],
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -1389,6 +1459,10 @@ mod ffi {
             surface: Surface,
             surface_capabilities: *mut SurfaceCapabilities,
         );
+        pub fn vkGetPhysicalDeviceMemoryProperties(
+            physical_device: PhysicalDevice,
+            memory_properties: *mut PhysicalDeviceMemoryProperties,
+        );
         pub fn vkCreateDevice(
             physical_device: PhysicalDevice,
             create_info: *const DeviceCreateInfo,
@@ -1401,6 +1475,11 @@ mod ffi {
             queue_family_index: c_uint,
             queue_index: c_uint,
             queue: *mut Queue,
+        );
+        pub fn vkGetBufferMemoryRequirements(
+            device: Device,
+            buffer: Buffer,
+            memory_requirements: *mut MemoryRequirements,
         );
         #[cfg(target_os = "linux")]
         pub fn vkCreateXlibSurfaceKHR(
@@ -1498,6 +1577,25 @@ mod ffi {
             command_pool: CommandPool,
             allocator: *const c_void,
         );
+        pub fn vkCreateBuffer(
+            device: Device,
+            create_info: *const BufferCreateInfo,
+            allocator: *const c_void,
+            buffer: *mut Buffer,
+        ) -> Result;
+        pub fn vkDestroyBuffer(device: Device, buffer: Buffer, allocator: *const c_void);
+        pub fn vkAllocateMemory(
+            device: Device,
+            allocate_info: *const MemoryAllocateInfo,
+            allocator: *const c_void,
+            memory: *mut DeviceMemory,
+        ) -> Result;
+        pub fn vkBindBufferMemory(
+            device: Device,
+            buffer: Buffer,
+            memory: DeviceMemory,
+            memory_offset: DeviceSize,
+        ) -> Result;
         pub fn vkAllocateCommandBuffers(
             device: Device,
             allocate_info: *const CommandBufferAllocateInfo,
@@ -1525,6 +1623,13 @@ mod ffi {
             instance_count: c_uint,
             first_vertex: c_uint,
             first_instance: c_uint,
+        );
+        pub fn vkCmdBindVertexBuffers(
+            command_buffer: CommandBuffer,
+            first_binding: c_uint,
+            binding_count: c_uint,
+            buffers: *const Buffer,
+            offsets: *const DeviceSize,
         );
         pub fn vkCreateFence(
             device: Device,
@@ -1564,6 +1669,15 @@ mod ffi {
         ) -> Result;
         pub fn vkQueuePresentKHR(queue: Queue, present_info: *const PresentInfo) -> Result;
         pub fn vkResetCommandBuffer(command_buffer: CommandBuffer, flags: Flags) -> Result;
+        pub fn vkMapMemory(
+            device: Device,
+            memory: DeviceMemory,
+            offset: DeviceSize,
+            size: DeviceSize,
+            flags: Flags,
+            data: *mut *mut c_void,
+        ) -> Result;
+        pub fn vkUnmapMemory(device: Device, memory: DeviceMemory);
     }
 }
 
@@ -1609,6 +1723,9 @@ pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
 
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
 
+pub const BUFFER_USAGE_VERTEX: u32 = 0x00000080;
+pub const BUFFER_USAGE_INDEX: u32 = 0x00000040;
+
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
 #[derive(Clone, Copy, Debug)]
@@ -1626,18 +1743,21 @@ pub enum Error {
     FormatNotSupported,
     FragmentedPool,
     Unknown,
+    InvalidExternalHandle,
     SurfaceLost,
     NativeWindowInUse,
     Suboptimal,
     OutOfDate,
     InvalidShader,
-    CompressionExhausted,
     FullScreenExclusiveModeLost,
+    InvalidOpaqueCaptureAddress,
+    CompressionExhausted,
 }
 
 #[derive(Clone, Copy)]
 pub enum Format {
     Bgra8Srgb,
+    Rgb32Sfloat,
 }
 
 #[derive(Clone, Copy)]
@@ -2679,6 +2799,7 @@ impl ImageView {
 
         let format = match create_info.format {
             Format::Bgra8Srgb => ffi::Format::Bgra8Srgb,
+            Format::Rgb32Sfloat => ffi::Format::Rgb32Sfloat,
         };
 
         //TODO convert to From<non-ffi> for ffi
@@ -2815,7 +2936,29 @@ pub struct PipelineShaderStageCreateInfo<'a> {
     pub entry_point: &'a str,
 }
 
-pub struct PipelineVertexInputStateCreateInfo {}
+#[derive(Clone, Copy)]
+pub enum VertexInputRate {
+    Vertex = 0,
+    Instance = 1,
+}
+
+pub struct VertexInputBindingDescription {
+    pub binding: u32,
+    pub stride: usize,
+    pub input_rate: VertexInputRate,
+}
+
+pub struct VertexInputAttributeDescription {
+    pub location: u32,
+    pub binding: u32,
+    pub format: Format,
+    pub offset: u32,
+}
+
+pub struct PipelineVertexInputStateCreateInfo<'a> {
+    pub bindings: &'a [VertexInputBindingDescription],
+    pub attributes: &'a [VertexInputAttributeDescription],
+}
 
 #[derive(Clone, Copy)]
 pub enum PrimitiveTopology {
@@ -3260,7 +3403,7 @@ impl Drop for RenderPass {
 
 pub struct GraphicsPipelineCreateInfo<'a> {
     pub stages: &'a [PipelineShaderStageCreateInfo<'a>],
-    pub vertex_input_state: &'a PipelineVertexInputStateCreateInfo,
+    pub vertex_input_state: &'a PipelineVertexInputStateCreateInfo<'a>,
     pub input_assembly_state: &'a PipelineInputAssemblyStateCreateInfo,
     pub tessellation_state: &'a PipelineTessellationStateCreateInfo,
     pub viewport_state: &'a PipelineViewportStateCreateInfo<'a>,
@@ -3323,16 +3466,50 @@ impl Pipeline {
             })
             .collect::<Vec<_>>();
 
+        let vertex_binding_descriptions = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .vertex_input_state
+                    .bindings
+                    .iter()
+                    .map(|binding| ffi::VertexInputBindingDescription {
+                        binding: binding.binding,
+                        stride: binding.stride as _,
+                        input_rate: binding.input_rate.into(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let vertex_attribute_descriptions = create_infos
+            .iter()
+            .map(|create_info| {
+                create_info
+                    .vertex_input_state
+                    .attributes
+                    .iter()
+                    .map(|attribute| ffi::VertexInputAttributeDescription {
+                        binding: attribute.binding,
+                        location: attribute.location,
+                        format: attribute.format.into(),
+                        offset: attribute.offset,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
         let vertex_input_states = create_infos
             .iter()
-            .map(|create_info| ffi::PipelineVertexInputStateCreateInfo {
+            .enumerate()
+            .map(|(i, _)| ffi::PipelineVertexInputStateCreateInfo {
                 structure_type: ffi::StructureType::PipelineVertexInputStateCreateInfo,
                 p_next: ptr::null(),
                 flags: 0,
-                vertex_binding_description_count: 0,
-                vertex_binding_descriptions: ptr::null(),
-                vertex_attribute_description_count: 0,
-                vertex_attribute_descriptions: ptr::null(),
+                vertex_binding_description_count: vertex_binding_descriptions[i].len() as _,
+                vertex_binding_descriptions: vertex_binding_descriptions[i].as_ptr(),
+                vertex_attribute_description_count: vertex_attribute_descriptions[i].len() as _,
+                vertex_attribute_descriptions: vertex_attribute_descriptions[i].as_ptr(),
             })
             .collect::<Vec<_>>();
 
@@ -3609,7 +3786,6 @@ impl Pipeline {
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
-        println!("wowwww");
         unsafe { ffi::vkDestroyPipeline(self.device.handle, self.handle, ptr::null()) };
     }
 }
@@ -3876,6 +4052,33 @@ impl Commands<'_> {
         };
     }
 
+    pub fn bind_vertex_buffers(
+        &mut self,
+        first_binding: u32,
+        binding_count: u32,
+        buffers: &'_ [&'_ Buffer],
+        offsets: &'_ [usize],
+    ) {
+        let buffers = buffers
+            .iter()
+            .map(|buffer| buffer.handle)
+            .collect::<Vec<_>>();
+        let offsets = offsets
+            .iter()
+            .map(|&offset| offset as _)
+            .collect::<Vec<_>>();
+
+        unsafe {
+            ffi::vkCmdBindVertexBuffers(
+                self.command_buffer.handle,
+                first_binding,
+                binding_count,
+                buffers.as_ptr(),
+                offsets.as_ptr(),
+            )
+        };
+    }
+
     pub fn draw(
         &mut self,
         vertex_count: u32,
@@ -4070,4 +4273,174 @@ pub struct PresentInfo<'a> {
     pub wait_semaphores: &'a [&'a Semaphore],
     pub swapchains: &'a [&'a Swapchain],
     pub image_indices: &'a [u32],
+}
+
+pub struct Buffer {
+    device: Rc<Device>,
+    handle: ffi::Buffer,
+    memory: Option<ffi::DeviceMemory>,
+    size: usize,
+}
+
+impl Buffer {
+    pub fn allocate(
+        device: Rc<Device>,
+        physical_device: &PhysicalDevice,
+        size: usize,
+        usage: u32,
+    ) -> Result<Self, Error> {
+        let create_info = ffi::BufferCreateInfo {
+            structure_type: ffi::StructureType::BufferCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            size: size as _,
+            usage: usage as _,
+            sharing_mode: ffi::SharingMode::Exclusive,
+            queue_family_index_count: 0,
+            queue_family_indices: ptr::null(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::Buffer>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateBuffer(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        let mut buffer = match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let buffer = Self {
+                    device,
+                    handle,
+                    memory: None,
+                    size,
+                };
+
+                buffer
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress)?,
+            _ => panic!("unexpected result"),
+        };
+
+        let mut memory_properties = MaybeUninit::<ffi::PhysicalDeviceMemoryProperties>::uninit();
+
+        unsafe {
+            ffi::vkGetPhysicalDeviceMemoryProperties(
+                physical_device.handle,
+                memory_properties.as_mut_ptr(),
+            )
+        };
+
+        let memory_properties = unsafe { memory_properties.assume_init() };
+
+        let mut memory_requirements = MaybeUninit::<ffi::MemoryRequirements>::uninit();
+
+        unsafe {
+            ffi::vkGetBufferMemoryRequirements(
+                buffer.device.handle,
+                buffer.handle,
+                memory_requirements.as_mut_ptr(),
+            )
+        };
+
+        let memory_requirements = unsafe { memory_requirements.assume_init() };
+
+        let mut memory_type_index = 0;
+
+        for i in 0..memory_properties.memory_type_count {
+            if memory_requirements.memory_type & (1 << i) != 0
+                && memory_properties.memory_types[i as usize].property_flags
+                    & (0x00000002 | 0x00000004)
+                    != 0
+            {
+                memory_type_index = i;
+                break;
+            }
+        }
+
+        let allocate_info = ffi::MemoryAllocateInfo {
+            structure_type: ffi::StructureType::MemoryAllocateInfo,
+            p_next: ptr::null(),
+            size: size as _,
+            memory_type_index: memory_type_index as _,
+        };
+
+        let mut handle = MaybeUninit::<ffi::DeviceMemory>::uninit();
+
+        let result = unsafe {
+            ffi::vkAllocateMemory(
+                buffer.device.handle,
+                &allocate_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {}
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            ffi::Result::InvalidExternalHandle => Err(Error::InvalidExternalHandle)?,
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress)?,
+            _ => panic!("unexpected result"),
+        };
+
+        let handle = unsafe { handle.assume_init() };
+
+        let result =
+            unsafe { ffi::vkBindBufferMemory(buffer.device.handle, buffer.handle, handle, 0) };
+
+        match result {
+            ffi::Result::Success => {}
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress)?,
+            _ => panic!("unexpected result"),
+        }
+
+        buffer.memory = Some(handle);
+
+        Ok(buffer)
+    }
+
+    pub fn copy<T>(&self, offset: usize, data: &'_ [T]) -> Result<(), Error> {
+        if offset + data.len() > self.size {
+            panic!("attempt to overrun buffer");
+        }
+
+        let mut buf = ptr::null_mut::<u8>();
+
+        let result = unsafe {
+            ffi::vkMapMemory(
+                self.device.handle,
+                self.memory.unwrap(),
+                0,
+                self.size as _,
+                0,
+                &mut buf as *mut _ as _,
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {}
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            ffi::Result::MemoryMapFailed => Err(Error::MemoryMapFailed)?,
+            _ => panic!("unexpected result"),
+        }
+
+        unsafe { ptr::copy(data.as_ptr().cast::<u8>().add(offset), buf, data.len()) };
+
+        unsafe { ffi::vkUnmapMemory(self.device.handle, self.memory.unwrap()) };
+
+        Ok(())
+    }
 }
