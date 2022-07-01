@@ -8,9 +8,13 @@ mod ffi {
     type Window = XID;
     type Atom = XID;
     type Time = c_ulong;
+    type Bool = u32;
 
     pub const KEY_PRESS: c_int = 2;
     pub const EXPOSE: c_int = 12;
+    pub const MAP_NOTIFY: c_int = 19;
+    pub const REPARENT_NOTIFY: c_int = 21;
+    pub const CONFIGURE_NOTIFY: c_int = 22;
     pub const CLIENT_MESSAGE: c_int = 33;
 
     #[derive(Clone, Copy)]
@@ -21,7 +25,7 @@ mod ffi {
     pub struct ExposeEvent {
         pub ty: c_int,
         pub serial: c_ulong,
-        pub send_event: bool,
+        pub send_event: Bool,
         pub display: *mut Display,
         pub window: Window,
         pub x: c_int,
@@ -36,7 +40,7 @@ mod ffi {
     pub struct KeyEvent {
         pub ty: c_int,
         pub serial: c_ulong,
-        pub send_event: bool,
+        pub send_event: Bool,
         pub display: *mut Display,
         pub window: Window,
         pub root: Window,
@@ -48,7 +52,7 @@ mod ffi {
         pub y_root: c_int,
         pub state: c_uint,
         pub keycode: c_uint,
-        pub same_screen: bool,
+        pub same_screen: Bool,
     }
 
     #[derive(Clone, Copy)]
@@ -56,7 +60,7 @@ mod ffi {
     pub struct ClientMessageEvent {
         pub ty: c_int,
         pub serial: c_ulong,
-        pub send_event: bool,
+        pub send_event: Bool,
         pub display: *mut Display,
         pub window: Window,
         pub message_type: Atom,
@@ -66,11 +70,29 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct ConfigureEvent {
+        pub ty: c_int,
+        pub serial: c_ulong,
+        pub send_event: Bool,
+        pub display: *mut Display,
+        pub event: Window,
+        pub window: Window,
+        pub x: c_int,
+        pub y: c_int,
+        pub width: c_int,
+        pub height: c_int,
+        pub above: Window,
+        pub override_redirect: Bool,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub union Event {
         pub ty: c_int,
         pub expose: ExposeEvent,
         pub key: KeyEvent,
         pub client_message: ClientMessageEvent,
+        pub configure: ConfigureEvent,
         //this is a hack because event is not the right size...
         //not all implemented
         //TODO
@@ -81,6 +103,7 @@ mod ffi {
     #[allow(non_snake_case)]
     extern "C" {
         pub fn XOpenDisplay(display_name: *const c_char) -> *mut Display;
+        pub fn XInitThreads() -> c_int;
         pub fn XDefaultScreen(display: *mut Display) -> c_int;
         pub fn XCreateSimpleWindow(
             display: *mut Display,
@@ -104,14 +127,14 @@ mod ffi {
         pub fn XInternAtom(
             display: *mut Display,
             atom_name: *const c_char,
-            only_if_exists: bool,
+            only_if_exists: Bool,
         ) -> Atom;
         pub fn XSetWMProtocols(
             display: *mut Display,
             window: Window,
             protocols: *const Atom,
             count: c_int,
-        ) -> bool;
+        ) -> Bool;
         pub fn XStoreName(display: *mut Display, window: Window, window_name: *const c_char);
         pub fn XPending(display: *mut Display) -> c_int;
     }
@@ -119,6 +142,7 @@ mod ffi {
 
 pub const KEY_PRESS_MASK: i64 = 0x0000_0001;
 pub const EXPOSURE_MASK: i64 = 0x0000_8000;
+pub const STRUCTURE_NOTIFY_MASK: i64 = 0x0002_0000;
 
 pub type Display = *mut ffi::Display;
 pub type Screen = i32;
@@ -137,12 +161,22 @@ pub enum Event {
         format: i32,
         data: [i64; 5],
     },
+    ConfigureNotify {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    ReparentNotify {},
+    MapNotify {},
 }
 
 pub fn open_display(display_name: &str) -> Option<Display> {
     let display_name = CString::new(display_name).unwrap();
 
     let display_ptr = unsafe { ffi::XOpenDisplay(display_name.as_c_str().as_ptr()) };
+
+    unsafe { ffi::XInitThreads() };
 
     if display_ptr.is_null() {
         None
@@ -218,14 +252,24 @@ pub fn next_event(display: Display) -> Event {
             ffi::KEY_PRESS => Event::KeyPress {},
             ffi::CLIENT_MESSAGE => Event::ClientMessage {
                 serial: event.client_message.serial,
-                send_event: event.client_message.send_event,
+                send_event: event.client_message.send_event != 0,
                 display: event.client_message.display,
                 window: event.client_message.window,
                 message_type: event.client_message.message_type,
                 format: event.client_message.format,
                 data: event.client_message.data,
             },
-            _ => unimplemented!(),
+            ffi::CONFIGURE_NOTIFY => Event::ConfigureNotify {
+                x: event.configure.x,
+                y: event.configure.y,
+                width: event.configure.width,
+                height: event.configure.height,
+            },
+            ffi::REPARENT_NOTIFY => Event::ReparentNotify {},
+            ffi::MAP_NOTIFY => Event::MapNotify {},
+            _ => {
+                unimplemented!("x11 event: {}", event.ty);
+            }
         }
     }
 }
@@ -237,7 +281,7 @@ pub fn close_display(display: Display) {
 pub fn intern_atom(display: Display, atom_name: &str, only_if_exists: bool) -> Atom {
     let atom_name = CString::new(atom_name).unwrap();
 
-    unsafe { ffi::XInternAtom(display, atom_name.as_c_str().as_ptr(), only_if_exists) }
+    unsafe { ffi::XInternAtom(display, atom_name.as_c_str().as_ptr(), only_if_exists as _) }
 }
 
 pub fn set_wm_protocols(display: Display, window: Window, protocols: &mut [Atom]) -> bool {
@@ -247,7 +291,7 @@ pub fn set_wm_protocols(display: Display, window: Window, protocols: &mut [Atom]
             window,
             protocols.as_mut_ptr(),
             protocols.len() as i32,
-        )
+        ) != 0
     }
 }
 

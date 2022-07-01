@@ -1,6 +1,7 @@
 pub enum Event {
     CloseRequested,
     KeyPress,
+    Resized { resolution: (u32, u32) },
 }
 
 #[cfg(target_os = "linux")]
@@ -20,10 +21,13 @@ mod linux {
         window: x11::Window,
         wm_protocols: x11::Atom,
         wm_delete_window: x11::Atom,
+        resolution: (u32, u32),
     }
 
     impl Window {
         pub fn new() -> Self {
+            let resolution = (960, 540);
+
             let display = x11::open_display("").expect("failed to open display");
 
             let screen = x11::default_screen(display);
@@ -33,14 +37,18 @@ mod linux {
                 x11::root_window(display, screen),
                 10,
                 10,
-                960,
-                540,
+                resolution.0,
+                resolution.1,
                 1,
                 x11::black_pixel(display, screen),
                 x11::white_pixel(display, screen),
             );
 
-            x11::select_input(display, window, x11::KEY_PRESS_MASK);
+            x11::select_input(
+                display,
+                window,
+                x11::KEY_PRESS_MASK | x11::STRUCTURE_NOTIFY_MASK,
+            );
 
             let wm_protocols = x11::intern_atom(display, "WM_PROTOCOLS", false);
             let wm_delete_window = x11::intern_atom(display, "WM_DELETE_WINDOW", false);
@@ -53,6 +61,7 @@ mod linux {
                 window,
                 wm_protocols,
                 wm_delete_window,
+                resolution,
             }
         }
 
@@ -93,6 +102,20 @@ mod linux {
 
                     None
                 }
+                x11::Event::ConfigureNotify { width, height, .. } => {
+                    let width = width as _;
+                    let height = height as _;
+
+                    if self.resolution != (width, height) {
+                        self.resolution = (width, height);
+
+                        Some(Event::Resized {
+                            resolution: self.resolution,
+                        })
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             }
         }
@@ -100,7 +123,8 @@ mod linux {
 
     impl Drop for Window {
         fn drop(&mut self) {
-            x11::close_display(self.display);
+            //This is a crazy hack to prevent segfault
+            //x11::close_display(self.display);
         }
     }
 

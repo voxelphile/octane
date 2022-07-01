@@ -21,6 +21,7 @@ pub struct UniformBufferObject {
 
 pub trait Renderer {
     fn draw_batch(&mut self, batch: Batch, entries: &'_ [Entry<'_>]);
+    fn resize(&mut self, resolution: (u32, u32));
 }
 
 #[derive(Clone, Default)]
@@ -33,9 +34,6 @@ pub struct Batch {
 pub struct Entry<'a> {
     pub mesh: &'a Mesh,
 }
-
-//TODO add dynamic EXTENT
-const EXTENT: (u32, u32) = (960, 540);
 
 fn convert_bytes_to_spirv_data(bytes: Vec<u8>) -> Vec<u32> {
     let endian = mem::size_of::<u32>() / mem::size_of::<u8>();
@@ -72,6 +70,7 @@ fn create_pipeline(
     shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
     render_pass: &'_ vk::RenderPass,
     layout: &'_ vk::PipelineLayout,
+    extent: (u32, u32),
 ) -> vk::Pipeline {
     let binding = vk::VertexInputBindingDescription {
         binding: 0,
@@ -101,15 +100,15 @@ fn create_pipeline(
     let viewport = vk::Viewport {
         x: 0.0,
         y: 0.0,
-        width: EXTENT.0 as _,
-        height: EXTENT.1 as _,
+        width: extent.0 as _,
+        height: extent.1 as _,
         min_depth: 0.0,
         max_depth: 1.0,
     };
 
     let scissor = vk::Rect2d {
         offset: (0, 0),
-        extent: EXTENT,
+        extent,
     };
 
     let viewport_state = vk::PipelineViewportStateCreateInfo {
@@ -184,30 +183,230 @@ fn create_pipeline(
 }
 
 pub struct Vulkan {
-    instance: Rc<vk::Instance>,
+    pub ubo: UniformBufferObject,
+    last_batch: Batch,
+    buffer: vk::Buffer,
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore,
+    in_flight_fence: vk::Fence,
+    command_buffer: vk::CommandBuffer,
+    command_pool: vk::CommandPool,
+    render_info: VulkanRenderInfo,
+    render_data: Option<VulkanRenderData>,
+    queue: vk::Queue,
+    device: Rc<vk::Device>,
+    shaders: HashMap<&'static str, vk::ShaderModule>,
+    surface: vk::Surface,
     #[cfg(debug_assertions)]
     debug_utils_messenger: vk::DebugUtilsMessenger,
-    device: Rc<vk::Device>,
-    queue: vk::Queue,
-    shaders: HashMap<&'static str, vk::ShaderModule>,
-    swapchain: vk::Swapchain,
-    swapchain_image_views: Vec<vk::ImageView>,
-    render_pass: vk::RenderPass,
-    descriptor_set_layout: vk::DescriptorSetLayout,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_sets: Vec<vk::DescriptorSet>,
-    pipeline_layout: vk::PipelineLayout,
-    graphics_pipeline: Option<vk::Pipeline>,
+    pub instance: Rc<vk::Instance>,
+}
+
+pub struct VulkanRenderInfo {
+    image_count: u32,
+    surface_format: vk::SurfaceFormat,
+    surface_capabilities: vk::SurfaceCapabilities,
+    present_mode: vk::PresentMode,
+    extent: (u32, u32),
+}
+
+pub struct VulkanRenderData {
     framebuffers: Vec<vk::Framebuffer>,
-    command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
-    in_flight_fence: vk::Fence,
-    render_finished_semaphore: vk::Semaphore,
-    image_available_semaphore: vk::Semaphore,
-    buffer: vk::Buffer,
-    last_batch: Batch,
-    surface: vk::Surface,
-    pub ubo: UniformBufferObject,
+    graphics_pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
+    descriptor_sets: Vec<vk::DescriptorSet>,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    render_pass: vk::RenderPass,
+    swapchain_image_views: Vec<vk::ImageView>,
+    swapchain: vk::Swapchain,
+}
+
+impl VulkanRenderData {
+    pub fn init(
+        device: Rc<vk::Device>,
+        surface: &vk::Surface,
+        shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
+        old_swapchain: Option<vk::Swapchain>,
+        render_info: &VulkanRenderInfo,
+    ) -> Self {
+        let swapchain_create_info = vk::SwapchainCreateInfo {
+            surface,
+            min_image_count: render_info.image_count,
+            image_format: render_info.surface_format.format,
+            image_color_space: render_info.surface_format.color_space,
+            image_extent: render_info.extent,
+            image_array_layers: 1,
+            image_usage: vk::ImageUsage::ColorAttachment,
+            //TODO support concurrent image sharing mode
+            image_sharing_mode: vk::SharingMode::Exclusive,
+            queue_family_indices: &[],
+            pre_transform: render_info.surface_capabilities.current_transform,
+            composite_alpha: vk::CompositeAlpha::Opaque,
+            present_mode: render_info.present_mode,
+            clipped: true,
+            old_swapchain,
+        };
+
+        let mut swapchain = vk::Swapchain::new(device.clone(), swapchain_create_info)
+            .expect("failed to create swapchain");
+
+        let swapchain_images = swapchain.images();
+
+        let swapchain_image_views = swapchain_images
+            .iter()
+            .map(|image| {
+                let create_info = vk::ImageViewCreateInfo {
+                    image,
+                    view_type: vk::ImageViewType::TwoDim,
+                    format: render_info.surface_format.format,
+                    components: vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::Identity,
+                        g: vk::ComponentSwizzle::Identity,
+                        b: vk::ComponentSwizzle::Identity,
+                        a: vk::ComponentSwizzle::Identity,
+                    },
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                };
+
+                vk::ImageView::new(device.clone(), create_info)
+                    .expect("failed to create image view")
+            })
+            .collect::<Vec<_>>();
+
+        let binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::ShaderStage::Vertex,
+        };
+
+        let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+            bindings: &[binding],
+        };
+
+        let descriptor_set_layout =
+            vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
+                .expect("failed to create descriptor set layout");
+
+        let descriptor_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: swapchain_images.len() as _,
+            pool_sizes: &[descriptor_pool_size],
+        };
+
+        let descriptor_pool = vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
+            .expect("failed to create descriptor pool");
+
+        let set_layouts = iter::repeat(&descriptor_set_layout)
+            .take(swapchain_images.len() as _)
+            .collect::<Vec<_>>();
+
+        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: &descriptor_pool,
+            set_layouts: &set_layouts,
+        };
+
+        let descriptor_sets =
+            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
+                .expect("failed to allocate descriptor sets");
+
+        let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+            set_layouts: &[&descriptor_set_layout],
+        };
+
+        let pipeline_layout = vk::PipelineLayout::new(device.clone(), pipeline_layout_create_info)
+            .expect("failed to create pipeline layout");
+
+        let color_attachment_description = vk::AttachmentDescription {
+            format: render_info.surface_format.format,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::Store,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::PresentSrc,
+        };
+
+        let color_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let subpass_description = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::Graphics,
+            input_attachments: &[],
+            color_attachments: &[color_attachment_reference],
+            resolve_attachments: &[],
+            depth_stencil_attachment: None,
+            preserve_attachments: &[],
+        };
+
+        let subpass_dependency = vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            dst_subpass: 0,
+            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+            src_access_mask: 0,
+            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE,
+        };
+
+        let render_pass_create_info = vk::RenderPassCreateInfo {
+            attachments: &[color_attachment_description],
+            subpasses: &[subpass_description],
+            dependencies: &[subpass_dependency],
+        };
+
+        let render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
+            .expect("failed to create render pass");
+
+        let framebuffers = swapchain_image_views
+            .iter()
+            .map(|image_view| {
+                let framebuffer_create_info = vk::FramebufferCreateInfo {
+                    render_pass: &render_pass,
+                    attachments: &[image_view],
+                    width: render_info.extent.0,
+                    height: render_info.extent.1,
+                    layers: 1,
+                };
+
+                vk::Framebuffer::new(device.clone(), framebuffer_create_info)
+                    .expect("failed to create framebuffer")
+            })
+            .collect::<Vec<_>>();
+
+        let graphics_pipeline = create_pipeline(
+            device.clone(),
+            shader_stages,
+            &render_pass,
+            &pipeline_layout,
+            render_info.extent,
+        );
+
+        Self {
+            swapchain,
+            swapchain_image_views,
+            render_pass,
+            descriptor_set_layout,
+            descriptor_pool,
+            descriptor_sets,
+            pipeline_layout,
+            graphics_pipeline,
+            framebuffers,
+        }
+    }
 }
 
 impl Vulkan {
@@ -345,164 +544,15 @@ impl Vulkan {
 
         let image_count = surface_capabilities.min_image_count + 1;
 
-        let swapchain_create_info = vk::SwapchainCreateInfo {
-            surface: &surface,
-            min_image_count: image_count,
-            image_format: surface_format.format,
-            image_color_space: surface_format.color_space,
-            image_extent: EXTENT,
-            image_array_layers: 1,
-            image_usage: vk::ImageUsage::ColorAttachment,
-            //TODO support concurrent image sharing mode
-            image_sharing_mode: vk::SharingMode::Exclusive,
-            queue_family_indices: &[],
-            pre_transform: surface_capabilities.current_transform,
-            composite_alpha: vk::CompositeAlpha::Opaque,
+        let render_info = VulkanRenderInfo {
+            image_count,
+            surface_format,
+            surface_capabilities,
             present_mode,
-            clipped: true,
-            old_swapchain: None,
+            extent: (960, 540),
         };
 
-        let mut swapchain = vk::Swapchain::new(device.clone(), swapchain_create_info)
-            .expect("failed to create swapchain");
-
-        let swapchain_images = swapchain.images();
-
-        let swapchain_image_views = swapchain_images
-            .iter()
-            .map(|image| {
-                let create_info = vk::ImageViewCreateInfo {
-                    image,
-                    view_type: vk::ImageViewType::TwoDim,
-                    format: surface_format.format,
-                    components: vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::Identity,
-                        g: vk::ComponentSwizzle::Identity,
-                        b: vk::ComponentSwizzle::Identity,
-                        a: vk::ComponentSwizzle::Identity,
-                    },
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                vk::ImageView::new(device.clone(), create_info)
-                    .expect("failed to create image view")
-            })
-            .collect::<Vec<_>>();
-
-        let binding = vk::DescriptorSetLayoutBinding {
-            binding: 0,
-            descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: 1,
-            stage: vk::ShaderStage::Vertex,
-        };
-
-        let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
-            bindings: &[binding],
-        };
-
-        let descriptor_set_layout =
-            vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
-                .expect("failed to create descriptor set layout");
-
-        let descriptor_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: swapchain_images.len() as _,
-        };
-
-        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
-            max_sets: swapchain_images.len() as _,
-            pool_sizes: &[descriptor_pool_size],
-        };
-
-        let descriptor_pool = vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
-            .expect("failed to create descriptor pool");
-
-        let set_layouts = iter::repeat(&descriptor_set_layout)
-            .take(swapchain_images.len() as _)
-            .collect::<Vec<_>>();
-
-        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: &descriptor_pool,
-            set_layouts: &set_layouts,
-        };
-
-        let descriptor_sets =
-            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
-                .expect("failed to allocate descriptor sets");
-
-        let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
-            set_layouts: &[&descriptor_set_layout],
-        };
-
-        let pipeline_layout = vk::PipelineLayout::new(device.clone(), pipeline_layout_create_info)
-            .expect("failed to create pipeline layout");
-
-        let color_attachment_description = vk::AttachmentDescription {
-            format: surface_format.format,
-            samples: vk::SAMPLE_COUNT_1,
-            load_op: vk::AttachmentLoadOp::Clear,
-            store_op: vk::AttachmentStoreOp::Store,
-            stencil_load_op: vk::AttachmentLoadOp::DontCare,
-            stencil_store_op: vk::AttachmentStoreOp::DontCare,
-            initial_layout: vk::ImageLayout::Undefined,
-            final_layout: vk::ImageLayout::PresentSrc,
-        };
-
-        let color_attachment_reference = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::ColorAttachment,
-        };
-
-        let subpass_description = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::Graphics,
-            input_attachments: &[],
-            color_attachments: &[color_attachment_reference],
-            resolve_attachments: &[],
-            depth_stencil_attachment: None,
-            preserve_attachments: &[],
-        };
-
-        let subpass_dependency = vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
-            src_access_mask: 0,
-            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
-            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE,
-        };
-
-        let render_pass_create_info = vk::RenderPassCreateInfo {
-            attachments: &[color_attachment_description],
-            subpasses: &[subpass_description],
-            dependencies: &[subpass_dependency],
-        };
-
-        let render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
-            .expect("failed to create render pass");
-
-        let graphics_pipeline = None;
-
-        let framebuffers = swapchain_image_views
-            .iter()
-            .map(|image_view| {
-                let framebuffer_create_info = vk::FramebufferCreateInfo {
-                    render_pass: &render_pass,
-                    attachments: &[image_view],
-                    width: EXTENT.0,
-                    height: EXTENT.1,
-                    layers: 1,
-                };
-
-                vk::Framebuffer::new(device.clone(), framebuffer_create_info)
-                    .expect("failed to create framebuffer")
-            })
-            .collect::<Vec<_>>();
+        let render_data = None;
 
         let command_pool_create_info = vk::CommandPoolCreateInfo {
             queue_family_index: graphics_queue_family_index,
@@ -559,15 +609,8 @@ impl Vulkan {
             device,
             queue,
             shaders,
-            swapchain,
-            swapchain_image_views,
-            render_pass,
-            descriptor_set_layout,
-            descriptor_pool,
-            descriptor_sets,
-            pipeline_layout,
-            graphics_pipeline,
-            framebuffers,
+            render_info,
+            render_data,
             command_pool,
             command_buffer,
             in_flight_fence,
@@ -588,8 +631,11 @@ impl Renderer for Vulkan {
 
         for entry in entries {
             let (vertices, _) = entry.mesh.get();
+
+            let vertex_offset = num_vertices * mem::size_of::<Vertex>();
+
             self.buffer
-                .copy(num_vertices * mem::size_of::<Vertex>(), &vertices[..])
+                .copy(vertex_offset, &vertices[..])
                 .expect("failed to copy to buffer");
 
             num_vertices += vertices.len();
@@ -604,11 +650,11 @@ impl Renderer for Vulkan {
                 .map(|i| i + num_indices as u16)
                 .collect::<Vec<_>>();
 
+            let index_offset =
+                num_vertices * mem::size_of::<Vertex>() + num_indices * mem::size_of::<u16>();
+
             self.buffer
-                .copy(
-                    num_vertices * mem::size_of::<Vertex>() + num_indices * mem::size_of::<u16>(),
-                    &indices[..],
-                )
+                .copy(index_offset, &indices[..])
                 .expect("failed to copy to buffer");
 
             num_indices += indices.len();
@@ -617,7 +663,7 @@ impl Renderer for Vulkan {
         let ubo_offset =
             num_vertices * mem::size_of::<Vertex>() + num_indices * mem::size_of::<u16>();
 
-        let ubo_offset = (ubo_offset as f64 / 16.0).ceil() * 16.0;
+        let ubo_offset = (ubo_offset as f64 / 64.0).ceil() * 64.0;
 
         self.buffer
             .copy(ubo_offset as _, &[self.ubo])
@@ -673,25 +719,31 @@ impl Renderer for Vulkan {
 
             trace!("making new graphics pipeline...");
 
-            self.graphics_pipeline = Some(create_pipeline(
+            self.render_data = Some(VulkanRenderData::init(
                 self.device.clone(),
+                &self.surface,
                 &shaders,
-                &self.render_pass,
-                &self.pipeline_layout,
+                None,
+                &self.render_info,
             ));
         }
+
+        let render_data = self
+            .render_data
+            .as_mut()
+            .expect("failed to retrieve render data");
 
         vk::Fence::wait(&[&mut self.in_flight_fence], true, u64::MAX)
             .expect("failed to wait for fence");
 
         vk::Fence::reset(&[&mut self.in_flight_fence]).expect("failed to reset fence");
 
-        let image_index = self
+        let image_index = render_data
             .swapchain
             .acquire_next_image(u64::MAX, Some(&mut self.image_available_semaphore), None)
-            .expect("failed to retrieve image index");
+            .expect("failed to acquire next image from swapchain");
 
-        for i in 0..self.descriptor_sets.len() {
+        for i in 0..render_data.descriptor_sets.len() {
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: &self.buffer,
                 offset: ubo_offset as _,
@@ -699,7 +751,7 @@ impl Renderer for Vulkan {
             };
 
             let descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &self.descriptor_sets[image_index as usize],
+                dst_set: &render_data.descriptor_sets[image_index as usize],
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
@@ -717,20 +769,20 @@ impl Renderer for Vulkan {
         self.command_buffer
             .record(|commands| {
                 let render_pass_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: &self.render_pass,
-                    framebuffer: &self.framebuffers[image_index as usize],
+                    render_pass: &render_data.render_pass,
+                    framebuffer: &render_data.framebuffers[image_index as usize],
                     render_area: vk::Rect2d {
                         offset: (0, 0),
-                        extent: EXTENT,
+                        extent: self.render_info.extent,
                     },
-                    clear_values: &[[1.0, 1.0, 1.0, 1.0]],
+                    clear_values: &[[0.0385, 0.0385, 0.0385, 1.0]],
                 };
 
                 commands.begin_render_pass(render_pass_begin_info);
 
                 commands.bind_pipeline(
                     vk::PipelineBindPoint::Graphics,
-                    self.graphics_pipeline.as_ref().unwrap(),
+                    &render_data.graphics_pipeline,
                 );
 
                 commands.bind_vertex_buffers(0, 1, &[&self.buffer], &[0]);
@@ -743,9 +795,9 @@ impl Renderer for Vulkan {
 
                 commands.bind_descriptor_sets(
                     vk::PipelineBindPoint::Graphics,
-                    &self.pipeline_layout,
+                    &render_data.pipeline_layout,
                     0,
-                    &[&self.descriptor_sets[image_index as usize]],
+                    &[&render_data.descriptor_sets[image_index as usize]],
                     &[],
                 );
 
@@ -768,13 +820,47 @@ impl Renderer for Vulkan {
 
         let present_info = vk::PresentInfo {
             wait_semaphores: &[&self.render_finished_semaphore],
-            swapchains: &[&self.swapchain],
+            swapchains: &[&render_data.swapchain],
             image_indices: &[image_index],
         };
 
-        self.queue
-            .present(present_info)
-            .expect("failed to present to screen");
+        let present_result = self.queue.present(present_info);
+
+        match present_result {
+            Ok(()) => {}
+            Err(e) => warn!("failed to present: {:?}", e),
+        }
+    }
+
+    fn resize(&mut self, resolution: (u32, u32)) {
+        self.device.wait_idle().expect("failed to wait on device");
+
+        let shaders = [
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStage::Vertex,
+                module: &self.shaders[self.last_batch.vertex_shader],
+                entry_point: "main",
+            },
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStage::Fragment,
+                module: &self.shaders[self.last_batch.fragment_shader],
+                entry_point: "main",
+            },
+        ];
+
+        self.render_info.extent = resolution;
+
+        let render_data = self.render_data.take().unwrap();
+
+        let swapchain = render_data.swapchain;
+
+        self.render_data = Some(VulkanRenderData::init(
+            self.device.clone(),
+            &self.surface,
+            &shaders,
+            Some(swapchain),
+            &self.render_info,
+        ));
     }
 }
 

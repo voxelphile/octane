@@ -110,7 +110,7 @@ mod ffi {
     pub type DeviceSize = u64;
     pub type Flags = u32;
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     #[repr(C)]
     pub enum Result {
         Success = 0,
@@ -137,6 +137,7 @@ mod ffi {
         InvalidExternalHandle = -1000072003,
         SurfaceLost = -1000000000,
         NativeWindowInUse = -1000000001,
+        ValidationFailed = -1000011001,
         Suboptimal = 1000001003,
         OutOfDate = -1000001004,
         InvalidShader = -1000012000,
@@ -2839,13 +2840,18 @@ impl Swapchain {
         };
 
         let present_mode = match create_info.present_mode {
+            PresentMode::Immediate => ffi::PresentMode::Immediate,
             PresentMode::Mailbox => ffi::PresentMode::Mailbox,
             PresentMode::Fifo => ffi::PresentMode::Fifo,
-            _ => unimplemented!(),
+            PresentMode::FifoRelaxed => ffi::PresentMode::FifoRelaxed,
         };
 
-        let old_swapchain = create_info
-            .old_swapchain
+        //if this is not extracted, and handle is not declared separately,
+        //then swapchain will be dropped too early.
+        let old_swapchain = create_info.old_swapchain;
+
+        let old_swapchain_handle = old_swapchain
+            .as_ref()
             .map_or(ffi::Swapchain::null(), |swapchain| swapchain.handle);
 
         let create_info = ffi::SwapchainCreateInfo {
@@ -2866,7 +2872,7 @@ impl Swapchain {
             composite_alpha,
             present_mode,
             clipped: create_info.clipped as _,
-            old_swapchain,
+            old_swapchain: old_swapchain_handle,
         };
 
         let mut handle = MaybeUninit::<ffi::Swapchain>::uninit();
@@ -2954,7 +2960,6 @@ impl Swapchain {
                 &mut image_index,
             )
         };
-
         //TODO this might be wrong
         match result {
             ffi::Result::Success | ffi::Result::Timeout | ffi::Result::NotReady => Ok(image_index),
@@ -2965,13 +2970,14 @@ impl Swapchain {
             ffi::Result::OutOfDate => Err(Error::OutOfDate),
             ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
             ffi::Result::FullScreenExclusiveModeLost => Err(Error::FullScreenExclusiveModeLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
+        println!("drop swapchain");
         unsafe { ffi::vkDestroySwapchainKHR(self.device.handle, self.handle, ptr::null()) };
     }
 }

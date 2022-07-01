@@ -108,7 +108,19 @@ fn main() {
     let startup = std::time::Instant::now();
 
     loop {
-        vulkan.draw_batch(batch.clone(), &entries);
+        let event = window.next_event();
+
+        match event {
+            Some(WindowEvent::CloseRequested) => {
+                break;
+            }
+            Some(WindowEvent::Resized { resolution }) => {
+                dbg!("resized");
+                vulkan.resize(resolution);
+            }
+            None => {}
+            _ => {}
+        }
 
         let follow = 2.0 * 1.0 as f32;
         let angle = std::time::Instant::now()
@@ -125,20 +137,13 @@ fn main() {
 
         vulkan.ubo.view = camera.inverse();
 
-        let event = window.next_event();
-
-        match event {
-            Some(WindowEvent::CloseRequested) => {
-                break;
-            }
-            None => {}
-            _ => {}
-        }
+        vulkan.draw_batch(batch.clone(), &entries);
     }
 
     //TODO figure out surface dependency on window
     //window is dropped before surface which causes segfault
     //explicit drop fixes this but it is not ideal
+
     drop(vulkan);
     drop(window);
     //vk shutdown happens during implicit Drop.
