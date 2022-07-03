@@ -11,6 +11,8 @@ mod ffi {
     type Bool = u32;
 
     pub const KEY_PRESS: c_int = 2;
+    pub const KEY_RELEASE: c_int = 3;
+    pub const MOTION_NOTIFY: c_int = 6;
     pub const EXPOSE: c_int = 12;
     pub const MAP_NOTIFY: c_int = 19;
     pub const REPARENT_NOTIFY: c_int = 21;
@@ -57,6 +59,26 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct MotionEvent {
+        pub ty: c_int,
+        pub serial: c_ulong,
+        pub send_event: Bool,
+        pub display: *mut Display,
+        pub window: Window,
+        pub root: Window,
+        pub subwindow: Window,
+        pub time: Time,
+        pub x: c_int,
+        pub y: c_int,
+        pub x_root: c_int,
+        pub y_root: c_int,
+        pub state: c_uint,
+        pub is_hint: c_char,
+        pub same_screen: Bool,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub struct ClientMessageEvent {
         pub ty: c_int,
         pub serial: c_ulong,
@@ -91,6 +113,7 @@ mod ffi {
         pub ty: c_int,
         pub expose: ExposeEvent,
         pub key: KeyEvent,
+        pub motion: MotionEvent,
         pub client_message: ClientMessageEvent,
         pub configure: ConfigureEvent,
         //this is a hack because event is not the right size...
@@ -137,10 +160,26 @@ mod ffi {
         ) -> Bool;
         pub fn XStoreName(display: *mut Display, window: Window, window_name: *const c_char);
         pub fn XPending(display: *mut Display) -> c_int;
+        pub fn XFixesHideCursor(display: *mut Display, window: Window);
+        pub fn XFixesShowCursor(display: *mut Display, window: Window);
+        pub fn XWarpPointer(
+            display: *mut Display,
+            src_w: Window,
+            dst_w: Window,
+            src_x: c_int,
+            src_y: c_int,
+            src_width: c_uint,
+            src_height: c_uint,
+            dst_x: c_int,
+            dst_y: c_int,
+        );
+        pub fn XFlush(display: *mut Display);
     }
 }
 
 pub const KEY_PRESS_MASK: i64 = 0x0000_0001;
+pub const KEY_RELEASE_MASK: i64 = 0x0000_0002;
+pub const POINTER_MOTION_MASK: i64 = 0x0000_0040;
 pub const EXPOSURE_MASK: i64 = 0x0000_8000;
 pub const STRUCTURE_NOTIFY_MASK: i64 = 0x0002_0000;
 
@@ -151,7 +190,18 @@ pub type Atom = u64;
 
 pub enum Event {
     Expose {},
-    KeyPress {},
+    KeyPress {
+        serial: u64,
+        keycode: Keycode,
+    },
+    KeyRelease {
+        serial: u64,
+        keycode: Keycode,
+    },
+    MotionNotify {
+        x: i32,
+        y: i32,
+    },
     ClientMessage {
         serial: u64,
         send_event: bool,
@@ -169,6 +219,35 @@ pub enum Event {
     },
     ReparentNotify {},
     MapNotify {},
+}
+
+#[derive(PartialEq, Eq)]
+pub enum Keycode {
+    W,
+    A,
+    S,
+    D,
+    Space,
+    LeftShift,
+    Escape,
+}
+
+impl From<u32> for Keycode {
+    fn from(code: u32) -> Self {
+        match code {
+            25 => Self::W,
+            38 => Self::A,
+            39 => Self::S,
+            40 => Self::D,
+            65 => Self::Space,
+            50 => Self::LeftShift,
+            3 => Self::W,
+            9 => Self::Escape,
+            _ => {
+                panic!("keycode not implemented: {}", code);
+            }
+        }
+    }
 }
 
 pub fn open_display(display_name: &str) -> Option<Display> {
@@ -249,7 +328,18 @@ pub fn next_event(display: Display) -> Event {
     unsafe {
         match event.ty {
             ffi::EXPOSE => Event::Expose {},
-            ffi::KEY_PRESS => Event::KeyPress {},
+            ffi::KEY_PRESS => Event::KeyPress {
+                serial: event.key.serial,
+                keycode: event.key.keycode.into(),
+            },
+            ffi::MOTION_NOTIFY => Event::MotionNotify {
+                x: event.motion.x,
+                y: event.motion.y,
+            },
+            ffi::KEY_RELEASE => Event::KeyRelease {
+                serial: event.key.serial,
+                keycode: event.key.keycode.into(),
+            },
             ffi::CLIENT_MESSAGE => Event::ClientMessage {
                 serial: event.client_message.serial,
                 send_event: event.client_message.send_event != 0,
@@ -303,4 +393,33 @@ pub fn store_name(display: Display, window: Window, window_name: &str) {
 
 pub fn pending(display: Display) -> i32 {
     unsafe { ffi::XPending(display) }
+}
+
+pub fn show_cursor(display: Display, window: Window) {
+    unsafe { ffi::XFixesShowCursor(display, window) };
+}
+
+pub fn hide_cursor(display: Display, window: Window) {
+    unsafe { ffi::XFixesHideCursor(display, window) };
+}
+
+pub fn warp_pointer(
+    display: Display,
+    window: Window,
+    src_x: i32,
+    src_y: i32,
+    src_width: u32,
+    src_height: u32,
+    dst_x: i32,
+    dst_y: i32,
+) {
+    unsafe {
+        ffi::XWarpPointer(
+            display, 0, window, src_x, src_y, src_width, src_height, dst_x, dst_y,
+        )
+    };
+}
+
+pub fn flush(display: Display) {
+    unsafe { ffi::XFlush(display) };
 }

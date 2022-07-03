@@ -1,6 +1,6 @@
 #![allow(clippy::needless_range_loop)]
 
-use std::ops::{Add, AddAssign, Deref, DerefMut, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Deref, DerefMut, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use crate::Numeric;
 
@@ -73,6 +73,20 @@ where
             dot += self.data[i] * rhs.data[i];
         }
         dot
+    }
+}
+
+impl<const N: usize> Vector<f32, N> {
+    pub fn magnitude(&self) -> f32 {
+        let mut accum = 0.0;
+        for i in 0..N {
+            accum += self.data[i] * self.data[i];
+        }
+        accum.sqrt()
+    }
+    pub fn normalize(self) -> Self {
+        let magnitude = self.magnitude();
+        self / magnitude
     }
 }
 
@@ -167,5 +181,30 @@ where
 {
     fn mul_assign(&mut self, rhs: T) {
         *self = *self * rhs;
+    }
+}
+
+impl<T, const N: usize> Div<T> for Vector<T, N>
+where
+    T: Numeric,
+    T: Div<Output = T>,
+{
+    type Output = Self;
+    fn div(self, rhs: T) -> Self::Output {
+        let mut data = self.data;
+        for i in 0..N {
+            data[i] = data[i] / rhs;
+        }
+        Self { data }
+    }
+}
+
+impl<T, const N: usize> DivAssign<T> for Vector<T, N>
+where
+    T: Numeric,
+    T: Div<Output = T>,
+{
+    fn div_assign(&mut self, rhs: T) {
+        *self = *self / rhs;
     }
 }

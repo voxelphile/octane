@@ -738,10 +738,19 @@ impl Renderer for Vulkan {
 
         vk::Fence::reset(&[&mut self.in_flight_fence]).expect("failed to reset fence");
 
-        let image_index = render_data
-            .swapchain
-            .acquire_next_image(u64::MAX, Some(&mut self.image_available_semaphore), None)
-            .expect("failed to acquire next image from swapchain");
+        let image_index_result = render_data.swapchain.acquire_next_image(
+            u64::MAX,
+            Some(&mut self.image_available_semaphore),
+            None,
+        );
+
+        let image_index = match image_index_result {
+            Ok(i) => i,
+            Err(e) => {
+                warn!("failed to acquire next image: {:?}", e);
+                return;
+            }
+        };
 
         for i in 0..render_data.descriptor_sets.len() {
             let buffer_info = vk::DescriptorBufferInfo {
