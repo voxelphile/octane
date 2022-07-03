@@ -160,8 +160,6 @@ mod ffi {
         ) -> Bool;
         pub fn XStoreName(display: *mut Display, window: Window, window_name: *const c_char);
         pub fn XPending(display: *mut Display) -> c_int;
-        pub fn XFixesHideCursor(display: *mut Display, window: Window);
-        pub fn XFixesShowCursor(display: *mut Display, window: Window);
         pub fn XWarpPointer(
             display: *mut Display,
             src_w: Window,
@@ -174,6 +172,12 @@ mod ffi {
             dst_y: c_int,
         );
         pub fn XFlush(display: *mut Display);
+    }
+    #[link(name = "Xfixes")]
+    #[allow(non_snake_case)]
+    extern "C" {
+        pub fn XFixesHideCursor(display: *mut Display, window: Window);
+        pub fn XFixesShowCursor(display: *mut Display, window: Window);
     }
 }
 

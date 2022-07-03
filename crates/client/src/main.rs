@@ -15,7 +15,7 @@ use common::render::{self, Renderer};
 
 use math::prelude::{Matrix, Vector};
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fs;
 use std::mem;
 use std::path::Path;
@@ -109,14 +109,14 @@ fn main() {
     let startup = std::time::Instant::now();
     let mut last = startup;
 
-    let mut keys = HashSet::new();
+    let mut keys = HashMap::new();
 
     let mut x_rot = 0.0;
     let mut y_rot = 0.0;
-    let mut position = Vector::<f32, 4>::new([0.0, 0.0, 0.0, 1.0]);
+    let mut position = Vector::<f32, 4>::new([0.0, 0.0, 10.0, 1.0]);
     let mut should_capture = false;
 
-    loop {
+    'main: loop {
         let current = std::time::Instant::now();
         let delta_time = current.duration_since(last).as_secs_f32();
         last = current;
@@ -125,6 +125,7 @@ fn main() {
         if should_capture {
             window.capture();
         }
+        window.show_cursor(!should_capture);
 
         //TODO must be done soon.. tired of this convoluted movement code.
         //simplify movement code
@@ -133,7 +134,7 @@ fn main() {
         while let Some(event) = window.next_event() {
             match event {
                 WindowEvent::KeyPress { keycode } => {
-                    keys.insert(keycode);
+                    keys.insert(keycode, current);
                 }
                 WindowEvent::KeyRelease { keycode } => {
                     keys.remove(&keycode);
@@ -142,11 +143,10 @@ fn main() {
                     if should_capture {
                         x_rot -= (x as f32 - window.resolution().0 as f32 / 2.0) / sens;
                         y_rot -= (y as f32 - window.resolution().1 as f32 / 2.0) / sens;
-                        dbg!(y_rot);
                     }
                 }
                 WindowEvent::CloseRequested => {
-                    break;
+                    break 'main;
                 }
                 WindowEvent::Resized { resolution } => {
                     vulkan.resize(resolution);
@@ -155,7 +155,6 @@ fn main() {
         }
 
         let movement_speed = 5.612;
-        let mut movement = Vector::<f32, 4>::new([0.0, 0.0, 0.0, 0.0]);
 
         let mut camera = Matrix::<f32, 4, 4>::identity();
 
@@ -167,6 +166,11 @@ fn main() {
         x_r[0][2] = -x_rot.sin();
         x_r[2][2] = x_rot.cos();
 
+        y_rot = y_rot.clamp(
+            -std::f32::consts::PI / 2.0 + 0.1,
+            std::f32::consts::PI / 2.0 - 0.1,
+        );
+
         y_r[1][1] = y_rot.cos();
         y_r[2][1] = -y_rot.sin();
         y_r[1][2] = y_rot.sin();
@@ -175,86 +179,48 @@ fn main() {
         camera = camera * y_r;
         camera = camera * x_r;
 
-        movement = y_r * x_r * movement;
+        let mut m = Matrix::<f32, 4, 4>::identity();
 
-        dbg!(position);
-        for key in &keys {
+        for (key, &time) in &keys {
             match key {
                 Keycode::W => {
-                    let mut m = Matrix::<f32, 4, 4>::identity();
-                    m[3][2] = -1.0;
-                    let l = m * y_r;
-                    let l = l * x_r;
-                    let mut p = Vector::<f32, 4>::new(l[3]);
-                    p[1] = 0.0;
-                    p[3] = 0.0;
-                    let p = p.normalize();
-                    let x = p[0];
-                    let z = p[2];
-                    dbg!(p.magnitude());
-                    dbg!(p);
-                    position[0] += x * movement_speed * delta_time;
-                    position[2] += z * movement_speed * delta_time;
+                    m[3][2] += -1.0;
                 }
                 Keycode::A => {
-                    let mut m = Matrix::<f32, 4, 4>::identity();
-                    m[3][0] = -1.0;
-                    let l = m * y_r;
-                    let l = l * x_r;
-                    let mut p = Vector::<f32, 4>::new(l[3]);
-                    p[1] = 0.0;
-                    p[3] = 0.0;
-                    let p = p.normalize();
-                    let x = p[0];
-                    let z = p[2];
-                    dbg!(p.magnitude());
-                    dbg!(p);
-                    position[0] += x * movement_speed * delta_time;
-                    position[2] += z * movement_speed * delta_time;
+                    m[3][0] += -1.0;
                 }
                 Keycode::S => {
-                    let mut m = Matrix::<f32, 4, 4>::identity();
-                    m[3][2] = 1.0;
-                    let l = m * y_r;
-                    let l = l * x_r;
-                    let mut p = Vector::<f32, 4>::new(l[3]);
-                    p[1] = 0.0;
-                    p[3] = 0.0;
-                    let p = p.normalize();
-                    let x = p[0];
-                    let z = p[2];
-                    dbg!(p.magnitude());
-                    dbg!(p);
-                    position[0] += x * movement_speed * delta_time;
-                    position[2] += z * movement_speed * delta_time;
+                    m[3][2] += 1.0;
                 }
                 Keycode::D => {
-                    let mut m = Matrix::<f32, 4, 4>::identity();
-                    m[3][0] = 1.0;
-                    let l = m * y_r;
-                    let l = l * x_r;
-                    let mut p = Vector::<f32, 4>::new(l[3]);
-                    p[1] = 0.0;
-                    p[3] = 0.0;
-                    let p = p.normalize();
-                    let x = p[0];
-                    let z = p[2];
-                    dbg!(p.magnitude());
-                    dbg!(p);
-                    position[0] += x * movement_speed * delta_time;
-                    position[2] += z * movement_speed * delta_time;
+                    m[3][0] += 1.0;
                 }
                 Keycode::Space => {
-                    position += Vector::<f32, 4>::new([0.0, movement_speed, 0.0, 0.0]) * delta_time;
+                    position[1] += movement_speed * delta_time;
                 }
                 Keycode::LeftShift => {
-                    position -= Vector::<f32, 4>::new([0.0, movement_speed, 0.0, 0.0]) * delta_time;
+                    position[1] -= movement_speed * delta_time;
                 }
                 Keycode::Escape => {
-                    should_capture = !should_capture;
+                    if time == current {
+                        should_capture = !should_capture;
+                    }
                 }
             }
         }
+
+        let l = m * y_r;
+        let l = l * x_r;
+        let mut p = Vector::<f32, 4>::new(l[3]);
+        p[1] = 0.0;
+        p[3] = 0.0;
+        let p = if p.magnitude() > 0.0 {
+            p.normalize()
+        } else {
+            p
+        };
+        position[0] += p[0] * movement_speed * delta_time;
+        position[2] += p[2] * movement_speed * delta_time;
 
         camera[3][0] = position[0];
         camera[3][1] = position[1];

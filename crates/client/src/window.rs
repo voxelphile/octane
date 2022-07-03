@@ -50,6 +50,7 @@ mod linux {
         wm_delete_window: x11::Atom,
         event_buffer: Vec<x11::Event>,
         resolution: (u32, u32),
+        cursor: bool,
     }
 
     impl Window {
@@ -89,6 +90,8 @@ mod linux {
 
             let event_buffer = vec![];
 
+            let cursor = true;
+
             Self {
                 display,
                 window,
@@ -96,6 +99,7 @@ mod linux {
                 wm_delete_window,
                 resolution,
                 event_buffer,
+                cursor,
             }
         }
 
@@ -112,18 +116,16 @@ mod linux {
         }
 
         pub fn show_cursor(&mut self, show: bool) {
-            if show {
+            if show && !self.cursor {
                 x11::show_cursor(self.display, self.window);
-            } else {
+            } else if !show && self.cursor {
                 x11::hide_cursor(self.display, self.window);
             }
+            self.cursor = show;
+            x11::flush(self.display);
         }
 
         pub fn capture(&mut self) {
-            while x11::pending(self.display) > 0 {
-                self.event_buffer.push(x11::next_event(self.display));
-            }
-
             x11::warp_pointer(
                 self.display,
                 self.window,
@@ -136,9 +138,12 @@ mod linux {
             );
             x11::flush(self.display);
 
+            while x11::pending(self.display) > 0 {
+                self.event_buffer.push(x11::next_event(self.display));
+            }
+
             for i in (0..self.event_buffer.len()).rev() {
                 if let x11::Event::MotionNotify { .. } = self.event_buffer[i] {
-                    dbg!("discard");
                     self.event_buffer.remove(i);
                     break;
                 }
