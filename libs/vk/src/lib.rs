@@ -2977,13 +2977,39 @@ impl Swapchain {
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
-        println!("drop swapchain");
         unsafe { ffi::vkDestroySwapchainKHR(self.device.handle, self.handle, ptr::null()) };
     }
 }
 
+pub enum ImageType {
+    OneDim,
+    TwoDim,
+    ThreeDim,
+}
+
+pub enum ImageTiling {
+    Optimal,
+    Linear,
+}
+
+pub struct ImageCreateInfo {
+    image_type: ImageType,
+    format: Format,
+    extent: Extent3d,
+    mip_levels: u32,
+    array_layers: u32,
+    samples: u32,
+    tiling: ImageTiling,
+    usage: u32,
+    initial_layout: ImageLayout,
+}
+
 pub struct Image {
     handle: ffi::Image,
+}
+
+impl Image {
+    pub fn load(create_info: ImageCreateInfo, data: &'_ [u8]) {}
 }
 
 pub enum ImageViewType {

@@ -129,7 +129,7 @@ fn main() {
 
         //TODO must be done soon.. tired of this convoluted movement code.
         //simplify movement code
-        let sens = 1000.0;
+        let sens = 750.0;
 
         while let Some(event) = window.next_event() {
             match event {

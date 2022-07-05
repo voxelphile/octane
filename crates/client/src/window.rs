@@ -139,7 +139,11 @@ mod linux {
             x11::flush(self.display);
 
             while x11::pending(self.display) > 0 {
-                self.event_buffer.push(x11::next_event(self.display));
+                let event = x11::next_event(self.display);
+
+                if let Ok(event) = event {
+                    self.event_buffer.push(event);
+                }
             }
 
             for i in (0..self.event_buffer.len()).rev() {
@@ -152,7 +156,11 @@ mod linux {
 
         pub fn next_event(&mut self) -> Option<Event> {
             while x11::pending(self.display) > 0 {
-                self.event_buffer.push(x11::next_event(self.display));
+                let event = x11::next_event(self.display);
+
+                if let Ok(event) = event {
+                    self.event_buffer.push(event);
+                }
             }
 
             //remove autorepeats

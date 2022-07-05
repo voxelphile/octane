@@ -236,20 +236,23 @@ pub enum Keycode {
     Escape,
 }
 
-impl From<u32> for Keycode {
-    fn from(code: u32) -> Self {
+pub enum Error {
+    Invalid,
+}
+
+impl TryFrom<u32> for Keycode {
+    type Error = ();
+
+    fn try_from(code: u32) -> Result<Self, Self::Error> {
         match code {
-            25 => Self::W,
-            38 => Self::A,
-            39 => Self::S,
-            40 => Self::D,
-            65 => Self::Space,
-            50 => Self::LeftShift,
-            3 => Self::W,
-            9 => Self::Escape,
-            _ => {
-                panic!("keycode not implemented: {}", code);
-            }
+            25 => Ok(Self::W),
+            38 => Ok(Self::A),
+            39 => Ok(Self::S),
+            40 => Ok(Self::D),
+            65 => Ok(Self::Space),
+            50 => Ok(Self::LeftShift),
+            9 => Ok(Self::Escape),
+            _ => Err(()),
         }
     }
 }
@@ -322,19 +325,19 @@ pub fn unmap_window(display: Display, window: Window) {
     unsafe { ffi::XUnmapWindow(display, window) };
 }
 
-pub fn next_event(display: Display) -> Event {
+pub fn next_event(display: Display) -> Result<Event, Error> {
     let mut event = MaybeUninit::<ffi::Event>::uninit();
 
     unsafe { ffi::XNextEvent(display, event.as_mut_ptr()) };
 
     let event = unsafe { event.assume_init() };
 
-    unsafe {
+    let event = unsafe {
         match event.ty {
             ffi::EXPOSE => Event::Expose {},
             ffi::KEY_PRESS => Event::KeyPress {
                 serial: event.key.serial,
-                keycode: event.key.keycode.into(),
+                keycode: event.key.keycode.try_into().map_err(|_| Error::Invalid)?,
             },
             ffi::MOTION_NOTIFY => Event::MotionNotify {
                 x: event.motion.x,
@@ -342,7 +345,7 @@ pub fn next_event(display: Display) -> Event {
             },
             ffi::KEY_RELEASE => Event::KeyRelease {
                 serial: event.key.serial,
-                keycode: event.key.keycode.into(),
+                keycode: event.key.keycode.try_into().map_err(|_| Error::Invalid)?,
             },
             ffi::CLIENT_MESSAGE => Event::ClientMessage {
                 serial: event.client_message.serial,
@@ -365,7 +368,9 @@ pub fn next_event(display: Display) -> Event {
                 unimplemented!("x11 event: {}", event.ty);
             }
         }
-    }
+    };
+
+    Ok(event)
 }
 
 pub fn close_display(display: Display) {
