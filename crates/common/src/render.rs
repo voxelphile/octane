@@ -185,7 +185,14 @@ fn create_pipeline(
 pub struct Vulkan {
     pub ubo: UniformBufferObject,
     last_batch: Batch,
-    buffer: vk::Buffer,
+    cubelet_sdf_memory: vk::Memory,
+    cubelet_sdf: vk::Image,
+    cubelet_data_memory: vk::Memory,
+    cubelet_data: vk::Image,
+    data_buffer_memory: vk::Memory,
+    data_buffer: vk::Buffer,
+    staging_buffer_memory: vk::Memory,
+    staging_buffer: vk::Buffer,
     image_available_semaphore: vk::Semaphore,
     render_finished_semaphore: vk::Semaphore,
     in_flight_fence: vk::Fence,
@@ -591,15 +598,131 @@ impl Vulkan {
 
         let last_batch = Batch::default();
 
-        let buffer = vk::Buffer::allocate(
+        let mut data_buffer = vk::Buffer::new(
             device.clone(),
-            &physical_device,
             32768,
-            vk::BUFFER_USAGE_VERTEX | vk::BUFFER_USAGE_INDEX | vk::BUFFER_USAGE_UNIFORM,
+            vk::BUFFER_USAGE_TRANSFER_DST
+                | vk::BUFFER_USAGE_VERTEX
+                | vk::BUFFER_USAGE_INDEX
+                | vk::BUFFER_USAGE_UNIFORM,
         )
-        .expect("failed to allocate buffer");
+        .expect("failed to create buffer");
+
+        let data_buffer_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let data_buffer_memory = vk::Memory::allocate(
+            device.clone(),
+            data_buffer_memory_allocate_info,
+            data_buffer.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        data_buffer.bind_memory(&data_buffer_memory);
+
+        let mut staging_buffer =
+            vk::Buffer::new(device.clone(), 32768, vk::BUFFER_USAGE_TRANSFER_SRC)
+                .expect("failed to create buffer");
+
+        let staging_buffer_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_HOST_VISIBLE | vk::MEMORY_PROPERTY_HOST_COHERENT,
+        };
+
+        let staging_buffer_memory = vk::Memory::allocate(
+            device.clone(),
+            staging_buffer_memory_allocate_info,
+            staging_buffer.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        staging_buffer.bind_memory(&staging_buffer_memory);
 
         let ubo = UniformBufferObject::default();
+
+        pub const cubelet_size: usize = 10;
+
+        let cubelet_data_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::ThreeDim,
+            format: vk::Format::Rgba32Sfloat,
+            extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage: vk::ImageUsage::ColorAttachment,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut cubelet_data = vk::Image::new(device.clone(), cubelet_data_create_info)
+            .expect("failed to allocate image");
+
+        let cubelet_data_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let cubelet_data_memory = vk::Memory::allocate(
+            device.clone(),
+            cubelet_data_memory_allocate_info,
+            cubelet_data.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        cubelet_data.bind_memory(&cubelet_data_memory);
+
+        let cubelet_sdf_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::ThreeDim,
+            format: vk::Format::R32Sfloat,
+            extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage: vk::ImageUsage::ColorAttachment,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut cubelet_sdf = vk::Image::new(device.clone(), cubelet_sdf_create_info)
+            .expect("failed to allocate image");
+
+        let cubelet_sdf_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let cubelet_sdf_memory = vk::Memory::allocate(
+            device.clone(),
+            cubelet_sdf_memory_allocate_info,
+            cubelet_sdf.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        cubelet_sdf.bind_memory(&cubelet_sdf_memory);
+
+        let mut rgba_data = [[[[0_f32; 4]; cubelet_size]; cubelet_size]; cubelet_size];
+        let mut sdf_data = [[[0_f32; cubelet_size]; cubelet_size]; cubelet_size];
+
+        for x in 0..cubelet_size {
+            for y in 0..cubelet_size {
+                for z in 0..cubelet_size {
+                    rgba_data[x][y][z] = [1.0, 0.0, 0.0, 0.5];
+                    if x == 0 || y == 0 || x == cubelet_size - 1 || y == cubelet_size - 1 {
+                        rgba_data[x][y][z] = [1.0, 1.0, 1.0, 1.0];
+                    }
+                }
+            }
+        }
+
+        for x in 0..cubelet_size {
+            for y in 0..cubelet_size {
+                for z in 0..cubelet_size {
+                    sdf_data[x][y][z] = 0.0;
+                }
+            }
+        }
 
         Self {
             instance,
@@ -617,8 +740,15 @@ impl Vulkan {
             render_finished_semaphore,
             image_available_semaphore,
             last_batch,
-            buffer,
+            data_buffer,
+            data_buffer_memory,
+            staging_buffer,
+            staging_buffer_memory,
             ubo,
+            cubelet_data,
+            cubelet_data_memory,
+            cubelet_sdf,
+            cubelet_sdf_memory,
         }
     }
 }
@@ -634,9 +764,9 @@ impl Renderer for Vulkan {
 
             let vertex_offset = num_vertices * mem::size_of::<Vertex>();
 
-            self.buffer
-                .copy(vertex_offset, &vertices[..])
-                .expect("failed to copy to buffer");
+            self.staging_buffer_memory
+                .write(vertex_offset, &vertices[..])
+                .expect("failed to write to buffer");
 
             num_vertices += vertices.len();
         }
@@ -653,9 +783,9 @@ impl Renderer for Vulkan {
             let index_offset =
                 num_vertices * mem::size_of::<Vertex>() + num_indices * mem::size_of::<u16>();
 
-            self.buffer
-                .copy(index_offset, &indices[..])
-                .expect("failed to copy to buffer");
+            self.staging_buffer_memory
+                .write(index_offset, &indices[..])
+                .expect("failed to write to buffer");
 
             num_indices += indices.len();
         }
@@ -665,9 +795,34 @@ impl Renderer for Vulkan {
 
         let ubo_offset = (ubo_offset as f64 / 64.0).ceil() * 64.0;
 
-        self.buffer
-            .copy(ubo_offset as _, &[self.ubo])
-            .expect("failed to copy to buffer");
+        self.staging_buffer_memory
+            .write(ubo_offset as _, &[self.ubo])
+            .expect("failed to write to buffer");
+
+        self.command_buffer
+            .record(|commands| {
+                let buffer_copy = vk::BufferCopy {
+                    src_offset: 0,
+                    dst_offset: 0,
+                    size: 32768,
+                };
+
+                commands.copy_buffer(&self.staging_buffer, &mut self.data_buffer, &[buffer_copy]);
+            })
+            .expect("failed to record command buffer");
+
+        let submit_info = vk::SubmitInfo {
+            wait_semaphores: &[],
+            wait_stages: &[],
+            command_buffers: &[&self.command_buffer],
+            signal_semaphores: &[],
+        };
+
+        self.queue
+            .submit(&[submit_info], None)
+            .expect("failed to submit buffer copy command buffer");
+
+        self.queue.wait_idle().expect("failed to wait on queue");
 
         self.shaders.entry(batch.vertex_shader).or_insert_with(|| {
             let bytes = fs::read(batch.vertex_shader).expect("failed to read shader");
@@ -754,7 +909,7 @@ impl Renderer for Vulkan {
 
         for i in 0..render_data.descriptor_sets.len() {
             let buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.buffer,
+                buffer: &self.data_buffer,
                 offset: ubo_offset as _,
                 range: mem::size_of::<UniformBufferObject>(),
             };
@@ -794,10 +949,10 @@ impl Renderer for Vulkan {
                     &render_data.graphics_pipeline,
                 );
 
-                commands.bind_vertex_buffers(0, 1, &[&self.buffer], &[0]);
+                commands.bind_vertex_buffers(0, 1, &[&self.data_buffer], &[0]);
 
                 commands.bind_index_buffer(
-                    &self.buffer,
+                    &self.data_buffer,
                     num_vertices * mem::size_of::<Vertex>(),
                     vk::IndexType::Uint16,
                 );

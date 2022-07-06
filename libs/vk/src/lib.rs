@@ -158,6 +158,7 @@ mod ffi {
         FenceCreateInfo = 8,
         SemaphoreCreateInfo = 9,
         BufferCreateInfo = 12,
+        ImageCreateInfo = 14,
         ImageViewCreateInfo = 15,
         ShaderModuleCreateInfo = 16,
         PipelineShaderStageCreateInfo = 18,
@@ -224,14 +225,18 @@ mod ffi {
     #[repr(C)]
     pub enum Format {
         Bgra8Srgb = 50,
+        R32Sfloat = 100,
         Rgb32Sfloat = 106,
+        Rgba32Sfloat = 109,
     }
 
     impl From<super::Format> for Format {
         fn from(format: super::Format) -> Self {
             match format {
                 super::Format::Bgra8Srgb => Self::Bgra8Srgb,
+                super::Format::R32Sfloat => Self::R32Sfloat,
                 super::Format::Rgb32Sfloat => Self::Rgb32Sfloat,
+                super::Format::Rgba32Sfloat => Self::Rgba32Sfloat,
             }
         }
     }
@@ -302,6 +307,15 @@ mod ffi {
     pub enum ImageUsage {
         ColorAttachment = 0x00000010,
         DepthStencilAttachment = 0x00000020,
+    }
+
+    impl From<super::ImageUsage> for ImageUsage {
+        fn from(image_usage: super::ImageUsage) -> Self {
+            match image_usage {
+                super::ImageUsage::ColorAttachment => Self::ColorAttachment,
+                super::ImageUsage::DepthStencilAttachment => Self::DepthStencilAttachment,
+            }
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -1554,6 +1568,68 @@ mod ffi {
         pub pool_sizes: *const DescriptorPoolSize,
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum ImageType {
+        OneDim = 0,
+        TwoDim = 1,
+        ThreeDim = 2,
+    }
+
+    impl From<super::ImageType> for ImageType {
+        fn from(image_type: super::ImageType) -> Self {
+            match image_type {
+                super::ImageType::OneDim => Self::OneDim,
+                super::ImageType::TwoDim => Self::TwoDim,
+                super::ImageType::ThreeDim => Self::ThreeDim,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum ImageTiling {
+        Optimal = 0,
+        Linear = 1,
+    }
+
+    impl From<super::ImageTiling> for ImageTiling {
+        fn from(image_tiling: super::ImageTiling) -> Self {
+            match image_tiling {
+                super::ImageTiling::Optimal => Self::Optimal,
+                super::ImageTiling::Linear => Self::Linear,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ImageCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: Flags,
+        pub image_type: ImageType,
+        pub format: Format,
+        pub extent: Extent3d,
+        pub mip_levels: c_uint,
+        pub array_layers: c_uint,
+        pub samples: Flags,
+        pub tiling: ImageTiling,
+        pub image_usage: ImageUsage,
+        pub sharing_mode: SharingMode,
+        pub queue_family_index_count: c_uint,
+        pub queue_family_indices: *const c_uint,
+        pub initial_layout: ImageLayout,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct BufferCopy {
+        pub src_offset: DeviceSize,
+        pub dst_offset: DeviceSize,
+        pub size: DeviceSize,
+    }
+
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
     extern "C" {
@@ -1602,6 +1678,7 @@ mod ffi {
         ) -> Result;
         pub fn vkDestroyDevice(device: Device, allocator: *const c_void);
         pub fn vkDeviceWaitIdle(device: Device) -> Result;
+        pub fn vkQueueWaitIdle(queue: Queue) -> Result;
         pub fn vkGetDeviceQueue(
             device: Device,
             queue_family_index: c_uint,
@@ -1778,6 +1855,13 @@ mod ffi {
             offset: DeviceSize,
             index_type: IndexType,
         );
+        pub fn vkCmdCopyBuffer(
+            command_buffer: CommandBuffer,
+            src_buffer: Buffer,
+            dst_buffer: Buffer,
+            region_count: c_uint,
+            regions: *const BufferCopy,
+        );
         pub fn vkCreateFence(
             device: Device,
             create_info: *const FenceCreateInfo,
@@ -1869,6 +1953,24 @@ mod ffi {
             dynamic_offset_count: c_uint,
             dynamic_offsets: *const c_uint,
         );
+        pub fn vkCreateImage(
+            device: Device,
+            create_info: *const ImageCreateInfo,
+            allocator: *const c_void,
+            image: *mut Image,
+        ) -> Result;
+        pub fn vkDestroyImage(device: Device, image: Image, allocator: *const c_void);
+        pub fn vkGetImageMemoryRequirements(
+            device: Device,
+            image: Image,
+            memory_requirements: *mut MemoryRequirements,
+        );
+        pub fn vkBindImageMemory(
+            device: Device,
+            image: Image,
+            memory: DeviceMemory,
+            memory_offset: DeviceSize,
+        ) -> Result;
     }
 }
 
@@ -1914,9 +2016,17 @@ pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
 
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
 
+pub const BUFFER_USAGE_TRANSFER_SRC: u32 = 0x00000001;
+pub const BUFFER_USAGE_TRANSFER_DST: u32 = 0x00000002;
 pub const BUFFER_USAGE_VERTEX: u32 = 0x00000080;
 pub const BUFFER_USAGE_INDEX: u32 = 0x00000040;
 pub const BUFFER_USAGE_UNIFORM: u32 = 0x00000010;
+
+pub const MEMORY_PROPERTY_DEVICE_LOCAL: u32 = 0x00000001;
+pub const MEMORY_PROPERTY_HOST_VISIBLE: u32 = 0x00000002;
+pub const MEMORY_PROPERTY_HOST_COHERENT: u32 = 0x00000004;
+pub const MEMORY_PROPERTY_HOST_CACHED: u32 = 0x00000008;
+pub const MEMORY_PROPERTY_LAZILY_ALLOCATED: u32 = 0x00000010;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -1951,7 +2061,9 @@ pub enum Error {
 #[derive(Clone, Copy)]
 pub enum Format {
     Bgra8Srgb,
+    R32Sfloat,
     Rgb32Sfloat,
+    Rgba32Sfloat,
 }
 
 #[derive(Clone, Copy)]
@@ -2185,7 +2297,7 @@ impl Instance {
             ffi::Result::LayerNotPresent => Err(Error::LayerNotPresent),
             ffi::Result::ExtensionNotPresent => Err(Error::ExtensionNotPresent),
             ffi::Result::IncompatibleDriver => Err(Error::IncompatibleDriver),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -2248,7 +2360,7 @@ impl DebugUtilsMessenger {
                 Ok(debug_utils_messenger)
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -2465,7 +2577,40 @@ impl PhysicalDevice {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+
+    pub fn memory_properties(&self) -> MemoryProperties {
+        let mut memory_properties = MaybeUninit::<ffi::PhysicalDeviceMemoryProperties>::uninit();
+
+        unsafe {
+            ffi::vkGetPhysicalDeviceMemoryProperties(self.handle, memory_properties.as_mut_ptr())
+        };
+
+        let memory_properties = unsafe { memory_properties.assume_init() };
+
+        let memory_types = (0..memory_properties.memory_type_count)
+            .into_iter()
+            .map(|i| memory_properties.memory_types[i as usize])
+            .map(|t| MemoryType {
+                property_flags: t.property_flags,
+                heap_index: t.heap_index,
+            })
+            .collect::<Vec<_>>();
+
+        let memory_heaps = (0..memory_properties.memory_heap_count)
+            .into_iter()
+            .map(|i| memory_properties.memory_heaps[i as usize])
+            .map(|h| MemoryHeap {
+                size: h.size,
+                flags: h.flags,
+            })
+            .collect::<Vec<_>>();
+
+        MemoryProperties {
+            memory_types,
+            memory_heaps,
         }
     }
 
@@ -2582,7 +2727,7 @@ impl Device {
             ffi::Result::FeatureNotPresent => Err(Error::FeatureNotPresent),
             ffi::Result::TooManyObjects => Err(Error::TooManyObjects),
             ffi::Result::DeviceLost => Err(Error::DeviceLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -2606,7 +2751,7 @@ impl Device {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::DeviceLost => Err(Error::DeviceLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -2692,7 +2837,7 @@ impl Queue {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::DeviceLost => Err(Error::DeviceLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -2732,7 +2877,19 @@ impl Queue {
             ffi::Result::OutOfDate => Err(Error::OutOfDate),
             ffi::Result::SurfaceLost => Err(Error::SurfaceLost),
             ffi::Result::FullScreenExclusiveModeLost => Err(Error::FullScreenExclusiveModeLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+
+    pub fn wait_idle(&self) -> Result<(), Error> {
+        let result = unsafe { ffi::vkQueueWaitIdle(self.handle) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::DeviceLost => Err(Error::DeviceLost),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -2901,7 +3058,7 @@ impl Swapchain {
             ffi::Result::NativeWindowInUse => Err(Error::NativeWindowInUse),
             ffi::Result::InitializationFailed => Err(Error::InitializationFailed),
             ffi::Result::CompressionExhausted => Err(Error::CompressionExhausted),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -2932,7 +3089,11 @@ impl Swapchain {
 
         let swapchain_images = swapchain_images
             .into_iter()
-            .map(|handle| Image { handle })
+            .map(|handle| Image {
+                device: self.device.clone(),
+                handle,
+                user: false,
+            })
             .collect::<Vec<_>>();
 
         swapchain_images
@@ -2993,23 +3154,121 @@ pub enum ImageTiling {
 }
 
 pub struct ImageCreateInfo {
-    image_type: ImageType,
-    format: Format,
-    extent: Extent3d,
-    mip_levels: u32,
-    array_layers: u32,
-    samples: u32,
-    tiling: ImageTiling,
-    usage: u32,
-    initial_layout: ImageLayout,
+    pub image_type: ImageType,
+    pub format: Format,
+    pub extent: Extent3d,
+    pub mip_levels: u32,
+    pub array_layers: u32,
+    pub samples: u32,
+    pub tiling: ImageTiling,
+    pub image_usage: ImageUsage,
+    pub initial_layout: ImageLayout,
 }
 
 pub struct Image {
+    device: Rc<Device>,
     handle: ffi::Image,
+    user: bool,
 }
 
 impl Image {
-    pub fn load(create_info: ImageCreateInfo, data: &'_ [u8]) {}
+    pub fn new(device: Rc<Device>, create_info: ImageCreateInfo) -> Result<Self, Error> {
+        let create_info = ffi::ImageCreateInfo {
+            structure_type: ffi::StructureType::ImageCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            image_type: create_info.image_type.into(),
+            extent: [
+                create_info.extent.0,
+                create_info.extent.1,
+                create_info.extent.2,
+            ],
+            mip_levels: create_info.mip_levels,
+            array_layers: create_info.array_layers,
+            format: create_info.format.into(),
+            tiling: create_info.tiling.into(),
+            initial_layout: create_info.initial_layout.into(),
+            image_usage: create_info.image_usage.into(),
+            samples: create_info.samples,
+            sharing_mode: ffi::SharingMode::Exclusive,
+            queue_family_index_count: 0,
+            queue_family_indices: ptr::null(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::Image>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateImage(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let image = Self {
+                    device,
+                    handle,
+                    user: true,
+                };
+
+                Ok(image)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            ffi::Result::CompressionExhausted => Err(Error::CompressionExhausted)?,
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+
+    pub fn memory_requirements(&self) -> MemoryRequirements {
+        let mut memory_requirements = MaybeUninit::<ffi::MemoryRequirements>::uninit();
+
+        unsafe {
+            ffi::vkGetImageMemoryRequirements(
+                self.device.handle,
+                self.handle,
+                memory_requirements.as_mut_ptr(),
+            )
+        };
+
+        let memory_requirements = unsafe { memory_requirements.assume_init() };
+
+        MemoryRequirements {
+            size: memory_requirements.size,
+            alignment: memory_requirements.alignment,
+            memory_type: memory_requirements.memory_type,
+        }
+    }
+
+    pub fn bind_memory(&mut self, memory: &Memory) -> Result<(), Error> {
+        if !self.user {
+            panic!("cannot bind memory to non-user image");
+        }
+
+        let result =
+            unsafe { ffi::vkBindImageMemory(self.device.handle, self.handle, memory.handle, 0) };
+
+        match result {
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+}
+
+impl Drop for Image {
+    fn drop(&mut self) {
+        if self.user {
+            unsafe { ffi::vkDestroyImage(self.device.handle, self.handle, ptr::null()) };
+        }
+    }
 }
 
 pub enum ImageViewType {
@@ -3061,6 +3320,7 @@ pub struct ImageView {
 
 impl ImageView {
     pub fn new(device: Rc<Device>, create_info: ImageViewCreateInfo) -> Result<Self, Error> {
+        //TODO change these to From impl
         let view_type = match create_info.view_type {
             ImageViewType::OneDim => ffi::ImageViewType::OneDim,
             ImageViewType::TwoDim => ffi::ImageViewType::TwoDim,
@@ -3071,10 +3331,7 @@ impl ImageView {
             ImageViewType::ThreeDimArray => ffi::ImageViewType::ThreeDimArray,
         };
 
-        let format = match create_info.format {
-            Format::Bgra8Srgb => ffi::Format::Bgra8Srgb,
-            Format::Rgb32Sfloat => ffi::Format::Rgb32Sfloat,
-        };
+        let format = create_info.format.into();
 
         //TODO convert to From<non-ffi> for ffi
         let swizzle_f = |component| match component {
@@ -3134,7 +3391,7 @@ impl ImageView {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -3186,7 +3443,7 @@ impl ShaderModule {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::InvalidShader => Err(Error::InvalidShader),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -3392,7 +3649,7 @@ impl PipelineLayout {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -3671,7 +3928,7 @@ impl RenderPass {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4060,7 +4317,7 @@ impl Pipeline {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::InvalidShader => Err(Error::InvalidShader),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4125,7 +4382,7 @@ impl Framebuffer {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4175,7 +4432,7 @@ impl CommandPool {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4237,11 +4494,11 @@ impl CommandBuffer {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
-    pub fn record(&mut self, script: impl Fn(&mut Commands)) -> Result<(), Error> {
+    pub fn record(&mut self, mut script: impl FnMut(&mut Commands)) -> Result<(), Error> {
         let begin_info = ffi::CommandBufferBeginInfo {
             structure_type: ffi::StructureType::CommandBufferBeginInfo,
             p_next: ptr::null(),
@@ -4255,7 +4512,7 @@ impl CommandBuffer {
             ffi::Result::Success => {}
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
 
         let mut commands = Commands {
@@ -4270,7 +4527,7 @@ impl CommandBuffer {
             ffi::Result::Success => Ok(()),
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -4280,7 +4537,7 @@ impl CommandBuffer {
         match result {
             ffi::Result::Success => Ok(()),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4435,6 +4692,32 @@ impl Commands<'_> {
             )
         };
     }
+
+    pub fn copy_buffer(
+        &mut self,
+        src_buffer: &Buffer,
+        dst_buffer: &mut Buffer,
+        regions: &'_ [BufferCopy],
+    ) {
+        let regions = regions
+            .iter()
+            .map(|copy| ffi::BufferCopy {
+                src_offset: copy.src_offset,
+                dst_offset: copy.dst_offset,
+                size: copy.size,
+            })
+            .collect::<Vec<_>>();
+
+        unsafe {
+            ffi::vkCmdCopyBuffer(
+                self.command_buffer.handle,
+                src_buffer.handle,
+                dst_buffer.handle,
+                regions.len() as _,
+                regions.as_ptr(),
+            )
+        };
+    }
 }
 
 pub struct RenderPassBeginInfo<'a> {
@@ -4480,7 +4763,7 @@ impl Semaphore {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4527,7 +4810,7 @@ impl Fence {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -4563,7 +4846,7 @@ impl Fence {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::DeviceLost => Err(Error::DeviceLost),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -4590,7 +4873,7 @@ impl Fence {
         match result {
             ffi::Result::Success => Ok(()),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4617,17 +4900,10 @@ pub struct PresentInfo<'a> {
 pub struct Buffer {
     device: Rc<Device>,
     handle: ffi::Buffer,
-    memory: Option<ffi::DeviceMemory>,
-    size: usize,
 }
 
 impl Buffer {
-    pub fn allocate(
-        device: Rc<Device>,
-        physical_device: &PhysicalDevice,
-        size: usize,
-        usage: u32,
-    ) -> Result<Self, Error> {
+    pub fn new(device: Rc<Device>, size: u64, usage: u32) -> Result<Self, Error> {
         let create_info = ffi::BufferCreateInfo {
             structure_type: ffi::StructureType::BufferCreateInfo,
             p_next: ptr::null(),
@@ -4650,149 +4926,57 @@ impl Buffer {
             )
         };
 
-        let mut buffer = match result {
+        match result {
             ffi::Result::Success => {
                 let handle = unsafe { handle.assume_init() };
 
-                let buffer = Self {
-                    device,
-                    handle,
-                    memory: None,
-                    size,
-                };
+                let buffer = Self { device, handle };
 
-                buffer
+                Ok(buffer)
             }
-            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
-            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
-            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress)?,
-            _ => panic!("unexpected result"),
-        };
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
 
-        let mut memory_properties = MaybeUninit::<ffi::PhysicalDeviceMemoryProperties>::uninit();
-
-        unsafe {
-            ffi::vkGetPhysicalDeviceMemoryProperties(
-                physical_device.handle,
-                memory_properties.as_mut_ptr(),
-            )
-        };
-
-        let memory_properties = unsafe { memory_properties.assume_init() };
-
+    pub fn memory_requirements(&self) -> MemoryRequirements {
         let mut memory_requirements = MaybeUninit::<ffi::MemoryRequirements>::uninit();
 
         unsafe {
             ffi::vkGetBufferMemoryRequirements(
-                buffer.device.handle,
-                buffer.handle,
+                self.device.handle,
+                self.handle,
                 memory_requirements.as_mut_ptr(),
             )
         };
 
         let memory_requirements = unsafe { memory_requirements.assume_init() };
 
-        let mut memory_type_index = 0;
-
-        for i in 0..memory_properties.memory_type_count {
-            if memory_requirements.memory_type & (1 << i) != 0
-                && memory_properties.memory_types[i as usize].property_flags
-                    & (0x00000002 | 0x00000004)
-                    != 0
-            {
-                memory_type_index = i;
-                break;
-            }
+        MemoryRequirements {
+            size: memory_requirements.size,
+            alignment: memory_requirements.alignment,
+            memory_type: memory_requirements.memory_type,
         }
-
-        let allocate_info = ffi::MemoryAllocateInfo {
-            structure_type: ffi::StructureType::MemoryAllocateInfo,
-            p_next: ptr::null(),
-            size: size as _,
-            memory_type_index: memory_type_index as _,
-        };
-
-        let mut handle = MaybeUninit::<ffi::DeviceMemory>::uninit();
-
-        let result = unsafe {
-            ffi::vkAllocateMemory(
-                buffer.device.handle,
-                &allocate_info,
-                ptr::null(),
-                handle.as_mut_ptr(),
-            )
-        };
-
-        match result {
-            ffi::Result::Success => {}
-            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
-            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
-            ffi::Result::InvalidExternalHandle => Err(Error::InvalidExternalHandle)?,
-            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress)?,
-            _ => panic!("unexpected result"),
-        };
-
-        let handle = unsafe { handle.assume_init() };
-
-        let result =
-            unsafe { ffi::vkBindBufferMemory(buffer.device.handle, buffer.handle, handle, 0) };
-
-        match result {
-            ffi::Result::Success => {}
-            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
-            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
-            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress)?,
-            _ => panic!("unexpected result"),
-        }
-
-        buffer.memory = Some(handle);
-
-        Ok(buffer)
     }
 
-    pub fn copy<T>(&self, offset: usize, data: &'_ [T]) -> Result<(), Error> {
-        if offset + data.len() * mem::size_of::<T>() > self.size {
-            panic!("attempt to overrun buffer");
-        }
-
-        let mut buf = ptr::null_mut::<u8>();
-
-        let result = unsafe {
-            ffi::vkMapMemory(
-                self.device.handle,
-                self.memory.unwrap(),
-                0,
-                self.size as _,
-                0,
-                &mut buf as *mut _ as _,
-            )
-        };
+    pub fn bind_memory(&mut self, memory: &Memory) -> Result<(), Error> {
+        let result =
+            unsafe { ffi::vkBindBufferMemory(self.device.handle, self.handle, memory.handle, 0) };
 
         match result {
-            ffi::Result::Success => {}
-            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
-            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
-            ffi::Result::MemoryMapFailed => Err(Error::MemoryMapFailed)?,
-            _ => panic!("unexpected result"),
+            ffi::Result::Success => Ok(()),
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress),
+            _ => panic!("unexpected result: {:?}", result),
         }
-
-        unsafe {
-            ptr::copy(
-                data.as_ptr() as _,
-                buf.add(offset),
-                data.len() * mem::size_of::<T>(),
-            )
-        };
-
-        unsafe { ffi::vkUnmapMemory(self.device.handle, self.memory.unwrap()) };
-
-        Ok(())
     }
 }
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        unsafe { ffi::vkFreeMemory(self.device.handle, self.memory.unwrap(), ptr::null()) };
         unsafe { ffi::vkDestroyBuffer(self.device.handle, self.handle, ptr::null()) };
     }
 }
@@ -4864,7 +5048,7 @@ impl DescriptorSetLayout {
             }
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -4929,7 +5113,7 @@ impl DescriptorSet {
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::FragmentedPool => Err(Error::FragmentedPool),
             ffi::Result::OutOfPoolMemory => Err(Error::OutOfPoolMemory),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -5100,7 +5284,7 @@ impl DescriptorPool {
             ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
             ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
             ffi::Result::Fragmentation => Err(Error::Fragmentation),
-            _ => panic!("unexpected result"),
+            _ => panic!("unexpected result: {:?}", result),
         }
     }
 }
@@ -5109,4 +5293,149 @@ impl Drop for DescriptorPool {
     fn drop(&mut self) {
         unsafe { ffi::vkDestroyDescriptorPool(self.device.handle, self.handle, ptr::null()) };
     }
+}
+
+pub struct MemoryType {
+    property_flags: u32,
+    heap_index: u32,
+}
+
+pub struct MemoryHeap {
+    size: u64,
+    flags: u32,
+}
+
+pub struct MemoryProperties {
+    memory_types: Vec<MemoryType>,
+    memory_heaps: Vec<MemoryHeap>,
+}
+
+pub struct MemoryRequirements {
+    size: u64,
+    alignment: u64,
+    memory_type: u32,
+}
+
+pub struct MemoryAllocateInfo {
+    pub property_flags: u32,
+}
+
+pub struct Memory {
+    device: Rc<Device>,
+    handle: ffi::DeviceMemory,
+    size: u64,
+}
+
+impl Memory {
+    pub fn allocate(
+        device: Rc<Device>,
+        allocate_info: MemoryAllocateInfo,
+        requirements: MemoryRequirements,
+        properties: MemoryProperties,
+    ) -> Result<Self, Error> {
+        let size = requirements.size;
+
+        let mut memory_type_index = None;
+
+        for i in 0..properties.memory_types.len() {
+            if requirements.memory_type & (1 << i) != 0
+                && properties.memory_types[i as usize].property_flags & allocate_info.property_flags
+                    != 0
+            {
+                memory_type_index = Some(i);
+                break;
+            }
+        }
+
+        let memory_type_index =
+            memory_type_index.unwrap_or_else(|| panic!("couldnt find valid memory type")) as _;
+
+        let allocate_info = ffi::MemoryAllocateInfo {
+            structure_type: ffi::StructureType::MemoryAllocateInfo,
+            p_next: ptr::null(),
+            size,
+            memory_type_index,
+        };
+
+        let mut handle = MaybeUninit::<ffi::DeviceMemory>::uninit();
+
+        let result = unsafe {
+            ffi::vkAllocateMemory(
+                device.handle,
+                &allocate_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let memory = Self {
+                    device,
+                    handle,
+                    size,
+                };
+
+                Ok(memory)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidExternalHandle => Err(Error::InvalidExternalHandle),
+            ffi::Result::InvalidOpaqueCaptureAddress => Err(Error::InvalidOpaqueCaptureAddress),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+
+    pub fn write<T>(&self, offset: usize, data: &'_ [T]) -> Result<(), Error> {
+        if offset + data.len() * mem::size_of::<T>() > self.size as _ {
+            panic!("attempt to overrun buffer");
+        }
+
+        let mut mem = ptr::null_mut::<u8>();
+
+        let result = unsafe {
+            ffi::vkMapMemory(
+                self.device.handle,
+                self.handle,
+                0,
+                self.size,
+                0,
+                &mut mem as *mut _ as _,
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {}
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+            ffi::Result::MemoryMapFailed => Err(Error::MemoryMapFailed)?,
+            _ => panic!("unexpected result: {:?}", result),
+        }
+
+        unsafe {
+            ptr::copy(
+                data.as_ptr() as _,
+                mem.add(offset),
+                data.len() * mem::size_of::<T>(),
+            )
+        };
+
+        unsafe { ffi::vkUnmapMemory(self.device.handle, self.handle) };
+
+        Ok(())
+    }
+}
+
+impl Drop for Memory {
+    fn drop(&mut self) {
+        unsafe { ffi::vkFreeMemory(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+pub struct BufferCopy {
+    pub src_offset: u64,
+    pub dst_offset: u64,
+    pub size: u64,
 }
