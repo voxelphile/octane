@@ -14,6 +14,21 @@ mod ffi {
 
     use libc::{c_char, c_float, c_int, c_uint, c_ulong, c_void, size_t};
 
+    macro_rules! impl_from {
+        ($ obj : expr, $($ name : ident => $ case : ident),*) => {
+            match $obj {
+                $(super::$name::$case => Self::$case),*
+            }
+        };
+        ($ name : ident, $($cases : ident),*) => {
+            impl From<super::$name> for $name {
+                fn from(x: super::$name) -> Self {
+                    impl_from!(x, $($name => $cases),*)
+                }
+            }
+        };
+    }
+
     macro_rules! handle {
         ($ name : ident) => {
             #[repr(transparent)]
@@ -106,6 +121,7 @@ mod ffi {
     handle_nondispatchable!(DeviceMemory);
     handle_nondispatchable!(DescriptorPool);
     handle_nondispatchable!(DescriptorSet);
+    handle_nondispatchable!(Sampler);
 
     pub type DeviceSize = u64;
     pub type Flags = u32;
@@ -173,6 +189,7 @@ mod ffi {
         PipelineDynamicStateCreateInfo = 27,
         GraphicsPipelineCreateInfo = 28,
         PipelineLayoutCreateInfo = 30,
+        SamplerCreateInfo = 31,
         DescriptorSetLayoutCreateInfo = 32,
         DescriptorPoolCreateInfo = 33,
         DescriptorSetAllocateInfo = 34,
@@ -300,22 +317,6 @@ mod ffi {
     pub struct SurfaceFormat {
         pub format: Format,
         pub color_space: ColorSpace,
-    }
-
-    #[derive(Clone, Copy)]
-    #[repr(C)]
-    pub enum ImageUsage {
-        ColorAttachment = 0x00000010,
-        DepthStencilAttachment = 0x00000020,
-    }
-
-    impl From<super::ImageUsage> for ImageUsage {
-        fn from(image_usage: super::ImageUsage) -> Self {
-            match image_usage {
-                super::ImageUsage::ColorAttachment => Self::ColorAttachment,
-                super::ImageUsage::DepthStencilAttachment => Self::DepthStencilAttachment,
-            }
-        }
     }
 
     #[derive(Clone, Copy)]
@@ -644,7 +645,7 @@ mod ffi {
         pub image_color_space: ColorSpace,
         pub image_extent: Extent2d,
         pub image_array_layers: c_uint,
-        pub image_usage: ImageUsage,
+        pub image_usage: c_uint,
         pub image_sharing_mode: SharingMode,
         pub queue_family_index_count: c_uint,
         pub queue_family_indices: *const c_uint,
@@ -1133,6 +1134,18 @@ mod ffi {
         Always = 7,
     }
 
+    impl_from!(
+        CompareOp,
+        Never,
+        Less,
+        Equal,
+        LessOrEqual,
+        Greater,
+        NotEqual,
+        GreaterOrEqual,
+        Always
+    );
+
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub enum StencilOp {
@@ -1472,16 +1485,11 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub enum DescriptorType {
+        CombinedImageSampler = 1,
         UniformBuffer = 6,
     }
 
-    impl From<super::DescriptorType> for DescriptorType {
-        fn from(descriptor_type: super::DescriptorType) -> Self {
-            match descriptor_type {
-                super::DescriptorType::UniformBuffer => Self::UniformBuffer,
-            }
-        }
-    }
+    impl_from!(DescriptorType, CombinedImageSampler, UniformBuffer);
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -1513,6 +1521,14 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct DescriptorImageInfo {
+        pub sampler: Sampler,
+        pub image_view: ImageView,
+        pub image_layout: ImageLayout,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub struct WriteDescriptorSet {
         pub structure_type: StructureType,
         pub p_next: *const c_void,
@@ -1521,7 +1537,7 @@ mod ffi {
         pub dst_array_element: c_uint,
         pub descriptor_count: c_uint,
         pub descriptor_type: DescriptorType,
-        pub image_infos: *const c_void,
+        pub image_infos: *const DescriptorImageInfo,
         pub buffer_infos: *const DescriptorBufferInfo,
         pub texel_buffer_view: *const c_void,
     }
@@ -1615,7 +1631,7 @@ mod ffi {
         pub array_layers: c_uint,
         pub samples: Flags,
         pub tiling: ImageTiling,
-        pub image_usage: ImageUsage,
+        pub image_usage: u32,
         pub sharing_mode: SharingMode,
         pub queue_family_index_count: c_uint,
         pub queue_family_indices: *const c_uint,
@@ -1628,6 +1644,105 @@ mod ffi {
         pub src_offset: DeviceSize,
         pub dst_offset: DeviceSize,
         pub size: DeviceSize,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum Filter {
+        Nearest = 0,
+        Linear = 1,
+    }
+
+    impl From<super::Filter> for Filter {
+        fn from(filter: super::Filter) -> Self {
+            match filter {
+                super::Filter::Nearest => Self::Nearest,
+                super::Filter::Linear => Self::Linear,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum SamplerMipmapMode {
+        Nearest = 0,
+        Linear = 1,
+    }
+
+    impl From<super::SamplerMipmapMode> for SamplerMipmapMode {
+        fn from(mipmap_mode: super::SamplerMipmapMode) -> Self {
+            match mipmap_mode {
+                super::SamplerMipmapMode::Nearest => Self::Nearest,
+                super::SamplerMipmapMode::Linear => Self::Linear,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum SamplerAddressMode {
+        Repeat = 0,
+        MirroredRepeat = 1,
+        ClampToEdge = 2,
+        ClampToBorder = 3,
+    }
+
+    impl From<super::SamplerAddressMode> for SamplerAddressMode {
+        fn from(address_mode: super::SamplerAddressMode) -> Self {
+            match address_mode {
+                super::SamplerAddressMode::Repeat => Self::Repeat,
+                super::SamplerAddressMode::MirroredRepeat => Self::MirroredRepeat,
+                super::SamplerAddressMode::ClampToEdge => Self::ClampToEdge,
+                super::SamplerAddressMode::ClampToBorder => Self::ClampToBorder,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub enum BorderColor {
+        FloatTransparentBlack = 0,
+        IntTransparentBlack = 1,
+        FloatOpaqueBlack = 2,
+        IntOpaqueBlack = 3,
+        FloatOpaqueWhite = 4,
+        IntOpaqueWhite = 5,
+    }
+
+    impl From<super::BorderColor> for BorderColor {
+        fn from(border_color: super::BorderColor) -> Self {
+            match border_color {
+                super::BorderColor::FloatTransparentBlack => Self::FloatTransparentBlack,
+                super::BorderColor::IntTransparentBlack => Self::IntTransparentBlack,
+                super::BorderColor::FloatOpaqueBlack => Self::FloatOpaqueBlack,
+                super::BorderColor::IntOpaqueBlack => Self::IntOpaqueBlack,
+                super::BorderColor::FloatOpaqueWhite => Self::FloatOpaqueWhite,
+                super::BorderColor::IntOpaqueWhite => Self::IntOpaqueWhite,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct SamplerCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: Flags,
+        pub mag_filter: Filter,
+        pub min_filter: Filter,
+        pub mipmap_mode: SamplerMipmapMode,
+        pub address_mode_u: SamplerAddressMode,
+        pub address_mode_v: SamplerAddressMode,
+        pub address_mode_w: SamplerAddressMode,
+        pub mip_lod_bias: c_float,
+        pub anisotropy_enable: Bool,
+        pub max_anisotropy: c_float,
+        pub compare_enable: Bool,
+        pub compare_op: CompareOp,
+        pub min_lod: c_float,
+        pub max_lod: c_float,
+        pub border_color: BorderColor,
+        pub unnormalized_coordinates: Bool,
     }
 
     #[link(name = "vulkan")]
@@ -1971,6 +2086,13 @@ mod ffi {
             memory: DeviceMemory,
             memory_offset: DeviceSize,
         ) -> Result;
+        pub fn vkCreateSampler(
+            device: Device,
+            create_info: *const SamplerCreateInfo,
+            allocator: *const c_void,
+            sampler: *mut Sampler,
+        ) -> Result;
+        pub fn vkDestroySampler(device: Device, sampler: Sampler, allocator: *const c_void);
     }
 }
 
@@ -2021,6 +2143,12 @@ pub const BUFFER_USAGE_TRANSFER_DST: u32 = 0x00000002;
 pub const BUFFER_USAGE_VERTEX: u32 = 0x00000080;
 pub const BUFFER_USAGE_INDEX: u32 = 0x00000040;
 pub const BUFFER_USAGE_UNIFORM: u32 = 0x00000010;
+
+pub const IMAGE_USAGE_TRANSFER_SRC: u32 = 0x00000001;
+pub const IMAGE_USAGE_TRANSFER_DST: u32 = 0x00000002;
+pub const IMAGE_USAGE_SAMPLED: u32 = 0x00000004;
+pub const IMAGE_USAGE_COLOR_ATTACHMENT: u32 = 0x00000010;
+pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 0x00000020;
 
 pub const MEMORY_PROPERTY_DEVICE_LOCAL: u32 = 0x00000001;
 pub const MEMORY_PROPERTY_HOST_VISIBLE: u32 = 0x00000002;
@@ -2109,12 +2237,6 @@ pub struct SurfaceCapabilities {
 pub struct SurfaceFormat {
     pub format: Format,
     pub color_space: ColorSpace,
-}
-
-#[derive(Clone, Copy)]
-pub enum ImageUsage {
-    ColorAttachment,
-    DepthStencilAttachment,
 }
 
 #[derive(Clone, Copy)]
@@ -2947,7 +3069,7 @@ pub struct SwapchainCreateInfo<'a> {
     pub image_color_space: ColorSpace,
     pub image_extent: Extent2d,
     pub image_array_layers: u32,
-    pub image_usage: ImageUsage,
+    pub image_usage: u32,
     pub image_sharing_mode: SharingMode,
     pub queue_family_indices: &'a [u32],
     pub pre_transform: u32,
@@ -2979,10 +3101,7 @@ impl Swapchain {
             create_info.image_extent.1 as _,
         ];
 
-        let image_usage = match create_info.image_usage {
-            ImageUsage::ColorAttachment => ffi::ImageUsage::ColorAttachment,
-            _ => unimplemented!(),
-        };
+        let image_usage = create_info.image_usage;
 
         let image_sharing_mode = match create_info.image_sharing_mode {
             SharingMode::Exclusive => ffi::SharingMode::Exclusive,
@@ -3161,7 +3280,7 @@ pub struct ImageCreateInfo {
     pub array_layers: u32,
     pub samples: u32,
     pub tiling: ImageTiling,
-    pub image_usage: ImageUsage,
+    pub image_usage: u32,
     pub initial_layout: ImageLayout,
 }
 
@@ -3188,7 +3307,7 @@ impl Image {
             format: create_info.format.into(),
             tiling: create_info.tiling.into(),
             initial_layout: create_info.initial_layout.into(),
-            image_usage: create_info.image_usage.into(),
+            image_usage: create_info.image_usage as _,
             samples: create_info.samples,
             sharing_mode: ffi::SharingMode::Exclusive,
             queue_family_index_count: 0,
@@ -4983,6 +5102,7 @@ impl Drop for Buffer {
 
 #[derive(Clone, Copy)]
 pub enum DescriptorType {
+    CombinedImageSampler,
     UniformBuffer,
 }
 
@@ -5155,6 +5275,45 @@ impl DescriptorSet {
             })
             .collect::<Vec<_>>();
 
+        let write_buffer_info_ptrs = writes
+            .iter()
+            .enumerate()
+            .map(|(i, write)| {
+                if write.buffer_infos.len() > 0 {
+                    write_buffer_infos[i].as_ptr()
+                } else {
+                    ptr::null()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let write_image_infos = writes
+            .iter()
+            .map(|write| {
+                write
+                    .image_infos
+                    .iter()
+                    .map(|image_info| ffi::DescriptorImageInfo {
+                        sampler: image_info.sampler.handle,
+                        image_view: image_info.image_view.handle,
+                        image_layout: image_info.image_layout.into(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let write_image_info_ptrs = writes
+            .iter()
+            .enumerate()
+            .map(|(i, write)| {
+                if write.image_infos.len() > 0 {
+                    write_image_infos[i].as_ptr()
+                } else {
+                    ptr::null()
+                }
+            })
+            .collect::<Vec<_>>();
+
         let writes = writes
             .iter()
             .enumerate()
@@ -5166,8 +5325,8 @@ impl DescriptorSet {
                 dst_array_element: write.dst_array_element,
                 descriptor_count: write.descriptor_count,
                 descriptor_type: write.descriptor_type.into(),
-                image_infos: ptr::null(),
-                buffer_infos: write_buffer_infos[i].as_ptr(),
+                image_infos: write_image_info_ptrs[i],
+                buffer_infos: write_buffer_info_ptrs[i],
                 texel_buffer_view: ptr::null(),
             })
             .collect::<Vec<_>>();
@@ -5205,6 +5364,12 @@ pub struct DescriptorBufferInfo<'a> {
     pub range: usize,
 }
 
+pub struct DescriptorImageInfo<'a> {
+    pub sampler: &'a Sampler,
+    pub image_view: &'a ImageView,
+    pub image_layout: ImageLayout,
+}
+
 pub struct WriteDescriptorSet<'a> {
     pub dst_set: &'a DescriptorSet,
     pub dst_binding: u32,
@@ -5212,6 +5377,7 @@ pub struct WriteDescriptorSet<'a> {
     pub descriptor_count: u32,
     pub descriptor_type: DescriptorType,
     pub buffer_infos: &'a [DescriptorBufferInfo<'a>],
+    pub image_infos: &'a [DescriptorImageInfo<'a>],
 }
 
 pub struct CopyDescriptorSet<'a> {
@@ -5390,7 +5556,7 @@ impl Memory {
 
     pub fn write<T>(&self, offset: usize, data: &'_ [T]) -> Result<(), Error> {
         if offset + data.len() * mem::size_of::<T>() > self.size as _ {
-            panic!("attempt to overrun buffer");
+            panic!("attempt to overflow buffer");
         }
 
         let mut mem = ptr::null_mut::<u8>();
@@ -5438,4 +5604,124 @@ pub struct BufferCopy {
     pub src_offset: u64,
     pub dst_offset: u64,
     pub size: u64,
+}
+
+#[derive(Clone, Copy)]
+pub enum Filter {
+    Nearest,
+    Linear,
+}
+
+#[derive(Clone, Copy)]
+pub enum SamplerMipmapMode {
+    Nearest,
+    Linear,
+}
+
+#[derive(Clone, Copy)]
+pub enum SamplerAddressMode {
+    Repeat,
+    MirroredRepeat,
+    ClampToEdge,
+    ClampToBorder,
+}
+
+#[derive(Clone, Copy)]
+pub enum BorderColor {
+    FloatTransparentBlack,
+    IntTransparentBlack,
+    FloatOpaqueBlack,
+    IntOpaqueBlack,
+    FloatOpaqueWhite,
+    IntOpaqueWhite,
+}
+
+pub struct SamplerCreateInfo {
+    pub mag_filter: Filter,
+    pub min_filter: Filter,
+    pub mipmap_mode: SamplerMipmapMode,
+    pub address_mode_u: SamplerAddressMode,
+    pub address_mode_v: SamplerAddressMode,
+    pub address_mode_w: SamplerAddressMode,
+    pub mip_lod_bias: f32,
+    pub anisotropy_enable: bool,
+    pub max_anisotropy: f32,
+    pub compare_enable: bool,
+    pub compare_op: CompareOp,
+    pub min_lod: f32,
+    pub max_lod: f32,
+    pub border_color: BorderColor,
+    pub unnormalized_coordinates: bool,
+}
+
+pub struct Sampler {
+    device: Rc<Device>,
+    handle: ffi::Sampler,
+}
+
+impl Sampler {
+    pub fn new(device: Rc<Device>, create_info: SamplerCreateInfo) -> Result<Self, Error> {
+        let create_info = ffi::SamplerCreateInfo {
+            structure_type: ffi::StructureType::SamplerCreateInfo,
+            p_next: ptr::null(),
+            flags: 0,
+            mag_filter: create_info.mag_filter.into(),
+            min_filter: create_info.min_filter.into(),
+            mipmap_mode: create_info.mipmap_mode.into(),
+            address_mode_u: create_info.address_mode_u.into(),
+            address_mode_v: create_info.address_mode_v.into(),
+            address_mode_w: create_info.address_mode_w.into(),
+            mip_lod_bias: create_info.mip_lod_bias as _,
+            anisotropy_enable: create_info.anisotropy_enable as _,
+            max_anisotropy: create_info.max_anisotropy as _,
+            compare_enable: create_info.compare_enable as _,
+            compare_op: create_info.compare_op.into(),
+            min_lod: create_info.min_lod as _,
+            max_lod: create_info.max_lod as _,
+            border_color: create_info.border_color.into(),
+            unnormalized_coordinates: create_info.unnormalized_coordinates.into(),
+        };
+
+        let mut handle = MaybeUninit::<ffi::Sampler>::uninit();
+
+        let result = unsafe {
+            ffi::vkCreateSampler(
+                device.handle,
+                &create_info,
+                ptr::null(),
+                handle.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                let handle = unsafe { handle.assume_init() };
+
+                let sampler = Self { device, handle };
+
+                Ok(sampler)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+}
+
+impl Drop for Sampler {
+    fn drop(&mut self) {
+        unsafe { ffi::vkDestroySampler(self.device.handle, self.handle, ptr::null()) };
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum CompareOp {
+    Never,
+    Less,
+    Equal,
+    LessOrEqual,
+    Greater,
+    NotEqual,
+    GreaterOrEqual,
+    Always,
 }

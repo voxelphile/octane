@@ -185,8 +185,12 @@ fn create_pipeline(
 pub struct Vulkan {
     pub ubo: UniformBufferObject,
     last_batch: Batch,
+    cubelet_sdf_sampler: vk::Sampler,
+    cubelet_sdf_view: vk::ImageView,
     cubelet_sdf_memory: vk::Memory,
     cubelet_sdf: vk::Image,
+    cubelet_data_sampler: vk::Sampler,
+    cubelet_data_view: vk::ImageView,
     cubelet_data_memory: vk::Memory,
     cubelet_data: vk::Image,
     data_buffer_memory: vk::Memory,
@@ -244,7 +248,7 @@ impl VulkanRenderData {
             image_color_space: render_info.surface_format.color_space,
             image_extent: render_info.extent,
             image_array_layers: 1,
-            image_usage: vk::ImageUsage::ColorAttachment,
+            image_usage: vk::IMAGE_USAGE_COLOR_ATTACHMENT,
             //TODO support concurrent image sharing mode
             image_sharing_mode: vk::SharingMode::Exclusive,
             queue_family_indices: &[],
@@ -287,29 +291,61 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
-        let binding = vk::DescriptorSetLayoutBinding {
+        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: 1,
             stage: vk::ShaderStage::Vertex,
         };
 
+        let cubelet_data_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_count: 1,
+            stage: vk::ShaderStage::Fragment,
+        };
+
+        let cubelet_sdf_binding = vk::DescriptorSetLayoutBinding {
+            binding: 2,
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_count: 1,
+            stage: vk::ShaderStage::Fragment,
+        };
+
         let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
-            bindings: &[binding],
+            bindings: &[
+                uniform_buffer_binding,
+                cubelet_data_binding,
+                cubelet_sdf_binding,
+            ],
         };
 
         let descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
                 .expect("failed to create descriptor set layout");
 
-        let descriptor_pool_size = vk::DescriptorPoolSize {
+        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let cubelet_data_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let cubelet_sdf_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
             descriptor_count: swapchain_images.len() as _,
         };
 
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
             max_sets: swapchain_images.len() as _,
-            pool_sizes: &[descriptor_pool_size],
+            pool_sizes: &[
+                uniform_buffer_pool_size,
+                cubelet_data_pool_size,
+                cubelet_sdf_pool_size,
+            ],
         };
 
         let descriptor_pool = vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
@@ -652,7 +688,7 @@ impl Vulkan {
             array_layers: 1,
             samples: vk::SAMPLE_COUNT_1,
             tiling: vk::ImageTiling::Optimal,
-            image_usage: vk::ImageUsage::ColorAttachment,
+            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_SAMPLED,
             initial_layout: vk::ImageLayout::Undefined,
         };
 
@@ -671,7 +707,53 @@ impl Vulkan {
         )
         .expect("failed to allocate memory");
 
-        cubelet_data.bind_memory(&cubelet_data_memory);
+        cubelet_data
+            .bind_memory(&cubelet_data_memory)
+            .expect("failed to bind image to memory");
+
+        let cubelet_data_view_create_info = vk::ImageViewCreateInfo {
+            image: &cubelet_data,
+            view_type: vk::ImageViewType::ThreeDim,
+            format: vk::Format::Rgba32Sfloat,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let cubelet_data_view = vk::ImageView::new(device.clone(), cubelet_data_view_create_info)
+            .expect("failed to create image view");
+
+        let cubelet_data_sampler_create_info = vk::SamplerCreateInfo {
+            mag_filter: vk::Filter::Nearest,
+            min_filter: vk::Filter::Nearest,
+            mipmap_mode: vk::SamplerMipmapMode::Nearest,
+            address_mode_u: vk::SamplerAddressMode::Repeat,
+            address_mode_v: vk::SamplerAddressMode::Repeat,
+            address_mode_w: vk::SamplerAddressMode::Repeat,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: false,
+            max_anisotropy: 0.0,
+            compare_enable: false,
+            compare_op: vk::CompareOp::Always,
+            min_lod: 0.0,
+            max_lod: 0.0,
+            border_color: vk::BorderColor::IntOpaqueBlack,
+            unnormalized_coordinates: false,
+        };
+
+        let cubelet_data_sampler =
+            vk::Sampler::new(device.clone(), cubelet_data_sampler_create_info)
+                .expect("failed to create sampler");
 
         let cubelet_sdf_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
@@ -681,7 +763,7 @@ impl Vulkan {
             array_layers: 1,
             samples: vk::SAMPLE_COUNT_1,
             tiling: vk::ImageTiling::Optimal,
-            image_usage: vk::ImageUsage::ColorAttachment,
+            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_SAMPLED,
             initial_layout: vk::ImageLayout::Undefined,
         };
 
@@ -700,7 +782,52 @@ impl Vulkan {
         )
         .expect("failed to allocate memory");
 
-        cubelet_sdf.bind_memory(&cubelet_sdf_memory);
+        cubelet_sdf
+            .bind_memory(&cubelet_sdf_memory)
+            .expect("failed to bind memory to image");
+
+        let cubelet_sdf_view_create_info = vk::ImageViewCreateInfo {
+            image: &cubelet_sdf,
+            view_type: vk::ImageViewType::ThreeDim,
+            format: vk::Format::R32Sfloat,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let cubelet_sdf_view = vk::ImageView::new(device.clone(), cubelet_sdf_view_create_info)
+            .expect("failed to create image view");
+
+        let cubelet_sdf_sampler_create_info = vk::SamplerCreateInfo {
+            mag_filter: vk::Filter::Nearest,
+            min_filter: vk::Filter::Nearest,
+            mipmap_mode: vk::SamplerMipmapMode::Nearest,
+            address_mode_u: vk::SamplerAddressMode::Repeat,
+            address_mode_v: vk::SamplerAddressMode::Repeat,
+            address_mode_w: vk::SamplerAddressMode::Repeat,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: false,
+            max_anisotropy: 0.0,
+            compare_enable: false,
+            compare_op: vk::CompareOp::Always,
+            min_lod: 0.0,
+            max_lod: 0.0,
+            border_color: vk::BorderColor::IntOpaqueBlack,
+            unnormalized_coordinates: false,
+        };
+
+        let cubelet_sdf_sampler = vk::Sampler::new(device.clone(), cubelet_sdf_sampler_create_info)
+            .expect("failed to create sampler");
 
         let mut rgba_data = [[[[0_f32; 4]; cubelet_size]; cubelet_size]; cubelet_size];
         let mut sdf_data = [[[0_f32; cubelet_size]; cubelet_size]; cubelet_size];
@@ -747,8 +874,12 @@ impl Vulkan {
             ubo,
             cubelet_data,
             cubelet_data_memory,
+            cubelet_data_view,
+            cubelet_data_sampler,
             cubelet_sdf,
             cubelet_sdf_memory,
+            cubelet_sdf_view,
+            cubelet_sdf_sampler,
         }
     }
 }
@@ -908,22 +1039,62 @@ impl Renderer for Vulkan {
         };
 
         for i in 0..render_data.descriptor_sets.len() {
-            let buffer_info = vk::DescriptorBufferInfo {
+            let uniform_buffer_info = vk::DescriptorBufferInfo {
                 buffer: &self.data_buffer,
                 offset: ubo_offset as _,
                 range: mem::size_of::<UniformBufferObject>(),
             };
 
-            let descriptor_write = vk::WriteDescriptorSet {
+            let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
                 dst_set: &render_data.descriptor_sets[image_index as usize],
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::UniformBuffer,
-                buffer_infos: &[buffer_info],
+                buffer_infos: &[uniform_buffer_info],
+                image_infos: &[],
             };
 
-            vk::DescriptorSet::update(&[descriptor_write], &[]);
+            let cubelet_data_info = vk::DescriptorImageInfo {
+                sampler: &self.cubelet_data_sampler,
+                image_view: &self.cubelet_data_view,
+                image_layout: vk::ImageLayout::ShaderReadOnly,
+            };
+
+            let cubelet_data_descriptor_write = vk::WriteDescriptorSet {
+                dst_set: &render_data.descriptor_sets[image_index as usize],
+                dst_binding: 1,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::CombinedImageSampler,
+                buffer_infos: &[],
+                image_infos: &[cubelet_data_info],
+            };
+
+            let cubelet_sdf_info = vk::DescriptorImageInfo {
+                sampler: &self.cubelet_sdf_sampler,
+                image_view: &self.cubelet_sdf_view,
+                image_layout: vk::ImageLayout::ShaderReadOnly,
+            };
+
+            let cubelet_sdf_descriptor_write = vk::WriteDescriptorSet {
+                dst_set: &render_data.descriptor_sets[image_index as usize],
+                dst_binding: 2,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::CombinedImageSampler,
+                buffer_infos: &[],
+                image_infos: &[cubelet_sdf_info],
+            };
+
+            vk::DescriptorSet::update(
+                &[
+                    uniform_buffer_descriptor_write,
+                    cubelet_data_descriptor_write,
+                    cubelet_sdf_descriptor_write,
+                ],
+                &[],
+            );
         }
 
         self.command_buffer
