@@ -17,46 +17,41 @@ layout(location = 0) out vec4 out_color;
 void main() {
 	float cubelet_size = 0.1;
 
+	vec3 camera_position = (inverse(ubo.view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 
-	vec4 model_o = ubo.model * vec4(in_position, 1);
+	vec3 model_position = (ubo.model * vec4(in_position, 1.0)).xyz;
 
-	vec3 model_t = model_o.xyz / model_o.w;
+	//this is backwards because we are projecting onto the backface
+	vec3 dir = camera_position - model_position;
 
-	vec3 camera_p = inverse(ubo.view)[3].xyz;
+	vec3 dir_n = normalize(dir);
 
-	vec3 dir_v = normalize(camera_p - model_t);
-
-	vec3 dir_q = dir_v;
-
-mat4 MV = ubo.view * ubo.model;
-vec3 eye_pos = camera_p - (-transpose(mat3(MV)) * vec3(MV[3]));
-
-	vec3 dir = eye_pos - model_o.xyz;
-
-	float step = 0.01f;
+	float step = 0.005f;
+	
 	int step_count = 0;
 
-	float max = 2.0f;
+	float max = 1.5f;
 
 	vec4 final = vec4(0);
 
 	while(true) {
-		vec3 pos = in_uvw + dir * (step * step_count);
+		vec3 ddr = dir_n * step * step_count;
+
+		vec3 pos = in_uvw  + ddr;
 
 		vec4 col = texture(cubelet_data, pos);
 
-		if(col.a >= 0.9) {
-			final = col;
+		if (pos.x < 0 || pos.y < 0 || pos.z < 0 || pos.x > 1 || pos.y > 1 || pos.z > 1) {
 			break;
 		}
 
-		if(step_count > int(max / step)) {
-			final = vec4(0);
-			break;
+		if(col.a > 0.5) {
+			final = col;
 		}
+
 
 		step_count += 1;
 	}
-
+	
 	out_color = final;	
 }

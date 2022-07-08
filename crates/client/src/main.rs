@@ -129,7 +129,7 @@ fn main() {
 
         //TODO must be done soon.. tired of this convoluted movement code.
         //simplify movement code
-        let sens = 750.0;
+        let sens = 20.0;
 
         while let Some(event) = window.next_event() {
             match event {
@@ -143,8 +143,10 @@ fn main() {
                 }
                 WindowEvent::PointerMotion { x, y } => {
                     if should_capture {
-                        x_rot -= (x as f32 - window.resolution().0 as f32 / 2.0) / sens;
-                        y_rot -= (y as f32 - window.resolution().1 as f32 / 2.0) / sens;
+                        x_rot -=
+                            (x as f32 - window.resolution().0 as f32 / 2.0) / sens * delta_time;
+                        y_rot -=
+                            (y as f32 - window.resolution().1 as f32 / 2.0) / sens * delta_time;
                     }
                 }
                 WindowEvent::CloseRequested => {
@@ -229,11 +231,13 @@ fn main() {
         camera[3][2] = position[2];
 
         let follow = 2.0 * 1.0 as f32;
-        let angle = std::time::Instant::now()
-            .duration_since(startup)
-            .as_secs_f32()
-            / 10.0
-            % (2.0 * std::f32::consts::PI);
+        /*let angle = std::time::Instant::now()
+                    .duration_since(startup)
+                    .as_secs_f32()
+                    / 10.0
+                    % (2.0 * std::f32::consts::PI);
+        */
+        let angle: f32 = 0.0;
 
         vulkan.ubo.model[0][0] = angle.cos();
         vulkan.ubo.model[2][0] = angle.sin();

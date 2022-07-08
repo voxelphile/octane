@@ -134,7 +134,7 @@ fn create_pipeline(
         polygon_mode: vk::PolygonMode::Fill,
         //TODO change to front and project raymarch onto backface
         cull_mode: vk::CULL_MODE_FRONT,
-        front_face: vk::FrontFace::Clockwise,
+        front_face: vk::FrontFace::CounterClockwise,
         depth_bias_enable: false,
         depth_bias_constant_factor: 0.0,
         depth_bias_clamp: 0.0,
@@ -151,7 +151,7 @@ fn create_pipeline(
             | vk::COLOR_COMPONENT_G
             | vk::COLOR_COMPONENT_B
             | vk::COLOR_COMPONENT_A,
-        blend_enable: false,
+        blend_enable: true,
         src_color_blend_factor: vk::BlendFactor::SrcAlpha,
         dst_color_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
         color_blend_op: vk::BlendOp::Add,
@@ -749,9 +749,9 @@ impl Vulkan {
             mag_filter: vk::Filter::Nearest,
             min_filter: vk::Filter::Nearest,
             mipmap_mode: vk::SamplerMipmapMode::Nearest,
-            address_mode_u: vk::SamplerAddressMode::ClampToEdge,
-            address_mode_v: vk::SamplerAddressMode::ClampToEdge,
-            address_mode_w: vk::SamplerAddressMode::ClampToEdge,
+            address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_w: vk::SamplerAddressMode::ClampToBorder,
             mip_lod_bias: 0.0,
             anisotropy_enable: false,
             max_anisotropy: 0.0,
@@ -759,7 +759,7 @@ impl Vulkan {
             compare_op: vk::CompareOp::Always,
             min_lod: 0.0,
             max_lod: 0.0,
-            border_color: vk::BorderColor::IntOpaqueBlack,
+            border_color: vk::BorderColor::IntTransparentBlack,
             unnormalized_coordinates: false,
         };
 
@@ -824,9 +824,9 @@ impl Vulkan {
             mag_filter: vk::Filter::Nearest,
             min_filter: vk::Filter::Nearest,
             mipmap_mode: vk::SamplerMipmapMode::Nearest,
-            address_mode_u: vk::SamplerAddressMode::ClampToEdge,
-            address_mode_v: vk::SamplerAddressMode::ClampToEdge,
-            address_mode_w: vk::SamplerAddressMode::ClampToEdge,
+            address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_w: vk::SamplerAddressMode::ClampToBorder,
             mip_lod_bias: 0.0,
             anisotropy_enable: false,
             max_anisotropy: 0.0,
@@ -834,7 +834,7 @@ impl Vulkan {
             compare_op: vk::CompareOp::Always,
             min_lod: 0.0,
             max_lod: 0.0,
-            border_color: vk::BorderColor::IntOpaqueBlack,
+            border_color: vk::BorderColor::IntTransparentBlack,
             unnormalized_coordinates: false,
         };
 
@@ -847,12 +847,15 @@ impl Vulkan {
         for x in 0..cubelet_size {
             for y in 0..cubelet_size {
                 for z in 0..cubelet_size {
-                    rgba_data[x][y][z] = [
+                    /*rgba_data[x][y][z] = [
                         rand::prelude::random(),
                         rand::prelude::random(),
                         rand::prelude::random(),
                         rand::prelude::random::<bool>() as u8 as _,
-                    ];
+                    ];*/
+                    if y == 0 {
+                        rgba_data[x][y][z] = [x as f32 / 10.0, 0.0, z as f32 / 10.0, 1.0]
+                    }
                 }
             }
         }
