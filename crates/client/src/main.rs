@@ -134,7 +134,9 @@ fn main() {
         while let Some(event) = window.next_event() {
             match event {
                 WindowEvent::KeyPress { keycode } => {
-                    keys.insert(keycode, current);
+                    if should_capture || keycode == crate::window::Keycode::Escape {
+                        keys.insert(keycode, current);
+                    }
                 }
                 WindowEvent::KeyRelease { keycode } => {
                     keys.remove(&keycode);
@@ -230,6 +232,7 @@ fn main() {
         let angle = std::time::Instant::now()
             .duration_since(startup)
             .as_secs_f32()
+            / 10.0
             % (2.0 * std::f32::consts::PI);
 
         vulkan.ubo.model[0][0] = angle.cos();

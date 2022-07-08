@@ -10,4 +10,5 @@ vk 	= { path = "../../libs/vk" }
 math 	= { path = "../../libs/math" }
 
 log = "*"
+rand = "*"
 raw-window-handle = "*"

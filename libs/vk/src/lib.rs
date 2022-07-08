@@ -201,6 +201,7 @@ mod ffi {
         CommandBufferAllocateInfo = 40,
         CommandBufferBeginInfo = 42,
         RenderPassBeginInfo = 43,
+        ImageMemoryBarrier = 45,
         SwapchainCreateInfo = 1000001000,
         PresentInfo = 1000001001,
         XlibSurfaceCreateInfo = 1000004000,
@@ -242,21 +243,22 @@ mod ffi {
     #[repr(C)]
     pub enum Format {
         Bgra8Srgb = 50,
+        R32Uint = 98,
         R32Sfloat = 100,
+        Rg32Sfloat = 103,
         Rgb32Sfloat = 106,
         Rgba32Sfloat = 109,
     }
 
-    impl From<super::Format> for Format {
-        fn from(format: super::Format) -> Self {
-            match format {
-                super::Format::Bgra8Srgb => Self::Bgra8Srgb,
-                super::Format::R32Sfloat => Self::R32Sfloat,
-                super::Format::Rgb32Sfloat => Self::Rgb32Sfloat,
-                super::Format::Rgba32Sfloat => Self::Rgba32Sfloat,
-            }
-        }
-    }
+    impl_from!(
+        Format,
+        Bgra8Srgb,
+        R32Uint,
+        R32Sfloat,
+        Rg32Sfloat,
+        Rgb32Sfloat,
+        Rgba32Sfloat
+    );
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -722,29 +724,13 @@ mod ffi {
         pub code: *const c_uint,
     }
 
-    #[derive(Clone, Copy, Debug)]
-    #[repr(C)]
-    pub enum ShaderStage {
-        Vertex = 0x00000001,
-        Fragment = 0x00000010,
-    }
-
-    impl From<super::ShaderStage> for ShaderStage {
-        fn from(stage: super::ShaderStage) -> Self {
-            match stage {
-                super::ShaderStage::Vertex => Self::Vertex,
-                super::ShaderStage::Fragment => Self::Fragment,
-            }
-        }
-    }
-
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PipelineShaderStageCreateInfo {
         pub structure_type: StructureType,
         pub p_next: *const c_void,
         pub flags: c_uint,
-        pub stage: ShaderStage,
+        pub stage: c_uint,
         pub module: ShaderModule,
         pub entry_point: *const c_char,
         pub specialization_info: *const c_void,
@@ -1497,7 +1483,7 @@ mod ffi {
         pub binding: c_uint,
         pub descriptor_type: DescriptorType,
         pub descriptor_count: c_uint,
-        pub stage: ShaderStage,
+        pub stage: c_uint,
         pub immutable_samplers: *const c_void,
     }
 
@@ -1648,6 +1634,26 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct ImageSubresourceLayers {
+        pub aspect_mask: Flags,
+        pub mip_level: c_uint,
+        pub base_array_layer: c_uint,
+        pub layer_count: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct BufferImageCopy {
+        pub buffer_offset: DeviceSize,
+        pub buffer_row_length: c_uint,
+        pub buffer_image_height: c_uint,
+        pub image_subresource: ImageSubresourceLayers,
+        pub image_offset: Offset3d,
+        pub image_extent: Extent3d,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub enum Filter {
         Nearest = 0,
         Linear = 1,
@@ -1744,6 +1750,29 @@ mod ffi {
         pub border_color: BorderColor,
         pub unnormalized_coordinates: Bool,
     }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ImageMemoryBarrier {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub src_access_mask: c_uint,
+        pub dst_access_mask: c_uint,
+        pub old_layout: ImageLayout,
+        pub new_layout: ImageLayout,
+        pub src_queue_family_index: c_uint,
+        pub dst_queue_family_index: c_uint,
+        pub image: Image,
+        pub subresource_range: ImageSubresourceRange,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct MemoryBarrier {}
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct BufferMemoryBarrier {}
 
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
@@ -1977,6 +2006,26 @@ mod ffi {
             region_count: c_uint,
             regions: *const BufferCopy,
         );
+        pub fn vkCmdCopyBufferToImage(
+            command_buffer: CommandBuffer,
+            src_buffer: Buffer,
+            dst_image: Image,
+            dst_image_layout: ImageLayout,
+            region_count: c_uint,
+            regions: *const BufferImageCopy,
+        );
+        pub fn vkCmdPipelineBarrier(
+            command_buffer: CommandBuffer,
+            src_stage_mask: Flags,
+            dst_stage_mask: Flags,
+            dependency_flags: Flags,
+            memory_barrier_count: c_uint,
+            memory_barriers: *const MemoryBarrier,
+            buffer_memory_barrier_count: c_uint,
+            buffer_memory_barriers: *const BufferMemoryBarrier,
+            image_memory_barrier_count: c_uint,
+            image_memory_barriers: *const ImageMemoryBarrier,
+        );
         pub fn vkCreateFence(
             device: Device,
             create_info: *const FenceCreateInfo,
@@ -2118,6 +2167,8 @@ pub const DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE: u32 = 0x00000004;
 pub const QUEUE_GRAPHICS: u32 = 0x00000001;
 pub const QUEUE_COMPUTE: u32 = 0x00000002;
 
+pub const QUEUE_FAMILY_IGNORED: u32 = u32::MAX;
+
 pub const IMAGE_ASPECT_COLOR: u32 = 0x00000001;
 
 pub const CULL_MODE_NONE: u32 = 0;
@@ -2134,7 +2185,10 @@ pub const SAMPLE_COUNT_1: u32 = 0x00000001;
 
 pub const SUBPASS_EXTERNAL: u32 = u32::MAX;
 
+pub const PIPELINE_STAGE_TOP_OF_PIPE: u32 = 0x00000001;
+pub const PIPELINE_STAGE_FRAGMENT_SHADER: u32 = 0x00000080;
 pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
+pub const PIPELINE_STAGE_TRANSFER: u32 = 0x00001000;
 
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
 
@@ -2155,6 +2209,9 @@ pub const MEMORY_PROPERTY_HOST_VISIBLE: u32 = 0x00000002;
 pub const MEMORY_PROPERTY_HOST_COHERENT: u32 = 0x00000004;
 pub const MEMORY_PROPERTY_HOST_CACHED: u32 = 0x00000008;
 pub const MEMORY_PROPERTY_LAZILY_ALLOCATED: u32 = 0x00000010;
+
+pub const SHADER_STAGE_VERTEX: u32 = 0x00000001;
+pub const SHADER_STAGE_FRAGMENT: u32 = 0x00000010;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -2189,7 +2246,9 @@ pub enum Error {
 #[derive(Clone, Copy)]
 pub enum Format {
     Bgra8Srgb,
+    R32Uint,
     R32Sfloat,
+    Rg32Sfloat,
     Rgb32Sfloat,
     Rgba32Sfloat,
 }
@@ -3573,14 +3632,8 @@ impl Drop for ShaderModule {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum ShaderStage {
-    Vertex,
-    Fragment,
-}
-
 pub struct PipelineShaderStageCreateInfo<'a> {
-    pub stage: ShaderStage,
+    pub stage: u32,
     pub module: &'a ShaderModule,
     pub entry_point: &'a str,
 }
@@ -4114,7 +4167,7 @@ impl Pipeline {
                         structure_type: ffi::StructureType::PipelineShaderStageCreateInfo,
                         p_next: ptr::null(),
                         flags: 0,
-                        stage: stage.stage.into(),
+                        stage: stage.stage as _,
                         module: stage.module.handle,
                         entry_point: entry_points[i][j].as_ptr(),
                         specialization_info: ptr::null(),
@@ -4837,6 +4890,127 @@ impl Commands<'_> {
             )
         };
     }
+
+    pub fn copy_buffer_to_image(
+        &mut self,
+        src_buffer: &Buffer,
+        dst_image: &mut Image,
+        dst_image_layout: ImageLayout,
+        regions: &'_ [BufferImageCopy],
+    ) {
+        let regions = regions
+            .iter()
+            .map(|copy| ffi::BufferImageCopy {
+                buffer_offset: copy.buffer_offset as _,
+                buffer_row_length: copy.buffer_row_length as _,
+                buffer_image_height: copy.buffer_image_height as _,
+                image_subresource: ffi::ImageSubresourceLayers {
+                    aspect_mask: copy.image_subresource.aspect_mask as _,
+                    mip_level: copy.image_subresource.mip_level as _,
+                    base_array_layer: copy.image_subresource.base_array_layer as _,
+                    layer_count: copy.image_subresource.layer_count as _,
+                },
+                image_offset: [
+                    copy.image_offset.0 as _,
+                    copy.image_offset.1 as _,
+                    copy.image_offset.2 as _,
+                ],
+                image_extent: [
+                    copy.image_extent.0 as _,
+                    copy.image_extent.1 as _,
+                    copy.image_extent.2 as _,
+                ],
+            })
+            .collect::<Vec<_>>();
+
+        unsafe {
+            ffi::vkCmdCopyBufferToImage(
+                self.command_buffer.handle,
+                src_buffer.handle,
+                dst_image.handle,
+                dst_image_layout.into(),
+                regions.len() as _,
+                regions.as_ptr(),
+            )
+        };
+    }
+
+    pub fn pipeline_barrier(
+        &mut self,
+        src_stage_mask: u32,
+        dst_stage_mask: u32,
+        dependency_flags: u32,
+        memory_barriers: &'_ [MemoryBarrier],
+        buffer_memory_barriers: &'_ [BufferMemoryBarrier],
+        image_memory_barriers: &'_ [ImageMemoryBarrier],
+    ) {
+        let memory_barriers = memory_barriers
+            .iter()
+            .map(|barrier| ffi::MemoryBarrier {})
+            .collect::<Vec<_>>();
+
+        let memory_barriers_ptr = if memory_barriers.len() > 0 {
+            unimplemented!();
+            memory_barriers.as_ptr()
+        } else {
+            ptr::null()
+        };
+
+        let buffer_memory_barriers = buffer_memory_barriers
+            .iter()
+            .map(|barrier| ffi::BufferMemoryBarrier {})
+            .collect::<Vec<_>>();
+
+        let buffer_memory_barriers_ptr = if buffer_memory_barriers.len() > 0 {
+            unimplemented!();
+            buffer_memory_barriers.as_ptr()
+        } else {
+            ptr::null()
+        };
+
+        let image_memory_barriers = image_memory_barriers
+            .iter()
+            .map(|barrier| ffi::ImageMemoryBarrier {
+                structure_type: ffi::StructureType::ImageMemoryBarrier,
+                p_next: ptr::null(),
+                src_access_mask: barrier.src_access_mask as _,
+                dst_access_mask: barrier.dst_access_mask as _,
+                old_layout: barrier.old_layout.into(),
+                new_layout: barrier.new_layout.into(),
+                src_queue_family_index: barrier.src_queue_family_index as _,
+                dst_queue_family_index: barrier.dst_queue_family_index as _,
+                image: barrier.image.handle,
+                subresource_range: ffi::ImageSubresourceRange {
+                    aspect_mask: barrier.subresource_range.aspect_mask,
+                    base_mip_level: barrier.subresource_range.base_mip_level,
+                    level_count: barrier.subresource_range.level_count,
+                    base_array_layer: barrier.subresource_range.base_array_layer,
+                    layer_count: barrier.subresource_range.layer_count,
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let image_memory_barriers_ptr = if image_memory_barriers.len() > 0 {
+            image_memory_barriers.as_ptr()
+        } else {
+            ptr::null()
+        };
+
+        unsafe {
+            ffi::vkCmdPipelineBarrier(
+                self.command_buffer.handle,
+                src_stage_mask as _,
+                dst_stage_mask as _,
+                dependency_flags as _,
+                memory_barriers.len() as _,
+                memory_barriers_ptr,
+                buffer_memory_barriers.len() as _,
+                buffer_memory_barriers_ptr,
+                image_memory_barriers.len() as _,
+                image_memory_barriers_ptr,
+            )
+        };
+    }
 }
 
 pub struct RenderPassBeginInfo<'a> {
@@ -5110,7 +5284,7 @@ pub struct DescriptorSetLayoutBinding {
     pub binding: u32,
     pub descriptor_type: DescriptorType,
     pub descriptor_count: u32,
-    pub stage: ShaderStage,
+    pub stage: u32,
 }
 
 pub struct DescriptorSetLayoutCreateInfo<'a> {
@@ -5134,7 +5308,7 @@ impl DescriptorSetLayout {
                 binding: binding.binding as _,
                 descriptor_type: binding.descriptor_type.into(),
                 descriptor_count: binding.descriptor_count as _,
-                stage: binding.stage.into(),
+                stage: binding.stage as _,
                 immutable_samplers: ptr::null(),
             })
             .collect::<Vec<_>>();
@@ -5606,6 +5780,22 @@ pub struct BufferCopy {
     pub size: u64,
 }
 
+pub struct ImageSubresourceLayers {
+    pub aspect_mask: u32,
+    pub mip_level: u32,
+    pub base_array_layer: u32,
+    pub layer_count: u32,
+}
+
+pub struct BufferImageCopy {
+    pub buffer_offset: u64,
+    pub buffer_row_length: u32,
+    pub buffer_image_height: u32,
+    pub image_subresource: ImageSubresourceLayers,
+    pub image_offset: Offset3d,
+    pub image_extent: Extent3d,
+}
+
 #[derive(Clone, Copy)]
 pub enum Filter {
     Nearest,
@@ -5725,3 +5915,18 @@ pub enum CompareOp {
     GreaterOrEqual,
     Always,
 }
+
+pub struct ImageMemoryBarrier<'a> {
+    pub src_access_mask: u32,
+    pub dst_access_mask: u32,
+    pub old_layout: ImageLayout,
+    pub new_layout: ImageLayout,
+    pub src_queue_family_index: u32,
+    pub dst_queue_family_index: u32,
+    pub image: &'a Image,
+    pub subresource_range: ImageSubresourceRange,
+}
+
+pub struct MemoryBarrier {}
+
+pub struct BufferMemoryBarrier {}
