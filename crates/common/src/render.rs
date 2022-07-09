@@ -847,15 +847,12 @@ impl Vulkan {
         for x in 0..cubelet_size {
             for y in 0..cubelet_size {
                 for z in 0..cubelet_size {
-                    /*rgba_data[x][y][z] = [
+                    rgba_data[x][y][z] = [
                         rand::prelude::random(),
                         rand::prelude::random(),
                         rand::prelude::random(),
                         rand::prelude::random::<bool>() as u8 as _,
-                    ];*/
-                    if y == 0 {
-                        rgba_data[x][y][z] = [x as f32 / 10.0, 0.0, z as f32 / 10.0, 1.0]
-                    }
+                    ];
                 }
             }
         }

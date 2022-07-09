@@ -231,13 +231,11 @@ fn main() {
         camera[3][2] = position[2];
 
         let follow = 2.0 * 1.0 as f32;
-        /*let angle = std::time::Instant::now()
-                    .duration_since(startup)
-                    .as_secs_f32()
-                    / 10.0
-                    % (2.0 * std::f32::consts::PI);
-        */
-        let angle: f32 = 0.0;
+        let angle = std::time::Instant::now()
+            .duration_since(startup)
+            .as_secs_f32()
+            / 10.0
+            % (2.0 * std::f32::consts::PI);
 
         vulkan.ubo.model[0][0] = angle.cos();
         vulkan.ubo.model[2][0] = angle.sin();
