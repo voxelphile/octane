@@ -1,6 +1,6 @@
 use crate::mesh::{Mesh, Vertex};
 
-use math::prelude::Matrix;
+use math::prelude::{Matrix, Vector};
 
 use std::collections::HashMap;
 use std::fs;
@@ -17,6 +17,7 @@ pub struct UniformBufferObject {
     pub model: Matrix<f32, 4, 4>,
     pub view: Matrix<f32, 4, 4>,
     pub proj: Matrix<f32, 4, 4>,
+    pub resolution: Vector<f32, 2>,
 }
 
 pub trait Renderer {
@@ -671,7 +672,7 @@ impl Vulkan {
         data_buffer.bind_memory(&data_buffer_memory);
 
         let mut staging_buffer =
-            vk::Buffer::new(device.clone(), 32768, vk::BUFFER_USAGE_TRANSFER_SRC)
+            vk::Buffer::new(device.clone(), 3200000000, vk::BUFFER_USAGE_TRANSFER_SRC)
                 .expect("failed to create buffer");
 
         let staging_buffer_memory_allocate_info = vk::MemoryAllocateInfo {
@@ -688,7 +689,8 @@ impl Vulkan {
 
         staging_buffer.bind_memory(&staging_buffer_memory);
 
-        let ubo = UniformBufferObject::default();
+        let mut ubo = UniformBufferObject::default();
+        ubo.resolution = Vector::<f32, 2>::new([960.0, 540.0]);
 
         pub const cubelet_size: usize = 10;
 
@@ -841,37 +843,43 @@ impl Vulkan {
         let cubelet_sdf_sampler = vk::Sampler::new(device.clone(), cubelet_sdf_sampler_create_info)
             .expect("failed to create sampler");
 
-        let mut rgba_data = [[[[0_f32; 4]; cubelet_size]; cubelet_size]; cubelet_size];
-        let mut sdf_data = [[[0_f32; cubelet_size]; cubelet_size]; cubelet_size];
+        const chunk_size: usize = 10;
 
-        for x in 0..cubelet_size {
-            for y in 0..cubelet_size {
-                for z in 0..cubelet_size {
-                    rgba_data[x][y][z] = [
-                        rand::prelude::random(),
-                        rand::prelude::random(),
-                        rand::prelude::random(),
-                        rand::prelude::random::<bool>() as u8 as _,
-                    ];
+        let mut rgba_data = [[[[0_f32; 4]; chunk_size]; chunk_size]; chunk_size];
+        let mut sdf_data = [[[0_f32; chunk_size]; chunk_size]; chunk_size];
+
+        for i in 0..((cubelet_size * cubelet_size * cubelet_size)
+            / (chunk_size * chunk_size * chunk_size))
+        {
+            for x in 0..(chunk_size) {
+                for y in 0..(chunk_size) {
+                    for z in 0..(chunk_size) {
+                        rgba_data[x][y][z] = [
+                            rand::prelude::random(),
+                            rand::prelude::random(),
+                            rand::prelude::random(),
+                            rand::prelude::random::<bool>() as u8 as _,
+                        ];
+                    }
                 }
             }
-        }
-
-        for x in 0..cubelet_size {
-            for y in 0..cubelet_size {
-                for z in 0..cubelet_size {
-                    sdf_data[x][y][z] = 0.0;
+            for x in 0..chunk_size {
+                for y in 0..chunk_size {
+                    for z in 0..chunk_size {
+                        sdf_data[x][y][z] = 0.0;
+                    }
                 }
             }
+
+            let b_off = i * (10 * 10 * 10);
+            staging_buffer_memory
+                .write(b_off * mem::size_of::<[f32; 4]>(), &rgba_data[..])
+                .expect("failed to write to buffer");
+
+            staging_buffer_memory
+                .write(mem::size_of_val::<_>(&rgba_data), &sdf_data[..])
+                .expect("failed to write to buffer");
         }
-
-        staging_buffer_memory
-            .write(0, &rgba_data[..])
-            .expect("failed to write to buffer");
-
-        staging_buffer_memory
-            .write(mem::size_of_val::<_>(&rgba_data), &sdf_data[..])
-            .expect("failed to write to buffer");
 
         command_buffer
             .record(|commands| {
@@ -1357,6 +1365,7 @@ impl Renderer for Vulkan {
         ];
 
         self.render_info.extent = resolution;
+        self.ubo.resolution = Vector::<f32, 2>::new([resolution.0 as _, resolution.1 as _]);
 
         let render_data = self.render_data.take().unwrap();
 

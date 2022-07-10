@@ -4,6 +4,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
+    vec2 resolution;
 } ubo;
 
 layout(binding = 1) uniform sampler3D cubelet_data;
@@ -14,7 +15,7 @@ layout(location = 1) in vec3 in_position;
 
 layout(location = 0) out vec4 out_color;
 
-float raycast(vec3 ray_pos, vec3 ray_dir) {
+float raycast(vec3 ray_pos, vec3 dir_n) {
 	float t_min = 0;
 	float t_max = 100000;
 
@@ -28,7 +29,7 @@ float raycast(vec3 ray_pos, vec3 ray_dir) {
 	vec3 x_axis = ubo.model[0].xyz;
 
 	float x_e = dot(x_axis, delta);
-	float x_f = dot(ray_dir, x_axis);
+	float x_f = dot(dir_n, x_axis);
 	
 	float x_t_1 = (x_e + bmin) / x_f;
 	float x_t_2 = (x_e + bmax) / x_f;
@@ -54,7 +55,7 @@ float raycast(vec3 ray_pos, vec3 ray_dir) {
 	vec3 y_axis = ubo.model[1].xyz;
 
 	float y_e = dot(y_axis, delta);
-	float y_f = dot(ray_dir, y_axis);
+	float y_f = dot(dir_n, y_axis);
 	
 	float y_t_1 = (y_e + bmin) / y_f;
 	float y_t_2 = (y_e + bmax) / y_f;
@@ -80,7 +81,7 @@ float raycast(vec3 ray_pos, vec3 ray_dir) {
 	vec3 z_axis = ubo.model[2].xyz;
 
 	float z_e = dot(z_axis, delta);
-	float z_f = dot(ray_dir, z_axis);
+	float z_f = dot(dir_n, z_axis);
 	
 	float z_t_1 = (z_e + bmin) / z_f;
 	float z_t_2 = (z_e + bmax) / z_f;
@@ -107,18 +108,23 @@ float raycast(vec3 ray_pos, vec3 ray_dir) {
 }
 
 void main() {
-	float cubelet_size = 0.1;
+	int cubelet_size = 10;
 
-	vec3 camera_position = (inverse(ubo.view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	float half_height = tan(radians(90) / 2.0);
+
+	float half_width = (960.0 / 540.0) * half_height;
+
+	vec4 near = vec4((gl_FragCoord.xy / ubo.resolution) * 2 - 1, 0.0, 1.0);
+
+	near = inverse(ubo.proj) * near;
+
+	vec3 camera_position = (inverse(ubo.view) * near).xyz;
 
 	vec3 model_position = (ubo.model * vec4(in_position, 1.0)).xyz;
 
-	//this is backwards because we are projecting onto the backface
 	vec3 dir = model_position - camera_position;
 
 	vec3 dir_n = normalize(dir);
-	
-	vec3 pos2 = (inverse(ubo.model) * vec4(camera_position, 1.0)).xyz;
 
 	float p = raycast(camera_position, dir_n);
 
@@ -129,32 +135,44 @@ void main() {
 
 	point = (inverse(modelxyzrot) * vec4(point, 1)).xyz;
 	dir_n = (inverse(modelxyzrot) * vec4(dir_n, 0)).xyz;
+	dir_n = normalize(dir_n);
+
 	point /= 2;
 	point += 0.5;
 
+	point *= cubelet_size;
 
+	vec4 final = vec4(0.0);
 
-	float step = 0.005f;
-	
-	int step_count = 0;
+ivec3 mapPos = ivec3(floor(point + 0.));
 
-	int max_step_count = 512;
+    vec3 color = vec3(1.0);
+    vec3 sideDist;
+    bvec3 mask;
+    // core of https://www.shadertoy.com/view/4dX3zl Branchless Voxel Raycasting by fb39ca4 (somewhat reduced)
+    vec3 deltaDist;
+    {
+        deltaDist = 1.0 / abs(dir_n);
+        ivec3 rayStep = ivec3(sign(dir_n));
+        sideDist = (sign(dir_n) * (vec3(mapPos) - point) + (sign(dir_n) * 0.5) + 0.5) * deltaDist; 
 
-	vec4 final = vec4(0.1);
+        for (int i = 0; i < 64; i++)
+        {
+            vec3 pos = (vec3(mapPos) + vec3(0.5)) / cubelet_size;
+		
+	    vec4 col = texture(cubelet_data, pos);
+	    
+	    if (col.a == 1) { 
+		final = col;
+		break;
+	    }// forked shader used continue here
 
-	for (; step_count < max_step_count; step_count++)  {
-		vec3 ddr = dir_n * step * step_count;
+            //Thanks kzy for the suggestion!
+            mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
+            sideDist += vec3(mask) * deltaDist;
+            mapPos += ivec3(vec3(mask)) * rayStep;
+        }
+    }
 
-		vec3 pos = point  + ddr;
-
-		vec4 col = texture(cubelet_data, pos);
-
-
-		if(col.a > 0.5) {
-			final = col;
-			break;
-		}
-	}
-	
 	out_color = final;	
 }
