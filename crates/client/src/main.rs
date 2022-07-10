@@ -85,7 +85,12 @@ fn main() {
         projection[3][2] = (near * far) / (near - far);
     }
 
-    let mut vulkan = render::Vulkan::init(&window);
+    let render_info = render::RendererInfo {
+        window: &window,
+        render_distance: 1,
+    };
+
+    let mut vulkan = render::Vulkan::init(render_info);
 
     vulkan.ubo.proj = projection;
     vulkan.ubo.view = camera.inverse();
@@ -116,12 +121,20 @@ fn main() {
     let mut position = Vector::<f32, 4>::new([0.0, 0.0, 10.0, 1.0]);
     let mut should_capture = false;
 
+    let mut fps_instant = startup;
+    let mut fps = 0;
+
     'main: loop {
         let current = std::time::Instant::now();
         let delta_time = current.duration_since(last).as_secs_f32();
         last = current;
 
-        window.rename(format!("Octane {}", 1.0 / delta_time).as_str());
+        if current.duration_since(fps_instant).as_secs_f32() > 1.0 {
+            window.rename(format!("Octane {}", fps).as_str());
+            fps_instant = current;
+            fps = 0;
+        }
+
         if should_capture {
             window.capture();
         }
@@ -239,6 +252,7 @@ fn main() {
         */
         let angle: f32 = 0.0;
 
+        vulkan.ubo.model = Matrix::<f32, 4, 4>::identity();
         vulkan.ubo.model[0][0] = angle.cos();
         vulkan.ubo.model[2][0] = angle.sin();
         vulkan.ubo.model[0][2] = -angle.sin();
@@ -247,6 +261,8 @@ fn main() {
         vulkan.ubo.view = camera.inverse();
 
         vulkan.draw_batch(batch.clone(), &entries);
+
+        fps += 1;
     }
 
     //TODO figure out surface dependency on window

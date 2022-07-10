@@ -12,3 +12,4 @@ math 	= { path = "../../libs/math" }
 log = "*"
 rand = "*"
 raw-window-handle = "*"
+glsl-to-spirv = "*"

@@ -4,12 +4,16 @@ use math::prelude::{Matrix, Vector};
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::iter;
 use std::mem;
 use std::rc::Rc;
+use std::time;
 
 use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
+
+pub const CHUNK_SIZE: usize = 16;
 
 //temporary for here for now.
 #[derive(Default, Clone, Copy)]
@@ -18,6 +22,12 @@ pub struct UniformBufferObject {
     pub view: Matrix<f32, 4, 4>,
     pub proj: Matrix<f32, 4, 4>,
     pub resolution: Vector<f32, 2>,
+    pub render_distance: u32,
+}
+
+pub struct RendererInfo<'a> {
+    pub window: &'a dyn HasRawWindowHandle,
+    pub render_distance: u8,
 }
 
 pub trait Renderer {
@@ -220,6 +230,7 @@ pub struct Vulkan {
     queue: vk::Queue,
     device: Rc<vk::Device>,
     shaders: HashMap<&'static str, vk::ShaderModule>,
+    shader_mod_time: HashMap<String, time::SystemTime>,
     surface: vk::Surface,
     #[cfg(debug_assertions)]
     debug_utils_messenger: vk::DebugUtilsMessenger,
@@ -466,7 +477,7 @@ impl VulkanRenderData {
 }
 
 impl Vulkan {
-    pub fn init(window: &'_ impl HasRawWindowHandle) -> Self {
+    pub fn init(info: RendererInfo<'_>) -> Self {
         let application_info = vk::ApplicationInfo {
             application_name: "Octane",
             application_version: (0, 1, 0).into(),
@@ -513,7 +524,7 @@ impl Vulkan {
         )
         .expect("failed to create debug utils messenger");
 
-        let surface = vk::Surface::new(instance.clone(), &window);
+        let surface = vk::Surface::new(instance.clone(), &info.window);
 
         let physical_device = {
             let mut candidates = vk::PhysicalDevice::enumerate(instance.clone())
@@ -586,6 +597,7 @@ impl Vulkan {
         let mut queue = device.queue(graphics_queue_family_index);
 
         let shaders = HashMap::new();
+        let shader_mod_time = HashMap::new();
 
         let surface_capabilities = physical_device.surface_capabilities(&surface);
 
@@ -692,7 +704,11 @@ impl Vulkan {
         let mut ubo = UniformBufferObject::default();
         ubo.resolution = Vector::<f32, 2>::new([960.0, 540.0]);
 
-        pub const cubelet_size: usize = 10;
+        let render_distance = info.render_distance;
+
+        ubo.render_distance = render_distance as u32;
+
+        let cubelet_size = 2 * render_distance as usize * CHUNK_SIZE;
 
         let cubelet_data_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
@@ -843,42 +859,37 @@ impl Vulkan {
         let cubelet_sdf_sampler = vk::Sampler::new(device.clone(), cubelet_sdf_sampler_create_info)
             .expect("failed to create sampler");
 
-        const chunk_size: usize = 10;
+        let mut rgba_data = [[[[0_f32; 4]; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+        let mut sdf_data = [[[0_f32; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
 
-        let mut rgba_data = [[[[0_f32; 4]; chunk_size]; chunk_size]; chunk_size];
-        let mut sdf_data = [[[0_f32; chunk_size]; chunk_size]; chunk_size];
+        let ct = 2 * ubo.render_distance as usize;
+        let mut voxels = 0;
 
-        for i in 0..((cubelet_size * cubelet_size * cubelet_size)
-            / (chunk_size * chunk_size * chunk_size))
-        {
-            for x in 0..(chunk_size) {
-                for y in 0..(chunk_size) {
-                    for z in 0..(chunk_size) {
-                        rgba_data[x][y][z] = [
-                            rand::prelude::random(),
-                            rand::prelude::random(),
-                            rand::prelude::random(),
-                            rand::prelude::random::<bool>() as u8 as _,
-                        ];
+        for cx in 0..ct {
+            for cy in 0..ct {
+                for cz in 0..ct {
+                    for x in 0..CHUNK_SIZE {
+                        for y in 0..CHUNK_SIZE {
+                            for z in 0..CHUNK_SIZE {
+                                rgba_data[x][y][z] = [
+                                    rand::prelude::random(),
+                                    rand::prelude::random(),
+                                    rand::prelude::random(),
+                                    rand::prelude::random::<bool>() as u8 as _,
+                                ];
+                            }
+                        }
                     }
+
+                    let b_off = voxels * mem::size_of::<[f32; 4]>();
+
+                    staging_buffer_memory
+                        .write(b_off, &rgba_data[..])
+                        .expect("failed to write to buffer");
+
+                    voxels += CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
                 }
             }
-            for x in 0..chunk_size {
-                for y in 0..chunk_size {
-                    for z in 0..chunk_size {
-                        sdf_data[x][y][z] = 0.0;
-                    }
-                }
-            }
-
-            let b_off = i * (10 * 10 * 10);
-            staging_buffer_memory
-                .write(b_off * mem::size_of::<[f32; 4]>(), &rgba_data[..])
-                .expect("failed to write to buffer");
-
-            staging_buffer_memory
-                .write(mem::size_of_val::<_>(&rgba_data), &sdf_data[..])
-                .expect("failed to write to buffer");
         }
 
         command_buffer
@@ -1052,6 +1063,7 @@ impl Vulkan {
             device,
             queue,
             shaders,
+            shader_mod_time,
             render_info,
             render_data,
             command_pool,
@@ -1140,8 +1152,97 @@ impl Renderer for Vulkan {
 
         self.queue.wait_idle().expect("failed to wait on queue");
 
+        #[cfg(debug_assertions)]
+        {
+            let base_path = "/home/brynn/dev/octane";
+            let resources_path = format!("{}/{}/", base_path, "resources");
+            let assets_path = format!("{}/{}/", base_path, "assets");
+
+            for entry in fs::read_dir(resources_path).expect("failed to read directory") {
+                let entry = entry.expect("failed to get directory entry");
+
+                if entry
+                    .file_type()
+                    .expect("failed to get file type")
+                    .is_file()
+                {
+                    let in_path = entry.path();
+
+                    let out_path = format!(
+                        "{}{}.spirv",
+                        assets_path,
+                        in_path.file_name().unwrap().to_string_lossy(),
+                    );
+
+                    let metadata = fs::metadata(&in_path);
+
+                    if let Err(_) = metadata {
+                        continue;
+                    }
+
+                    let mod_time = metadata
+                        .unwrap()
+                        .modified()
+                        .expect("modified on unsupported platform");
+
+                    let last_mod_time = *self
+                        .shader_mod_time
+                        .entry(out_path.clone())
+                        .or_insert(time::SystemTime::now());
+
+                    if mod_time != last_mod_time {
+                        let shader_type = in_path.extension().and_then(|ext| {
+                            match ext.to_string_lossy().as_ref() {
+                                "vs" => Some(glsl_to_spirv::ShaderType::Vertex),
+                                "fs" => Some(glsl_to_spirv::ShaderType::Fragment),
+                                _ => None,
+                            }
+                        });
+
+                        if let None = shader_type {
+                            continue;
+                        }
+
+                        let source =
+                            fs::read_to_string(&in_path).expect("failed to read shader source");
+
+                        info!("compiling shader...");
+
+                        let mut compilation = glsl_to_spirv::compile(&source, shader_type.unwrap())
+                            .expect("failed to compile shader");
+
+                        let mut compiled_bytes = vec![];
+
+                        compilation
+                            .read_to_end(&mut compiled_bytes)
+                            .expect("failed to read compilation to buffer");
+
+                        if fs::metadata(&assets_path).is_err() {
+                            fs::create_dir("/home/brynn/dev/octane/assets/")
+                                .expect("failed to create assets directory");
+                        }
+
+                        if fs::metadata(&out_path).is_ok() {
+                            fs::remove_file(&out_path).expect("failed to remove file");
+                        }
+
+                        fs::write(&out_path, &compiled_bytes).expect("failed to write shader");
+
+                        self.shader_mod_time.insert(out_path.clone(), mod_time);
+                        self.shaders.remove(out_path.as_str());
+                    }
+                }
+            }
+        }
+
+        let mut reload = false;
+
         self.shaders.entry(batch.vertex_shader).or_insert_with(|| {
-            let bytes = fs::read(batch.vertex_shader).expect("failed to read shader");
+            info!("loading vertex shader");
+
+            reload = true;
+
+            let bytes = fs::read(batch.vertex_shader).unwrap();
 
             let code = convert_bytes_to_spirv_data(bytes);
 
@@ -1157,7 +1258,11 @@ impl Renderer for Vulkan {
         self.shaders
             .entry(batch.fragment_shader)
             .or_insert_with(|| {
-                let bytes = fs::read(batch.fragment_shader).expect("failed to read shader");
+                info!("loading fragment shader");
+
+                reload = true;
+
+                let bytes = fs::read(batch.fragment_shader).unwrap();
 
                 let code = convert_bytes_to_spirv_data(bytes);
 
@@ -1170,9 +1275,12 @@ impl Renderer for Vulkan {
                 shader_module
             });
 
-        if self.last_batch.vertex_shader != batch.vertex_shader
+        if reload
+            || self.last_batch.vertex_shader != batch.vertex_shader
             || self.last_batch.fragment_shader != batch.fragment_shader
         {
+            self.device.wait_idle().expect("failed to wait on device");
+
             self.last_batch = batch;
 
             let shaders = [
@@ -1190,11 +1298,13 @@ impl Renderer for Vulkan {
 
             trace!("making new graphics pipeline...");
 
+            let old_swapchain = self.render_data.take().map(|data| data.swapchain);
+
             self.render_data = Some(VulkanRenderData::init(
                 self.device.clone(),
                 &self.surface,
                 &shaders,
-                None,
+                old_swapchain,
                 &self.render_info,
             ));
         }
