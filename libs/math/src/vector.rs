@@ -77,6 +77,18 @@ where
 }
 
 impl<const N: usize> Vector<f32, N> {
+    pub fn distance(&self, other: &Self) -> f32 {
+        self.distance_squared(other).sqrt()
+    }
+
+    pub fn distance_squared(&self, other: &Self) -> f32 {
+        let mut accum = 0.0;
+        for i in 0..N {
+            accum += (self.data[i] - other.data[i]) * (self.data[i] - other.data[i])
+        }
+        accum
+    }
+
     pub fn magnitude(&self) -> f32 {
         let mut accum = 0.0;
         for i in 0..N {
@@ -84,6 +96,7 @@ impl<const N: usize> Vector<f32, N> {
         }
         accum.sqrt()
     }
+
     pub fn normalize(self) -> Self {
         let magnitude = self.magnitude();
         self / magnitude

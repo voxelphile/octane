@@ -1,9 +1,11 @@
 //TODO implement From for ffi types
 
 use std::ffi::{CStr, CString};
+use std::marker;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::rc::Rc;
+use std::slice;
 
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
@@ -15,19 +17,19 @@ mod ffi {
     use libc::{c_char, c_float, c_int, c_uint, c_ulong, c_void, size_t};
 
     macro_rules! impl_from {
-        ($ obj : expr, $($ name : ident => $ case : ident),*) => {
-            match $obj {
-                $(super::$name::$case => Self::$case),*
+    ($ obj : expr, $($ name : ident => $ case : ident),*) => {
+        match $obj {
+            $(super::$name::$case => Self::$case),*
+        }
+    };
+    ($ name : ident, $($cases : ident),*) => {
+        impl From<super::$name> for $name {
+            fn from(x: super::$name) -> Self {
+                impl_from!(x, $($name => $cases),*)
             }
-        };
-        ($ name : ident, $($cases : ident),*) => {
-            impl From<super::$name> for $name {
-                fn from(x: super::$name) -> Self {
-                    impl_from!(x, $($name => $cases),*)
-                }
-            }
-        };
-    }
+        }
+    };
+}
 
     macro_rules! handle {
         ($ name : ident) => {
@@ -188,6 +190,7 @@ mod ffi {
         PipelineColorBlendStateCreateInfo = 26,
         PipelineDynamicStateCreateInfo = 27,
         GraphicsPipelineCreateInfo = 28,
+        ComputePipelineCreateInfo = 29,
         PipelineLayoutCreateInfo = 30,
         SamplerCreateInfo = 31,
         DescriptorSetLayoutCreateInfo = 32,
@@ -248,6 +251,7 @@ mod ffi {
         Rg32Sfloat = 103,
         Rgb32Sfloat = 106,
         Rgba32Sfloat = 109,
+        D32Sfloat = 126,
     }
 
     impl_from!(
@@ -257,7 +261,8 @@ mod ffi {
         R32Sfloat,
         Rg32Sfloat,
         Rgb32Sfloat,
-        Rgba32Sfloat
+        Rgba32Sfloat,
+        D32Sfloat
     );
 
     #[derive(Clone, Copy)]
@@ -1148,13 +1153,13 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct StencilOpState {
-        fail_op: StencilOp,
-        pass_op: StencilOp,
-        depth_fail_op: StencilOp,
-        compare_op: CompareOp,
-        compare_mask: c_uint,
-        write_mask: c_uint,
-        reference: c_uint,
+        pub fail_op: StencilOp,
+        pub pass_op: StencilOp,
+        pub depth_fail_op: StencilOp,
+        pub compare_op: CompareOp,
+        pub compare_mask: c_uint,
+        pub write_mask: c_uint,
+        pub reference: c_uint,
     }
 
     #[derive(Clone, Copy)]
@@ -1274,6 +1279,18 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct ComputePipelineCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub flags: c_uint,
+        pub stage: PipelineShaderStageCreateInfo,
+        pub layout: PipelineLayout,
+        pub base_pipeline_handle: Pipeline,
+        pub base_pipeline_index: c_int,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub struct GraphicsPipelineCreateInfo {
         pub structure_type: StructureType,
         pub p_next: *const c_void,
@@ -1312,6 +1329,26 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct ClearColorValue {
+        pub rgba: [f32; 4],
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ClearDepthStencilValue {
+        pub depth: c_float,
+        pub stencil: c_uint,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub union ClearValue {
+        pub color: ClearColorValue,
+        pub depth_stencil: ClearDepthStencilValue,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub struct RenderPassBeginInfo {
         pub structure_type: StructureType,
         pub p_next: *const c_void,
@@ -1319,7 +1356,7 @@ mod ffi {
         pub framebuffer: Framebuffer,
         pub render_area: Rect2d,
         pub clear_value_count: c_uint,
-        pub clear_values: *const [c_float; 4],
+        pub clear_values: *const ClearValue,
     }
 
     #[derive(Clone, Copy)]
@@ -1907,6 +1944,14 @@ mod ffi {
             allocator: *const c_void,
             pipelines: *mut Pipeline,
         ) -> Result;
+        pub fn vkCreateComputePipelines(
+            device: Device,
+            pipeline_cache: PipelineCache,
+            create_info_count: c_uint,
+            create_infos: *const ComputePipelineCreateInfo,
+            allocator: *const c_void,
+            pipelines: *mut Pipeline,
+        ) -> Result;
         pub fn vkDestroyPipeline(device: Device, pipeline: Pipeline, allocator: *const c_void);
         pub fn vkCreateFramebuffer(
             device: Device,
@@ -2170,6 +2215,7 @@ pub const QUEUE_COMPUTE: u32 = 0x00000002;
 pub const QUEUE_FAMILY_IGNORED: u32 = u32::MAX;
 
 pub const IMAGE_ASPECT_COLOR: u32 = 0x00000001;
+pub const IMAGE_ASPECT_DEPTH: u32 = 0x00000002;
 
 pub const CULL_MODE_NONE: u32 = 0;
 pub const CULL_MODE_FRONT: u32 = 0x00000001;
@@ -2187,10 +2233,12 @@ pub const SUBPASS_EXTERNAL: u32 = u32::MAX;
 
 pub const PIPELINE_STAGE_TOP_OF_PIPE: u32 = 0x00000001;
 pub const PIPELINE_STAGE_FRAGMENT_SHADER: u32 = 0x00000080;
+pub const PIPELINE_STAGE_EARLY_FRAGMENT_TESTS: u32 = 0x00000100;
 pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
 pub const PIPELINE_STAGE_TRANSFER: u32 = 0x00001000;
 
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
+pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE: u32 = 0x00000400;
 
 pub const BUFFER_USAGE_TRANSFER_SRC: u32 = 0x00000001;
 pub const BUFFER_USAGE_TRANSFER_DST: u32 = 0x00000002;
@@ -2212,6 +2260,7 @@ pub const MEMORY_PROPERTY_LAZILY_ALLOCATED: u32 = 0x00000010;
 
 pub const SHADER_STAGE_VERTEX: u32 = 0x00000001;
 pub const SHADER_STAGE_FRAGMENT: u32 = 0x00000010;
+pub const SHADER_STAGE_COMPUTE: u32 = 0x00000020;
 
 pub type DebugUtilsMessengerCallback = fn(&DebugUtilsMessengerCallbackData) -> bool;
 
@@ -2251,6 +2300,7 @@ pub enum Format {
     Rg32Sfloat,
     Rgb32Sfloat,
     Rgba32Sfloat,
+    D32Sfloat,
 }
 
 #[derive(Clone, Copy)]
@@ -3726,7 +3776,14 @@ pub struct PipelineRasterizationStateCreateInfo {
 
 pub struct PipelineMultisampleStateCreateInfo {}
 
-pub struct PipelineDepthStencilStateCreateInfo {}
+pub struct PipelineDepthStencilStateCreateInfo {
+    pub depth_test_enable: bool,
+    pub depth_write_enable: bool,
+    pub depth_compare_op: CompareOp,
+    pub depth_bounds_test_enable: bool,
+    pub min_depth_bounds: f32,
+    pub max_depth_bounds: f32,
+}
 
 #[derive(Clone, Copy)]
 pub enum BlendFactor {
@@ -4009,7 +4066,11 @@ impl RenderPass {
                 };
 
                 let depth_stencil_attachment =
-                    depth_stencil_attachments[i].map_or(ptr::null(), |attachment| &attachment);
+                    if let Some(attachment) = &depth_stencil_attachments[i] {
+                        attachment
+                    } else {
+                        ptr::null()
+                    };
 
                 let preserve_attachment_count = preserve_attachments[i].len() as u32;
 
@@ -4031,25 +4092,6 @@ impl RenderPass {
                     preserve_attachment_count,
                     preserve_attachments,
                 }
-            })
-            .collect::<Vec<_>>();
-
-        let subpasses = create_info
-            .subpasses
-            .iter()
-            .enumerate()
-            .map(|(i, subpass)| ffi::SubpassDescription {
-                flags: 0,
-                pipeline_bind_point: subpass.pipeline_bind_point.into(),
-                input_attachment_count: input_attachments[i].len() as _,
-                input_attachments: ptr::null(),
-                color_attachment_count: color_attachments[i].len() as _,
-                color_attachments: color_attachments[i].as_ptr(),
-                resolve_attachments: ptr::null(),
-                depth_stencil_attachment: depth_stencil_attachments[i]
-                    .map_or(ptr::null(), |attachment| &attachment),
-                preserve_attachment_count: preserve_attachments[i].len() as _,
-                preserve_attachments: ptr::null(),
             })
             .collect::<Vec<_>>();
 
@@ -4111,6 +4153,13 @@ impl Drop for RenderPass {
     }
 }
 
+pub struct ComputePipelineCreateInfo<'a> {
+    pub stage: PipelineShaderStageCreateInfo<'a>,
+    pub layout: &'a PipelineLayout,
+    pub base_pipeline: Option<Pipeline>,
+    pub base_pipeline_index: i32,
+}
+
 pub struct GraphicsPipelineCreateInfo<'a> {
     pub stages: &'a [PipelineShaderStageCreateInfo<'a>],
     pub vertex_input_state: &'a PipelineVertexInputStateCreateInfo<'a>,
@@ -4125,7 +4174,7 @@ pub struct GraphicsPipelineCreateInfo<'a> {
     pub layout: &'a PipelineLayout,
     pub render_pass: &'a RenderPass,
     pub subpass: u32,
-    pub base_pipeline_handle: Option<Pipeline>,
+    pub base_pipeline: Option<Pipeline>,
     pub base_pipeline_index: i32,
 }
 
@@ -4343,7 +4392,41 @@ impl Pipeline {
             .collect::<Vec<_>>();
 
         //TODO
-        let depth_stencil_states = 0;
+        let depth_stencil_states = create_infos
+            .iter()
+            .map(|create_info| ffi::PipelineDepthStencilStateCreateInfo {
+                structure_type: ffi::StructureType::PipelineDepthStencilStateCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                depth_test_enable: create_info.depth_stencil_state.depth_test_enable as _,
+                depth_write_enable: create_info.depth_stencil_state.depth_write_enable as _,
+                depth_compare_op: create_info.depth_stencil_state.depth_compare_op.into(),
+                depth_bounds_test_enable: create_info.depth_stencil_state.depth_bounds_test_enable
+                    as _,
+                //TODO stencil
+                stencil_test_enable: false as _,
+                front: ffi::StencilOpState {
+                    fail_op: ffi::StencilOp::Keep,
+                    pass_op: ffi::StencilOp::Keep,
+                    depth_fail_op: ffi::StencilOp::Keep,
+                    compare_op: ffi::CompareOp::Never,
+                    compare_mask: 0,
+                    write_mask: 0,
+                    reference: 0,
+                },
+                back: ffi::StencilOpState {
+                    fail_op: ffi::StencilOp::Keep,
+                    pass_op: ffi::StencilOp::Keep,
+                    depth_fail_op: ffi::StencilOp::Keep,
+                    compare_op: ffi::CompareOp::Never,
+                    compare_mask: 0,
+                    write_mask: 0,
+                    reference: 0,
+                },
+                min_depth_bounds: create_info.depth_stencil_state.min_depth_bounds as _,
+                max_depth_bounds: create_info.depth_stencil_state.max_depth_bounds as _,
+            })
+            .collect::<Vec<_>>();
 
         let color_blend_attachment_states = create_infos
             .iter()
@@ -4445,14 +4528,14 @@ impl Pipeline {
                 viewport_state: &viewport_states[i],
                 rasterization_state: &rasterization_states[i],
                 multisample_state: &multisample_states[i],
-                depth_stencil_state: ptr::null(),
+                depth_stencil_state: &depth_stencil_states[i],
                 color_blend_state: &color_blend_states[i],
                 dynamic_state: &dynamic_states[i],
                 layout: create_info.layout.handle,
                 render_pass: create_info.render_pass.handle,
                 subpass: create_info.subpass as _,
                 base_pipeline_handle: create_info
-                    .base_pipeline_handle
+                    .base_pipeline
                     .as_ref()
                     .map_or(ffi::Pipeline::null(), |pipeline| pipeline.handle),
                 base_pipeline_index: create_info.base_pipeline_index,
@@ -4463,6 +4546,81 @@ impl Pipeline {
 
         let result = unsafe {
             ffi::vkCreateGraphicsPipelines(
+                device.handle,
+                ffi::PipelineCache::null(),
+                create_infos.len() as _,
+                create_infos.as_ptr(),
+                ptr::null(),
+                handles.as_mut_ptr(),
+            )
+        };
+
+        match result {
+            ffi::Result::Success => {
+                unsafe { handles.set_len(create_infos.len()) };
+
+                let pipelines = handles
+                    .into_iter()
+                    .map(|handle| Pipeline {
+                        device: device.clone(),
+                        handle,
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(pipelines)
+            }
+            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory),
+            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory),
+            ffi::Result::InvalidShader => Err(Error::InvalidShader),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+
+    pub fn new_compute_pipelines(
+        device: Rc<Device>,
+        cache: Option<PipelineCache>,
+        create_infos: &'_ [ComputePipelineCreateInfo],
+    ) -> Result<Vec<Self>, Error> {
+        let entry_points = create_infos
+            .iter()
+            .map(|create_info| CString::new(create_info.stage.entry_point).unwrap())
+            .collect::<Vec<_>>();
+
+        let stages = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, create_info)| ffi::PipelineShaderStageCreateInfo {
+                structure_type: ffi::StructureType::PipelineShaderStageCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                stage: create_info.stage.stage as _,
+                module: create_info.stage.module.handle,
+                entry_point: entry_points[i].as_ptr(),
+                specialization_info: ptr::null(),
+            })
+            .collect::<Vec<_>>();
+
+        let create_infos = create_infos
+            .iter()
+            .enumerate()
+            .map(|(i, create_info)| ffi::ComputePipelineCreateInfo {
+                structure_type: ffi::StructureType::GraphicsPipelineCreateInfo,
+                p_next: ptr::null(),
+                flags: 0,
+                stage: stages[i],
+                layout: create_info.layout.handle,
+                base_pipeline_handle: create_info
+                    .base_pipeline
+                    .as_ref()
+                    .map_or(ffi::Pipeline::null(), |pipeline| pipeline.handle),
+                base_pipeline_index: create_info.base_pipeline_index,
+            })
+            .collect::<Vec<_>>();
+
+        let mut handles = Vec::with_capacity(create_infos.len());
+
+        let result = unsafe {
+            ffi::vkCreateComputePipelines(
                 device.handle,
                 ffi::PipelineCache::null(),
                 create_infos.len() as _,
@@ -4720,6 +4878,28 @@ pub struct Commands<'a> {
 
 impl Commands<'_> {
     pub fn begin_render_pass(&mut self, begin_info: RenderPassBeginInfo<'_>) {
+        let mut clear_values = vec![];
+
+        clear_values.extend(
+            begin_info
+                .color_clear_values
+                .into_iter()
+                .map(|&clear_value| ffi::ClearValue {
+                    color: ffi::ClearColorValue { rgba: clear_value },
+                }),
+        );
+
+        if let Some(clear_value) = begin_info.depth_stencil_clear_value {
+            let depth_stencil_clear_value = ffi::ClearValue {
+                depth_stencil: ffi::ClearDepthStencilValue {
+                    depth: clear_value.0,
+                    stencil: clear_value.1,
+                },
+            };
+
+            clear_values.push(depth_stencil_clear_value);
+        }
+
         let begin_info = ffi::RenderPassBeginInfo {
             structure_type: ffi::StructureType::RenderPassBeginInfo,
             p_next: ptr::null(),
@@ -4735,8 +4915,8 @@ impl Commands<'_> {
                     begin_info.render_area.extent.1,
                 ],
             },
-            clear_value_count: begin_info.clear_values.len() as _,
-            clear_values: begin_info.clear_values.as_ptr() as _,
+            clear_value_count: clear_values.len() as _,
+            clear_values: clear_values.as_ptr() as _,
         };
 
         unsafe {
@@ -5017,7 +5197,8 @@ pub struct RenderPassBeginInfo<'a> {
     pub render_pass: &'a RenderPass,
     pub framebuffer: &'a Framebuffer,
     pub render_area: Rect2d,
-    pub clear_values: &'a [[f32; 4]],
+    pub color_clear_values: &'a [[f32; 4]],
+    pub depth_stencil_clear_value: Option<(f32, u32)>,
 }
 
 pub struct SemaphoreCreateInfo {}
@@ -5728,8 +5909,12 @@ impl Memory {
         }
     }
 
-    pub fn write<T>(&self, offset: usize, data: &'_ [T]) -> Result<(), Error> {
-        if offset + data.len() * mem::size_of::<T>() > self.size as _ {
+    pub fn write<'a, T: 'a>(
+        &self,
+        offset: usize,
+        mut script: impl FnMut(&'a mut [T]),
+    ) -> Result<(), Error> {
+        if offset > self.size as _ {
             panic!("attempt to overflow buffer");
         }
 
@@ -5739,7 +5924,7 @@ impl Memory {
             ffi::vkMapMemory(
                 self.device.handle,
                 self.handle,
-                0,
+                offset as _,
                 self.size,
                 0,
                 &mut mem as *mut _ as _,
@@ -5754,13 +5939,14 @@ impl Memory {
             _ => panic!("unexpected result: {:?}", result),
         }
 
-        unsafe {
-            ptr::copy(
-                data.as_ptr() as _,
-                mem.add(offset),
-                data.len() * mem::size_of::<T>(),
+        let data = unsafe {
+            slice::from_raw_parts_mut(
+                mem as _,
+                (self.size as usize - offset) / mem::size_of::<T>(),
             )
         };
+
+        script(data);
 
         unsafe { ffi::vkUnmapMemory(self.device.handle, self.handle) };
 

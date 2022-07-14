@@ -2,6 +2,7 @@ use crate::mesh::{Mesh, Vertex};
 
 use math::prelude::{Matrix, Vector};
 
+use std::cmp;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
@@ -13,7 +14,7 @@ use std::time;
 use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
 
-pub const CHUNK_SIZE: usize = 16;
+pub const CHUNK_SIZE: usize = 32;
 
 //temporary for here for now.
 #[derive(Default, Clone, Copy)]
@@ -27,7 +28,7 @@ pub struct UniformBufferObject {
 
 pub struct RendererInfo<'a> {
     pub window: &'a dyn HasRawWindowHandle,
-    pub render_distance: u8,
+    pub render_distance: u32,
 }
 
 pub trait Renderer {
@@ -39,6 +40,8 @@ pub trait Renderer {
 pub struct Batch {
     pub vertex_shader: &'static str,
     pub fragment_shader: &'static str,
+    pub seed_shader: &'static str,
+    pub jfa_shader: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -74,17 +77,40 @@ fn debug_utils_messenger_callback(data: &vk::DebugUtilsMessengerCallbackData) ->
     false
 }
 
-fn create_pipeline(
+fn create_compute_pipeline(
     device: Rc<vk::Device>,
-    shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
+    stage: vk::PipelineShaderStageCreateInfo<'_>,
+    layout: &'_ vk::PipelineLayout,
+) -> vk::Pipeline {
+    let compute_pipeline_create_info = vk::ComputePipelineCreateInfo {
+        stage,
+        layout,
+        base_pipeline: None,
+        base_pipeline_index: -1,
+    };
+
+    vk::Pipeline::new_compute_pipelines(device, None, &[compute_pipeline_create_info])
+        .expect("failed to create compute pipeline")
+        .remove(0)
+}
+
+fn create_graphics_pipeline(
+    device: Rc<vk::Device>,
+    stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
     render_pass: &'_ vk::RenderPass,
     layout: &'_ vk::PipelineLayout,
     extent: (u32, u32),
 ) -> vk::Pipeline {
-    let binding = vk::VertexInputBindingDescription {
+    let vertex_binding = vk::VertexInputBindingDescription {
         binding: 0,
         stride: mem::size_of::<Vertex>(),
         input_rate: vk::VertexInputRate::Vertex,
+    };
+
+    let instance_binding = vk::VertexInputBindingDescription {
+        binding: 1,
+        stride: mem::size_of::<Vector<f32, 3>>(),
+        input_rate: vk::VertexInputRate::Instance,
     };
 
     let position_attribute = vk::VertexInputAttributeDescription {
@@ -108,9 +134,21 @@ fn create_pipeline(
         offset: 2 * mem::size_of::<[f32; 3]>() as u32,
     };
 
+    let chunk_position_attribute = vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 3,
+        format: vk::Format::Rgb32Sfloat,
+        offset: 0,
+    };
+
     let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
-        bindings: &[binding],
-        attributes: &[position_attribute, normal_attribute, uv_attribute],
+        bindings: &[vertex_binding, instance_binding],
+        attributes: &[
+            position_attribute,
+            normal_attribute,
+            uv_attribute,
+            chunk_position_attribute,
+        ],
     };
 
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
@@ -155,7 +193,14 @@ fn create_pipeline(
 
     let multisampling = vk::PipelineMultisampleStateCreateInfo {};
 
-    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {};
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
+        depth_test_enable: true,
+        depth_write_enable: true,
+        depth_compare_op: vk::CompareOp::Less,
+        depth_bounds_test_enable: false,
+        min_depth_bounds: 0.0,
+        max_depth_bounds: 1.0,
+    };
 
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
         color_write_mask: vk::COLOR_COMPONENT_R
@@ -183,7 +228,7 @@ fn create_pipeline(
     };
 
     let graphics_pipeline_create_info = vk::GraphicsPipelineCreateInfo {
-        stages: &shader_stages,
+        stages,
         vertex_input_state: &vertex_input_info,
         input_assembly_state: &input_assembly,
         tessellation_state: &tessellation_state,
@@ -196,7 +241,7 @@ fn create_pipeline(
         layout: &layout,
         render_pass: &render_pass,
         subpass: 0,
-        base_pipeline_handle: None,
+        base_pipeline: None,
         base_pipeline_index: -1,
     };
 
@@ -216,6 +261,8 @@ pub struct Vulkan {
     cubelet_data_view: vk::ImageView,
     cubelet_data_memory: vk::Memory,
     cubelet_data: vk::Image,
+    instance_buffer_memory: vk::Memory,
+    instance_buffer: vk::Buffer,
     data_buffer_memory: vk::Memory,
     data_buffer: vk::Buffer,
     staging_buffer_memory: vk::Memory,
@@ -227,8 +274,10 @@ pub struct Vulkan {
     command_pool: vk::CommandPool,
     render_info: VulkanRenderInfo,
     render_data: Option<VulkanRenderData>,
+    compute_data: Option<VulkanComputeData>,
     queue: vk::Queue,
     device: Rc<vk::Device>,
+    physical_device: vk::PhysicalDevice,
     shaders: HashMap<&'static str, vk::ShaderModule>,
     shader_mod_time: HashMap<String, time::SystemTime>,
     surface: vk::Surface,
@@ -245,10 +294,144 @@ pub struct VulkanRenderInfo {
     extent: (u32, u32),
 }
 
+pub struct VulkanComputeData {
+    seed_pipeline: vk::Pipeline,
+    seed_pipeline_layout: vk::PipelineLayout,
+    seed_descriptor_sets: Vec<vk::DescriptorSet>,
+    seed_descriptor_pool: vk::DescriptorPool,
+    seed_descriptor_set_layout: vk::DescriptorSetLayout,
+    jfa_pipeline: vk::Pipeline,
+    jfa_pipeline_layout: vk::PipelineLayout,
+    jfa_descriptor_sets: Vec<vk::DescriptorSet>,
+    jfa_descriptor_pool: vk::DescriptorPool,
+    jfa_descriptor_set_layout: vk::DescriptorSetLayout,
+}
+
+impl VulkanComputeData {
+    pub fn init(
+        device: Rc<vk::Device>,
+        seed_stage: vk::PipelineShaderStageCreateInfo<'_>,
+        jfa_stage: vk::PipelineShaderStageCreateInfo<'_>,
+    ) -> Self {
+        /*let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
+        };
+        */
+
+        let seed_descriptor_set_layout_create_info =
+            vk::DescriptorSetLayoutCreateInfo { bindings: &[] };
+
+        let seed_descriptor_set_layout =
+            vk::DescriptorSetLayout::new(device.clone(), seed_descriptor_set_layout_create_info)
+                .expect("failed to create descriptor set layout");
+
+        /*let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };*/
+
+        let seed_descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: 1,
+            pool_sizes: &[],
+        };
+
+        let seed_descriptor_pool =
+            vk::DescriptorPool::new(device.clone(), seed_descriptor_pool_create_info)
+                .expect("failed to create descriptor pool");
+
+        let seed_descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: &seed_descriptor_pool,
+            set_layouts: &[&seed_descriptor_set_layout],
+        };
+
+        let seed_descriptor_sets =
+            vk::DescriptorSet::allocate(device.clone(), seed_descriptor_set_allocate_info)
+                .expect("failed to allocate descriptor sets");
+
+        let seed_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+            set_layouts: &[&seed_descriptor_set_layout],
+        };
+
+        let seed_pipeline_layout =
+            vk::PipelineLayout::new(device.clone(), seed_pipeline_layout_create_info)
+                .expect("failed to create pipeline layout");
+
+        let seed_pipeline =
+            create_compute_pipeline(device.clone(), seed_stage, &seed_pipeline_layout);
+
+        /*let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
+        };
+        */
+
+        let jfa_descriptor_set_layout_create_info =
+            vk::DescriptorSetLayoutCreateInfo { bindings: &[] };
+
+        let jfa_descriptor_set_layout =
+            vk::DescriptorSetLayout::new(device.clone(), jfa_descriptor_set_layout_create_info)
+                .expect("failed to create descriptor set layout");
+
+        /*let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };*/
+
+        let jfa_descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: 1,
+            pool_sizes: &[],
+        };
+
+        let jfa_descriptor_pool =
+            vk::DescriptorPool::new(device.clone(), jfa_descriptor_pool_create_info)
+                .expect("failed to create descriptor pool");
+
+        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: &jfa_descriptor_pool,
+            set_layouts: &[&jfa_descriptor_set_layout],
+        };
+
+        let jfa_descriptor_sets =
+            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
+                .expect("failed to allocate descriptor sets");
+
+        let jfa_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+            set_layouts: &[&jfa_descriptor_set_layout],
+        };
+
+        let jfa_pipeline_layout =
+            vk::PipelineLayout::new(device.clone(), jfa_pipeline_layout_create_info)
+                .expect("failed to create pipeline layout");
+
+        let jfa_pipeline = create_compute_pipeline(device.clone(), jfa_stage, &jfa_pipeline_layout);
+
+        Self {
+            seed_pipeline,
+            seed_pipeline_layout,
+            seed_descriptor_sets,
+            seed_descriptor_pool,
+            seed_descriptor_set_layout,
+            jfa_pipeline,
+            jfa_pipeline_layout,
+            jfa_descriptor_sets,
+            jfa_descriptor_pool,
+            jfa_descriptor_set_layout,
+        }
+    }
+}
+
 pub struct VulkanRenderData {
+    depth_view: vk::ImageView,
+    depth_memory: vk::Memory,
+    depth: vk::Image,
     framebuffers: Vec<vk::Framebuffer>,
     graphics_pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
+    graphics_pipeline_layout: vk::PipelineLayout,
     descriptor_sets: Vec<vk::DescriptorSet>,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -260,11 +443,65 @@ pub struct VulkanRenderData {
 impl VulkanRenderData {
     pub fn init(
         device: Rc<vk::Device>,
+        physical_device: &vk::PhysicalDevice,
         surface: &vk::Surface,
         shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
         old_swapchain: Option<vk::Swapchain>,
         render_info: &VulkanRenderInfo,
     ) -> Self {
+        let depth_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TwoDim,
+            format: vk::Format::D32Sfloat,
+            extent: (render_info.extent.0, render_info.extent.1, 1),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage: vk::IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut depth =
+            vk::Image::new(device.clone(), depth_create_info).expect("failed to allocate image");
+
+        let depth_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let depth_memory = vk::Memory::allocate(
+            device.clone(),
+            depth_memory_allocate_info,
+            depth.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        depth
+            .bind_memory(&depth_memory)
+            .expect("failed to bind image to memory");
+
+        let depth_view_create_info = vk::ImageViewCreateInfo {
+            image: &depth,
+            view_type: vk::ImageViewType::TwoDim,
+            format: vk::Format::D32Sfloat,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let depth_view = vk::ImageView::new(device.clone(), depth_view_create_info)
+            .expect("failed to create image view");
+
         let swapchain_create_info = vk::SwapchainCreateInfo {
             surface,
             min_image_count: render_info.image_count,
@@ -388,12 +625,24 @@ impl VulkanRenderData {
             vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
                 .expect("failed to allocate descriptor sets");
 
-        let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+        let graphics_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
             set_layouts: &[&descriptor_set_layout],
         };
 
-        let pipeline_layout = vk::PipelineLayout::new(device.clone(), pipeline_layout_create_info)
-            .expect("failed to create pipeline layout");
+        let graphics_pipeline_layout =
+            vk::PipelineLayout::new(device.clone(), graphics_pipeline_layout_create_info)
+                .expect("failed to create pipeline layout");
+
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::D32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::DontCare,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::DepthStencilAttachment,
+        };
 
         let color_attachment_description = vk::AttachmentDescription {
             format: render_info.surface_format.format,
@@ -411,26 +660,34 @@ impl VulkanRenderData {
             layout: vk::ImageLayout::ColorAttachment,
         };
 
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DepthStencilAttachment,
+        };
+
         let subpass_description = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::Graphics,
             input_attachments: &[],
             color_attachments: &[color_attachment_reference],
             resolve_attachments: &[],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(&depth_attachment_reference),
             preserve_attachments: &[],
         };
 
         let subpass_dependency = vk::SubpassDependency {
             src_subpass: vk::SUBPASS_EXTERNAL,
             dst_subpass: 0,
-            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
+                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
             src_access_mask: 0,
-            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
-            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE,
+            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
+                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
+            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE
+                | vk::ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
         };
 
         let render_pass_create_info = vk::RenderPassCreateInfo {
-            attachments: &[color_attachment_description],
+            attachments: &[color_attachment_description, depth_attachment_description],
             subpasses: &[subpass_description],
             dependencies: &[subpass_dependency],
         };
@@ -443,7 +700,7 @@ impl VulkanRenderData {
             .map(|image_view| {
                 let framebuffer_create_info = vk::FramebufferCreateInfo {
                     render_pass: &render_pass,
-                    attachments: &[image_view],
+                    attachments: &[image_view, &depth_view],
                     width: render_info.extent.0,
                     height: render_info.extent.1,
                     layers: 1,
@@ -454,22 +711,25 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
-        let graphics_pipeline = create_pipeline(
+        let graphics_pipeline = create_graphics_pipeline(
             device.clone(),
             shader_stages,
             &render_pass,
-            &pipeline_layout,
+            &graphics_pipeline_layout,
             render_info.extent,
         );
 
         Self {
+            depth_view,
+            depth_memory,
+            depth,
             swapchain,
             swapchain_image_views,
             render_pass,
             descriptor_set_layout,
             descriptor_pool,
             descriptor_sets,
-            pipeline_layout,
+            graphics_pipeline_layout,
             graphics_pipeline,
             framebuffers,
         }
@@ -561,10 +821,13 @@ impl Vulkan {
 
         let queue_families = physical_device.queue_families();
 
-        let mut graphics_queue_family_index = 0;
+        let mut queue_family_index = None;
 
         for (i, queue_family) in queue_families.iter().enumerate() {
             if queue_family.queue_flags & vk::QUEUE_GRAPHICS == 0 {
+                continue;
+            }
+            if queue_family.queue_flags & vk::QUEUE_COMPUTE == 0 {
                 continue;
             }
             if !physical_device
@@ -573,12 +836,14 @@ impl Vulkan {
             {
                 continue;
             }
-            graphics_queue_family_index = i as u32;
+            queue_family_index = Some(i as u32);
             break;
         }
 
+        let queue_family_index = queue_family_index.expect("failed to find suitable queue");
+
         let queue_create_info = vk::DeviceQueueCreateInfo {
-            queue_family_index: graphics_queue_family_index,
+            queue_family_index,
             queue_priorities: &[1.0],
         };
 
@@ -594,7 +859,7 @@ impl Vulkan {
         let device = vk::Device::new(&physical_device, device_create_info)
             .expect("failed to create logical device");
 
-        let mut queue = device.queue(graphics_queue_family_index);
+        let mut queue = device.queue(queue_family_index);
 
         let shaders = HashMap::new();
         let shader_mod_time = HashMap::new();
@@ -622,9 +887,9 @@ impl Vulkan {
 
         let render_data = None;
 
-        let command_pool_create_info = vk::CommandPoolCreateInfo {
-            queue_family_index: graphics_queue_family_index,
-        };
+        let compute_data = None;
+
+        let command_pool_create_info = vk::CommandPoolCreateInfo { queue_family_index };
 
         let command_pool = vk::CommandPool::new(device.clone(), command_pool_create_info)
             .expect("failed to create command pool");
@@ -658,6 +923,27 @@ impl Vulkan {
             vk::Fence::new(device.clone(), fence_create_info).expect("failed to create fence");
 
         let last_batch = Batch::default();
+
+        let mut instance_buffer = vk::Buffer::new(
+            device.clone(),
+            32768,
+            vk::BUFFER_USAGE_TRANSFER_DST | vk::BUFFER_USAGE_VERTEX,
+        )
+        .expect("failed to create buffer");
+
+        let instance_buffer_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let instance_buffer_memory = vk::Memory::allocate(
+            device.clone(),
+            instance_buffer_memory_allocate_info,
+            instance_buffer.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        instance_buffer.bind_memory(&instance_buffer_memory);
 
         let mut data_buffer = vk::Buffer::new(
             device.clone(),
@@ -699,7 +985,9 @@ impl Vulkan {
         )
         .expect("failed to allocate memory");
 
-        staging_buffer.bind_memory(&staging_buffer_memory);
+        staging_buffer
+            .bind_memory(&staging_buffer_memory)
+            .expect("failed to bind buffer");
 
         let mut ubo = UniformBufferObject::default();
         ubo.resolution = Vector::<f32, 2>::new([960.0, 540.0]);
@@ -787,7 +1075,7 @@ impl Vulkan {
 
         let cubelet_sdf_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
-            format: vk::Format::R32Sfloat,
+            format: vk::Format::Rgba32Sfloat,
             extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
             mip_levels: 1,
             array_layers: 1,
@@ -819,7 +1107,7 @@ impl Vulkan {
         let cubelet_sdf_view_create_info = vk::ImageViewCreateInfo {
             image: &cubelet_sdf,
             view_type: vk::ImageViewType::ThreeDim,
-            format: vk::Format::R32Sfloat,
+            format: vk::Format::Rgba32Sfloat,
             components: vk::ComponentMapping {
                 r: vk::ComponentSwizzle::Identity,
                 g: vk::ComponentSwizzle::Identity,
@@ -859,38 +1147,42 @@ impl Vulkan {
         let cubelet_sdf_sampler = vk::Sampler::new(device.clone(), cubelet_sdf_sampler_create_info)
             .expect("failed to create sampler");
 
-        let mut rgba_data = [[[[0_f32; 4]; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
-        let mut sdf_data = [[[0_f32; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+        //let mut rgba_data = [[[[0_f32; 4]; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+        //let mut sdf_data = [[[0_f32; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
 
-        let ct = 2 * ubo.render_distance as usize;
+        let ct = 2 * ubo.render_distance as usize * CHUNK_SIZE;
         let mut voxels = 0;
 
-        for cx in 0..ct {
-            for cy in 0..ct {
-                for cz in 0..ct {
-                    for x in 0..CHUNK_SIZE {
-                        for y in 0..CHUNK_SIZE {
-                            for z in 0..CHUNK_SIZE {
-                                rgba_data[x][y][z] = [
-                                    rand::prelude::random(),
-                                    rand::prelude::random(),
-                                    rand::prelude::random(),
-                                    rand::prelude::random::<bool>() as u8 as _,
-                                ];
+        use noise::NoiseFn;
+        let perlin = noise::Perlin::new();
+
+        let mut pool: Vec<Vec<Vec<f32>>> = vec![];
+
+        staging_buffer_memory
+            .write(0, |data: &'_ mut [[f32; 4]]| {
+                for x in 0..ct {
+                    pool.push(vec![]);
+                    for y in 0..ct {
+                        pool[x].push(vec![]);
+                        for z in 0..ct {
+                            let max_y = ((ct / 3) as isize
+                                + (10.0 * perlin.get([x as f64 / 32.0, z as f64 / 32.0])) as isize)
+                                as usize;
+                            if y < max_y {
+                                let color: [f32; 4] = [0.0, 0.6, 0.1, 1.0];
+
+                                pool[x][y].push(0.0);
+                                data[voxels..voxels + 1].copy_from_slice(&[color]);
+                            } else {
+                                pool[x][y].push(100000.0);
                             }
+
+                            voxels += 1;
                         }
                     }
-
-                    let b_off = voxels * mem::size_of::<[f32; 4]>();
-
-                    staging_buffer_memory
-                        .write(b_off, &rgba_data[..])
-                        .expect("failed to write to buffer");
-
-                    voxels += CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
                 }
-            }
-        }
+            })
+            .expect("failed to write to buffer");
 
         command_buffer
             .record(|commands| {
@@ -931,7 +1223,7 @@ impl Vulkan {
                         layer_count: 1,
                     },
                     image_offset: (0, 0, 0),
-                    image_extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
+                    image_extent: (ct as _, ct as _, ct as _),
                 };
 
                 commands.copy_buffer_to_image(
@@ -947,79 +1239,6 @@ impl Vulkan {
                     src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                     dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                     image: &cubelet_data,
-                    src_access_mask: 0,
-                    dst_access_mask: 0,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                commands.pipeline_barrier(
-                    vk::PIPELINE_STAGE_TRANSFER,
-                    vk::PIPELINE_STAGE_FRAGMENT_SHADER,
-                    0,
-                    &[],
-                    &[],
-                    &[barrier],
-                );
-
-                let barrier = vk::ImageMemoryBarrier {
-                    old_layout: vk::ImageLayout::Undefined,
-                    new_layout: vk::ImageLayout::TransferDst,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: &cubelet_sdf,
-                    src_access_mask: 0,
-                    dst_access_mask: 0,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                commands.pipeline_barrier(
-                    vk::PIPELINE_STAGE_TOP_OF_PIPE,
-                    vk::PIPELINE_STAGE_TRANSFER,
-                    0,
-                    &[],
-                    &[],
-                    &[barrier],
-                );
-
-                let buffer_image_copy = vk::BufferImageCopy {
-                    buffer_offset: mem::size_of_val::<_>(&cubelet_data) as _,
-                    buffer_row_length: 0,
-                    buffer_image_height: 0,
-                    image_subresource: vk::ImageSubresourceLayers {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    image_offset: (0, 0, 0),
-                    image_extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
-                };
-
-                commands.copy_buffer_to_image(
-                    &staging_buffer,
-                    &mut cubelet_sdf,
-                    vk::ImageLayout::TransferDst,
-                    &[buffer_image_copy],
-                );
-
-                let barrier = vk::ImageMemoryBarrier {
-                    old_layout: vk::ImageLayout::TransferDst,
-                    new_layout: vk::ImageLayout::ShaderReadOnly,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: &cubelet_sdf,
                     src_access_mask: 0,
                     dst_access_mask: 0,
                     subresource_range: vk::ImageSubresourceRange {
@@ -1060,18 +1279,22 @@ impl Vulkan {
             #[cfg(debug_assertions)]
             debug_utils_messenger,
             surface,
+            physical_device,
             device,
             queue,
             shaders,
             shader_mod_time,
             render_info,
             render_data,
+            compute_data,
             command_pool,
             command_buffer,
             in_flight_fence,
             render_finished_semaphore,
             image_available_semaphore,
             last_batch,
+            instance_buffer,
+            instance_buffer_memory,
             data_buffer,
             data_buffer_memory,
             staging_buffer,
@@ -1093,38 +1316,46 @@ impl Renderer for Vulkan {
     fn draw_batch(&mut self, batch: Batch, entries: &'_ [Entry<'_>]) {
         self.device.wait_idle().expect("failed to wait on device");
 
-        let mut vertex_offset = 0;
-
-        for entry in entries {
-            let (vertices, _) = entry.mesh.get();
-
-            self.staging_buffer_memory
-                .write(vertex_offset, &vertices[..])
-                .expect("failed to write to buffer");
-
-            vertex_offset += vertices.len() * mem::size_of::<Vertex>();
-        }
-
-        let mut num_indices = 0;
-        let mut index_offset = vertex_offset;
-
-        for entry in entries {
-            let (_, indices) = entry.mesh.get();
-
-            self.staging_buffer_memory
-                .write(index_offset, &indices[..])
-                .expect("failed to write to buffer");
-
-            index_offset += indices.len() * mem::size_of::<u16>();
-            num_indices += indices.len();
-        }
-
-        let ubo_offset = vertex_offset + index_offset;
-
-        let ubo_offset = (ubo_offset as f64 / 64.0).ceil() * 64.0;
+        let mut vertex_count = 0;
 
         self.staging_buffer_memory
-            .write(ubo_offset as _, &[self.ubo])
+            .write(0, |data: &'_ mut [Vertex]| {
+                for entry in entries {
+                    let (vertices, _) = entry.mesh.get();
+
+                    data[vertex_count..vertex_count + vertices.len()].copy_from_slice(&vertices);
+
+                    vertex_count += vertices.len();
+                }
+            })
+            .expect("failed to write to buffer");
+
+        let mut index_count = 0;
+
+        self.staging_buffer_memory
+            .write(
+                vertex_count * mem::size_of::<Vertex>(),
+                |data: &'_ mut [u16]| {
+                    for entry in entries {
+                        let (_, indices) = entry.mesh.get();
+
+                        data[index_count..index_count + indices.len()].copy_from_slice(&indices);
+
+                        index_count += indices.len();
+                    }
+                },
+            )
+            .expect("failed to write to buffer");
+
+        let ubo_offset =
+            vertex_count * mem::size_of::<Vertex>() + index_count * mem::size_of::<u16>();
+
+        let ubo_offset = ((ubo_offset as f64 / 64.0).ceil() * 64.0) as _;
+
+        self.staging_buffer_memory
+            .write(ubo_offset, |data: &'_ mut [UniformBufferObject]| {
+                data[0..1].copy_from_slice(&[self.ubo]);
+            })
             .expect("failed to write to buffer");
 
         self.command_buffer
@@ -1152,7 +1383,52 @@ impl Renderer for Vulkan {
 
         self.queue.wait_idle().expect("failed to wait on queue");
 
-        #[cfg(debug_assertions)]
+        let ct = 2 * self.ubo.render_distance as usize;
+        let mut instance_data = vec![];
+
+        for cx in 0..ct {
+            for cy in 0..ct {
+                for cz in 0..ct {
+                    instance_data.push(Vector::<f32, 3>::new([cx as _, cy as _, cz as _]));
+                }
+            }
+        }
+
+        self.staging_buffer_memory
+            .write(0, |data: &'_ mut [Vector<f32, 3>]| {
+                data[..instance_data.len()].copy_from_slice(&instance_data[..]);
+            })
+            .expect("failed to write to buffer");
+
+        self.command_buffer
+            .record(|commands| {
+                let buffer_copy = vk::BufferCopy {
+                    src_offset: 0,
+                    dst_offset: 0,
+                    size: 32768,
+                };
+
+                commands.copy_buffer(
+                    &self.staging_buffer,
+                    &mut self.instance_buffer,
+                    &[buffer_copy],
+                );
+            })
+            .expect("failed to record command buffer");
+
+        let submit_info = vk::SubmitInfo {
+            wait_semaphores: &[],
+            wait_stages: &[],
+            command_buffers: &[&self.command_buffer],
+            signal_semaphores: &[],
+        };
+
+        self.queue
+            .submit(&[submit_info], None)
+            .expect("failed to submit buffer copy command buffer");
+
+        self.queue.wait_idle().expect("failed to wait on queue");
+
         {
             let base_path = "/home/brynn/dev/octane";
             let resources_path = format!("{}/{}/", base_path, "resources");
@@ -1195,6 +1471,7 @@ impl Renderer for Vulkan {
                             match ext.to_string_lossy().as_ref() {
                                 "vs" => Some(glsl_to_spirv::ShaderType::Vertex),
                                 "fs" => Some(glsl_to_spirv::ShaderType::Fragment),
+                                "cs" => Some(glsl_to_spirv::ShaderType::Compute),
                                 _ => None,
                             }
                         });
@@ -1202,14 +1479,22 @@ impl Renderer for Vulkan {
                         if let None = shader_type {
                             continue;
                         }
-
+                        dbg!(&shader_type);
                         let source =
                             fs::read_to_string(&in_path).expect("failed to read shader source");
 
                         info!("compiling shader...");
 
-                        let mut compilation = glsl_to_spirv::compile(&source, shader_type.unwrap())
-                            .expect("failed to compile shader");
+                        let compilation_result =
+                            glsl_to_spirv::compile(&source, shader_type.unwrap());
+
+                        if let Err(e) = compilation_result {
+                            error!("failed to compile shader: {}", e);
+                            self.shader_mod_time.insert(out_path.clone(), mod_time);
+                            return;
+                        }
+
+                        let mut compilation = compilation_result.unwrap();
 
                         let mut compiled_bytes = vec![];
 
@@ -1235,12 +1520,13 @@ impl Renderer for Vulkan {
             }
         }
 
-        let mut reload = false;
+        let mut reload_graphics = false;
+        let mut reload_compute = false;
 
         self.shaders.entry(batch.vertex_shader).or_insert_with(|| {
             info!("loading vertex shader");
 
-            reload = true;
+            reload_graphics = true;
 
             let bytes = fs::read(batch.vertex_shader).unwrap();
 
@@ -1260,7 +1546,7 @@ impl Renderer for Vulkan {
             .or_insert_with(|| {
                 info!("loading fragment shader");
 
-                reload = true;
+                reload_graphics = true;
 
                 let bytes = fs::read(batch.fragment_shader).unwrap();
 
@@ -1275,23 +1561,57 @@ impl Renderer for Vulkan {
                 shader_module
             });
 
-        if reload
+        self.shaders.entry(batch.seed_shader).or_insert_with(|| {
+            info!("loading seed compute shader");
+
+            reload_compute = true;
+
+            let bytes = fs::read(batch.seed_shader).unwrap();
+
+            let code = convert_bytes_to_spirv_data(bytes);
+
+            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+
+            let shader_module =
+                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+                    .expect("failed to create shader module");
+
+            shader_module
+        });
+
+        self.shaders.entry(batch.jfa_shader).or_insert_with(|| {
+            info!("loading jfa compute shader");
+
+            reload_compute = true;
+
+            let bytes = fs::read(batch.jfa_shader).unwrap();
+
+            let code = convert_bytes_to_spirv_data(bytes);
+
+            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+
+            let shader_module =
+                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+                    .expect("failed to create shader module");
+
+            shader_module
+        });
+
+        if reload_graphics
             || self.last_batch.vertex_shader != batch.vertex_shader
             || self.last_batch.fragment_shader != batch.fragment_shader
         {
             self.device.wait_idle().expect("failed to wait on device");
 
-            self.last_batch = batch;
-
             let shaders = [
                 vk::PipelineShaderStageCreateInfo {
                     stage: vk::SHADER_STAGE_VERTEX,
-                    module: &self.shaders[self.last_batch.vertex_shader],
+                    module: &self.shaders[batch.vertex_shader],
                     entry_point: "main",
                 },
                 vk::PipelineShaderStageCreateInfo {
                     stage: vk::SHADER_STAGE_FRAGMENT,
-                    module: &self.shaders[self.last_batch.fragment_shader],
+                    module: &self.shaders[batch.fragment_shader],
                     entry_point: "main",
                 },
             ];
@@ -1302,12 +1622,39 @@ impl Renderer for Vulkan {
 
             self.render_data = Some(VulkanRenderData::init(
                 self.device.clone(),
+                &self.physical_device,
                 &self.surface,
                 &shaders,
                 old_swapchain,
                 &self.render_info,
             ));
         }
+
+        if reload_compute || self.last_batch.jfa_shader != batch.jfa_shader {
+            self.device.wait_idle().expect("failed to wait on device");
+
+            let seed_shader = vk::PipelineShaderStageCreateInfo {
+                stage: vk::SHADER_STAGE_COMPUTE,
+                module: &self.shaders[batch.seed_shader],
+                entry_point: "main",
+            };
+
+            let jfa_shader = vk::PipelineShaderStageCreateInfo {
+                stage: vk::SHADER_STAGE_COMPUTE,
+                module: &self.shaders[batch.jfa_shader],
+                entry_point: "main",
+            };
+
+            trace!("making new compute pipelines...");
+
+            self.compute_data = Some(VulkanComputeData::init(
+                self.device.clone(),
+                seed_shader,
+                jfa_shader,
+            ));
+        }
+
+        self.last_batch = batch;
 
         let render_data = self
             .render_data
@@ -1405,7 +1752,8 @@ impl Renderer for Vulkan {
                         offset: (0, 0),
                         extent: self.render_info.extent,
                     },
-                    clear_values: &[[0.0385, 0.0385, 0.0385, 1.0]],
+                    color_clear_values: &[[0.0385, 0.0385, 0.0385, 1.0]],
+                    depth_stencil_clear_value: Some((1.0, 0)),
                 };
 
                 commands.begin_render_pass(render_pass_begin_info);
@@ -1415,19 +1763,32 @@ impl Renderer for Vulkan {
                     &render_data.graphics_pipeline,
                 );
 
-                commands.bind_vertex_buffers(0, 1, &[&self.data_buffer], &[0]);
+                commands.bind_vertex_buffers(
+                    0,
+                    2,
+                    &[&self.data_buffer, &self.instance_buffer],
+                    &[0, 0],
+                );
 
-                commands.bind_index_buffer(&self.data_buffer, vertex_offset, vk::IndexType::Uint16);
+                commands.bind_index_buffer(
+                    &self.data_buffer,
+                    vertex_count * mem::size_of::<Vertex>(),
+                    vk::IndexType::Uint16,
+                );
 
                 commands.bind_descriptor_sets(
                     vk::PipelineBindPoint::Graphics,
-                    &render_data.pipeline_layout,
+                    &render_data.graphics_pipeline_layout,
                     0,
                     &[&render_data.descriptor_sets[image_index as usize]],
                     &[],
                 );
 
-                commands.draw_indexed(num_indices as _, 1, 0, 0, 0);
+                let chunks = 2 * self.ubo.render_distance as u32;
+
+                let volume = chunks * chunks * chunks;
+
+                commands.draw_indexed(index_count as _, volume, 0, 0, 0);
 
                 commands.end_render_pass();
             })
@@ -1483,6 +1844,7 @@ impl Renderer for Vulkan {
 
         self.render_data = Some(VulkanRenderData::init(
             self.device.clone(),
+            &self.physical_device,
             &self.surface,
             &shaders,
             Some(swapchain),

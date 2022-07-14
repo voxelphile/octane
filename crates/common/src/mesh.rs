@@ -5,6 +5,7 @@ use std::mem;
 use std::ptr;
 use std::slice;
 
+#[derive(Clone, Copy)]
 pub struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],

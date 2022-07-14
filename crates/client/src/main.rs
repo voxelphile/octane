@@ -87,7 +87,7 @@ fn main() {
 
     let render_info = render::RendererInfo {
         window: &window,
-        render_distance: 1,
+        render_distance: 2,
     };
 
     let mut vulkan = render::Vulkan::init(render_info);
@@ -98,6 +98,8 @@ fn main() {
 
     let vertex_shader = "/home/brynn/dev/octane/assets/default.vs.spirv";
     let fragment_shader = "/home/brynn/dev/octane/assets/default.fs.spirv";
+    let seed_shader = "/home/brynn/dev/octane/assets/seed.cs.spirv";
+    let jfa_shader = "/home/brynn/dev/octane/assets/jfa.cs.spirv";
 
     let cube_obj =
         fs::File::open("/home/brynn/dev/octane/assets/cube.obj").expect("failed to open obj");
@@ -107,6 +109,8 @@ fn main() {
     let batch = render::Batch {
         vertex_shader: &vertex_shader,
         fragment_shader: &fragment_shader,
+        seed_shader: &seed_shader,
+        jfa_shader: &jfa_shader,
     };
 
     let entries = [render::Entry { mesh: &cube }];
@@ -244,12 +248,6 @@ fn main() {
         camera[3][2] = position[2];
 
         let follow = 2.0 * 1.0 as f32;
-        /*let angle = std::time::Instant::now()
-                    .duration_since(startup)
-                    .as_secs_f32()
-                    / 10.0
-                    % (2.0 * std::f32::consts::PI);
-        */
         let angle: f32 = 0.0;
 
         vulkan.ubo.model = Matrix::<f32, 4, 4>::identity();
