@@ -87,7 +87,7 @@ fn main() {
 
     let render_info = render::RendererInfo {
         window: &window,
-        render_distance: 2,
+        render_distance: 1,
     };
 
     let mut vulkan = render::Vulkan::init(render_info);

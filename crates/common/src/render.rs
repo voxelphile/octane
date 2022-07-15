@@ -15,7 +15,7 @@ use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
 
 pub const CHUNK_SIZE: usize = 32;
-
+static mut JFAI_DONE: bool = false;
 //temporary for here for now.
 #[derive(Default, Clone, Copy)]
 pub struct UniformBufferObject {
@@ -24,6 +24,13 @@ pub struct UniformBufferObject {
     pub proj: Matrix<f32, 4, 4>,
     pub resolution: Vector<f32, 2>,
     pub render_distance: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct JfaiBufferObject {
+    pub step_size: u32,
+    pub seed_amount: u32,
+    pub seeds: [Vector<u32, 3>; 512],
 }
 
 pub struct RendererInfo<'a> {
@@ -137,7 +144,7 @@ fn create_graphics_pipeline(
     let chunk_position_attribute = vk::VertexInputAttributeDescription {
         binding: 1,
         location: 3,
-        format: vk::Format::Rgb32Sfloat,
+        format: vk::Format::Rgb32Uint,
         offset: 0,
     };
 
@@ -252,11 +259,16 @@ fn create_graphics_pipeline(
 
 pub struct Vulkan {
     pub ubo: UniformBufferObject,
+    jfai: JfaiBufferObject,
     last_batch: Batch,
-    cubelet_sdf_sampler: vk::Sampler,
-    cubelet_sdf_view: vk::ImageView,
-    cubelet_sdf_memory: vk::Memory,
-    cubelet_sdf: vk::Image,
+    cubelet_sdf_source_sampler: vk::Sampler,
+    cubelet_sdf_source_view: vk::ImageView,
+    cubelet_sdf_source_memory: vk::Memory,
+    cubelet_sdf_source: vk::Image,
+    cubelet_sdf_result_sampler: vk::Sampler,
+    cubelet_sdf_result_view: vk::ImageView,
+    cubelet_sdf_result_memory: vk::Memory,
+    cubelet_sdf_result: vk::Image,
     cubelet_data_sampler: vk::Sampler,
     cubelet_data_view: vk::ImageView,
     cubelet_data_memory: vk::Memory,
@@ -313,29 +325,75 @@ impl VulkanComputeData {
         seed_stage: vk::PipelineShaderStageCreateInfo<'_>,
         jfa_stage: vk::PipelineShaderStageCreateInfo<'_>,
     ) -> Self {
-        /*let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: 1,
-            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
+            stage: vk::SHADER_STAGE_COMPUTE,
         };
-        */
 
-        let seed_descriptor_set_layout_create_info =
-            vk::DescriptorSetLayoutCreateInfo { bindings: &[] };
+        let cubelet_sdf_source_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_COMPUTE,
+        };
+
+        let cubelet_sdf_result_binding = vk::DescriptorSetLayoutBinding {
+            binding: 2,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_COMPUTE,
+        };
+
+        let jfai_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 3,
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_COMPUTE,
+        };
+
+        let seed_descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+            bindings: &[
+                uniform_buffer_binding,
+                cubelet_sdf_source_binding,
+                cubelet_sdf_result_binding,
+                jfai_buffer_binding,
+            ],
+        };
 
         let seed_descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), seed_descriptor_set_layout_create_info)
                 .expect("failed to create descriptor set layout");
 
-        /*let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: swapchain_images.len() as _,
-        };*/
+            descriptor_count: 1,
+        };
+
+        let cubelet_sdf_source_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+        };
+
+        let cubelet_sdf_result_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+        };
+
+        let jfai_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: 1,
+        };
 
         let seed_descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
             max_sets: 1,
-            pool_sizes: &[],
+            pool_sizes: &[
+                uniform_buffer_pool_size,
+                cubelet_sdf_source_pool_size,
+                cubelet_sdf_result_pool_size,
+                jfai_buffer_pool_size,
+            ],
         };
 
         let seed_descriptor_pool =
@@ -362,29 +420,75 @@ impl VulkanComputeData {
         let seed_pipeline =
             create_compute_pipeline(device.clone(), seed_stage, &seed_pipeline_layout);
 
-        /*let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: 1,
-            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
+            stage: vk::SHADER_STAGE_COMPUTE,
         };
-        */
 
-        let jfa_descriptor_set_layout_create_info =
-            vk::DescriptorSetLayoutCreateInfo { bindings: &[] };
+        let cubelet_sdf_source_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_COMPUTE,
+        };
+
+        let cubelet_sdf_result_binding = vk::DescriptorSetLayoutBinding {
+            binding: 2,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_COMPUTE,
+        };
+
+        let jfai_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 3,
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_COMPUTE,
+        };
+
+        let jfa_descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+            bindings: &[
+                uniform_buffer_binding,
+                cubelet_sdf_source_binding,
+                cubelet_sdf_result_binding,
+                jfai_buffer_binding,
+            ],
+        };
 
         let jfa_descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), jfa_descriptor_set_layout_create_info)
                 .expect("failed to create descriptor set layout");
 
-        /*let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: swapchain_images.len() as _,
-        };*/
+            descriptor_count: 1,
+        };
+
+        let cubelet_sdf_source_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+        };
+
+        let cubelet_sdf_result_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+        };
+
+        let jfai_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: 1,
+        };
 
         let jfa_descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
             max_sets: 1,
-            pool_sizes: &[],
+            pool_sizes: &[
+                uniform_buffer_pool_size,
+                cubelet_sdf_source_pool_size,
+                cubelet_sdf_result_pool_size,
+                jfai_buffer_pool_size,
+            ],
         };
 
         let jfa_descriptor_pool =
@@ -561,14 +665,14 @@ impl VulkanRenderData {
 
         let cubelet_data_binding = vk::DescriptorSetLayoutBinding {
             binding: 1,
-            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: 1,
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
 
         let cubelet_sdf_binding = vk::DescriptorSetLayoutBinding {
             binding: 2,
-            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: 1,
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
@@ -591,12 +695,12 @@ impl VulkanRenderData {
         };
 
         let cubelet_data_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: swapchain_images.len() as _,
         };
 
         let cubelet_sdf_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: swapchain_images.len() as _,
         };
 
@@ -926,7 +1030,7 @@ impl Vulkan {
 
         let mut instance_buffer = vk::Buffer::new(
             device.clone(),
-            32768,
+            1048576,
             vk::BUFFER_USAGE_TRANSFER_DST | vk::BUFFER_USAGE_VERTEX,
         )
         .expect("failed to create buffer");
@@ -947,11 +1051,12 @@ impl Vulkan {
 
         let mut data_buffer = vk::Buffer::new(
             device.clone(),
-            32768,
+            1048576,
             vk::BUFFER_USAGE_TRANSFER_DST
                 | vk::BUFFER_USAGE_VERTEX
                 | vk::BUFFER_USAGE_INDEX
-                | vk::BUFFER_USAGE_UNIFORM,
+                | vk::BUFFER_USAGE_UNIFORM
+                | vk::BUFFER_USAGE_STORAGE,
         )
         .expect("failed to create buffer");
 
@@ -970,7 +1075,7 @@ impl Vulkan {
         data_buffer.bind_memory(&data_buffer_memory);
 
         let mut staging_buffer =
-            vk::Buffer::new(device.clone(), 3200000000, vk::BUFFER_USAGE_TRANSFER_SRC)
+            vk::Buffer::new(device.clone(), 2000000000, vk::BUFFER_USAGE_TRANSFER_SRC)
                 .expect("failed to create buffer");
 
         let staging_buffer_memory_allocate_info = vk::MemoryAllocateInfo {
@@ -998,6 +1103,12 @@ impl Vulkan {
 
         let cubelet_size = 2 * render_distance as usize * CHUNK_SIZE;
 
+        let mut jfai = JfaiBufferObject {
+            step_size: 1,
+            seed_amount: 512,
+            seeds: [Default::default(); 512],
+        };
+
         let cubelet_data_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
             format: vk::Format::Rgba32Sfloat,
@@ -1006,7 +1117,7 @@ impl Vulkan {
             array_layers: 1,
             samples: vk::SAMPLE_COUNT_1,
             tiling: vk::ImageTiling::Optimal,
-            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_SAMPLED,
+            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_STORAGE,
             initial_layout: vk::ImageLayout::Undefined,
         };
 
@@ -1073,7 +1184,7 @@ impl Vulkan {
             vk::Sampler::new(device.clone(), cubelet_data_sampler_create_info)
                 .expect("failed to create sampler");
 
-        let cubelet_sdf_create_info = vk::ImageCreateInfo {
+        let cubelet_sdf_source_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
             format: vk::Format::Rgba32Sfloat,
             extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
@@ -1081,31 +1192,31 @@ impl Vulkan {
             array_layers: 1,
             samples: vk::SAMPLE_COUNT_1,
             tiling: vk::ImageTiling::Optimal,
-            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_SAMPLED,
+            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_STORAGE,
             initial_layout: vk::ImageLayout::Undefined,
         };
 
-        let mut cubelet_sdf = vk::Image::new(device.clone(), cubelet_sdf_create_info)
+        let mut cubelet_sdf_source = vk::Image::new(device.clone(), cubelet_sdf_source_create_info)
             .expect("failed to allocate image");
 
-        let cubelet_sdf_memory_allocate_info = vk::MemoryAllocateInfo {
+        let cubelet_sdf_source_memory_allocate_info = vk::MemoryAllocateInfo {
             property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
         };
 
-        let cubelet_sdf_memory = vk::Memory::allocate(
+        let cubelet_sdf_source_memory = vk::Memory::allocate(
             device.clone(),
-            cubelet_sdf_memory_allocate_info,
-            cubelet_sdf.memory_requirements(),
+            cubelet_sdf_source_memory_allocate_info,
+            cubelet_sdf_source.memory_requirements(),
             physical_device.memory_properties(),
         )
         .expect("failed to allocate memory");
 
-        cubelet_sdf
-            .bind_memory(&cubelet_sdf_memory)
+        cubelet_sdf_source
+            .bind_memory(&cubelet_sdf_source_memory)
             .expect("failed to bind memory to image");
 
-        let cubelet_sdf_view_create_info = vk::ImageViewCreateInfo {
-            image: &cubelet_sdf,
+        let cubelet_sdf_source_view_create_info = vk::ImageViewCreateInfo {
+            image: &cubelet_sdf_source,
             view_type: vk::ImageViewType::ThreeDim,
             format: vk::Format::Rgba32Sfloat,
             components: vk::ComponentMapping {
@@ -1123,10 +1234,11 @@ impl Vulkan {
             },
         };
 
-        let cubelet_sdf_view = vk::ImageView::new(device.clone(), cubelet_sdf_view_create_info)
-            .expect("failed to create image view");
+        let cubelet_sdf_source_view =
+            vk::ImageView::new(device.clone(), cubelet_sdf_source_view_create_info)
+                .expect("failed to create image view");
 
-        let cubelet_sdf_sampler_create_info = vk::SamplerCreateInfo {
+        let cubelet_sdf_source_sampler_create_info = vk::SamplerCreateInfo {
             mag_filter: vk::Filter::Nearest,
             min_filter: vk::Filter::Nearest,
             mipmap_mode: vk::SamplerMipmapMode::Nearest,
@@ -1144,11 +1256,85 @@ impl Vulkan {
             unnormalized_coordinates: false,
         };
 
-        let cubelet_sdf_sampler = vk::Sampler::new(device.clone(), cubelet_sdf_sampler_create_info)
-            .expect("failed to create sampler");
+        let cubelet_sdf_source_sampler =
+            vk::Sampler::new(device.clone(), cubelet_sdf_source_sampler_create_info)
+                .expect("failed to create sampler");
 
-        //let mut rgba_data = [[[[0_f32; 4]; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
-        //let mut sdf_data = [[[0_f32; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+        let cubelet_sdf_result_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::ThreeDim,
+            format: vk::Format::Rgba32Sfloat,
+            extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage: vk::IMAGE_USAGE_TRANSFER_DST | vk::IMAGE_USAGE_STORAGE,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut cubelet_sdf_result = vk::Image::new(device.clone(), cubelet_sdf_result_create_info)
+            .expect("failed to allocate image");
+
+        let cubelet_sdf_result_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let cubelet_sdf_result_memory = vk::Memory::allocate(
+            device.clone(),
+            cubelet_sdf_result_memory_allocate_info,
+            cubelet_sdf_result.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        cubelet_sdf_result
+            .bind_memory(&cubelet_sdf_result_memory)
+            .expect("failed to bind memory to image");
+
+        let cubelet_sdf_result_view_create_info = vk::ImageViewCreateInfo {
+            image: &cubelet_sdf_result,
+            view_type: vk::ImageViewType::ThreeDim,
+            format: vk::Format::Rgba32Sfloat,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let cubelet_sdf_result_view =
+            vk::ImageView::new(device.clone(), cubelet_sdf_result_view_create_info)
+                .expect("failed to create image view");
+
+        let cubelet_sdf_result_sampler_create_info = vk::SamplerCreateInfo {
+            mag_filter: vk::Filter::Nearest,
+            min_filter: vk::Filter::Nearest,
+            mipmap_mode: vk::SamplerMipmapMode::Nearest,
+            address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: false,
+            max_anisotropy: 0.0,
+            compare_enable: false,
+            compare_op: vk::CompareOp::Always,
+            min_lod: 0.0,
+            max_lod: 0.0,
+            border_color: vk::BorderColor::IntTransparentBlack,
+            unnormalized_coordinates: false,
+        };
+
+        let cubelet_sdf_result_sampler =
+            vk::Sampler::new(device.clone(), cubelet_sdf_result_sampler_create_info)
+                .expect("failed to create sampler");
 
         let ct = 2 * ubo.render_distance as usize * CHUNK_SIZE;
         let mut voxels = 0;
@@ -1165,9 +1351,15 @@ impl Vulkan {
                     for y in 0..ct {
                         pool[x].push(vec![]);
                         for z in 0..ct {
-                            let max_y = ((ct / 3) as isize
+                            let max_y = ((ct / 5) as isize
                                 + (10.0 * perlin.get([x as f64 / 32.0, z as f64 / 32.0])) as isize)
                                 as usize;
+                            if y == max_y {
+                                if voxels < jfai.seed_amount as _ {
+                                    jfai.seeds[voxels] =
+                                        Vector::<u32, 3>::new([x as _, y as _, z as _]);
+                                }
+                            }
                             if y < max_y {
                                 let color: [f32; 4] = [0.0, 0.6, 0.1, 1.0];
 
@@ -1235,7 +1427,7 @@ impl Vulkan {
 
                 let barrier = vk::ImageMemoryBarrier {
                     old_layout: vk::ImageLayout::TransferDst,
-                    new_layout: vk::ImageLayout::ShaderReadOnly,
+                    new_layout: vk::ImageLayout::General,
                     src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                     dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                     image: &cubelet_data,
@@ -1257,6 +1449,66 @@ impl Vulkan {
                     &[],
                     &[],
                     &[barrier],
+                );
+            })
+            .expect("failed to record command buffer");
+
+        let submit_info = vk::SubmitInfo {
+            wait_semaphores: &[],
+            wait_stages: &[],
+            command_buffers: &[&command_buffer],
+            signal_semaphores: &[],
+        };
+
+        queue
+            .submit(&[submit_info], None)
+            .expect("failed to submit buffer copy command buffer");
+
+        queue.wait_idle().expect("failed to wait on queue");
+
+        command_buffer
+            .record(|commands| {
+                let cubelet_sdf_source_barrier = vk::ImageMemoryBarrier {
+                    old_layout: vk::ImageLayout::Undefined,
+                    new_layout: vk::ImageLayout::General,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: &cubelet_sdf_source,
+                    src_access_mask: 0,
+                    dst_access_mask: 0,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                };
+
+                let cubelet_sdf_result_barrier = vk::ImageMemoryBarrier {
+                    old_layout: vk::ImageLayout::Undefined,
+                    new_layout: vk::ImageLayout::General,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: &cubelet_sdf_result,
+                    src_access_mask: 0,
+                    dst_access_mask: 0,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                };
+
+                commands.pipeline_barrier(
+                    vk::PIPELINE_STAGE_TOP_OF_PIPE,
+                    vk::PIPELINE_STAGE_COMPUTE_SHADER,
+                    0,
+                    &[],
+                    &[],
+                    &[cubelet_sdf_source_barrier, cubelet_sdf_result_barrier],
                 );
             })
             .expect("failed to record command buffer");
@@ -1300,14 +1552,19 @@ impl Vulkan {
             staging_buffer,
             staging_buffer_memory,
             ubo,
+            jfai,
             cubelet_data,
             cubelet_data_memory,
             cubelet_data_view,
             cubelet_data_sampler,
-            cubelet_sdf,
-            cubelet_sdf_memory,
-            cubelet_sdf_view,
-            cubelet_sdf_sampler,
+            cubelet_sdf_source,
+            cubelet_sdf_source_memory,
+            cubelet_sdf_source_view,
+            cubelet_sdf_source_sampler,
+            cubelet_sdf_result,
+            cubelet_sdf_result_memory,
+            cubelet_sdf_result_view,
+            cubelet_sdf_result_sampler,
         }
     }
 }
@@ -1358,12 +1615,22 @@ impl Renderer for Vulkan {
             })
             .expect("failed to write to buffer");
 
+        let jfai_offset = ubo_offset + mem::size_of::<UniformBufferObject>();
+
+        let jfai_offset = ((jfai_offset as f64 / 64.0).ceil() * 64.0) as _;
+
+        self.staging_buffer_memory
+            .write(jfai_offset, |data: &'_ mut [JfaiBufferObject]| {
+                data[0..1].copy_from_slice(&[self.jfai]);
+            })
+            .expect("failed to write to buffer");
+
         self.command_buffer
             .record(|commands| {
                 let buffer_copy = vk::BufferCopy {
                     src_offset: 0,
                     dst_offset: 0,
-                    size: 32768,
+                    size: 1048576,
                 };
 
                 commands.copy_buffer(&self.staging_buffer, &mut self.data_buffer, &[buffer_copy]);
@@ -1389,13 +1656,13 @@ impl Renderer for Vulkan {
         for cx in 0..ct {
             for cy in 0..ct {
                 for cz in 0..ct {
-                    instance_data.push(Vector::<f32, 3>::new([cx as _, cy as _, cz as _]));
+                    instance_data.push(Vector::<u32, 3>::new([cx as _, cy as _, cz as _]));
                 }
             }
         }
 
         self.staging_buffer_memory
-            .write(0, |data: &'_ mut [Vector<f32, 3>]| {
+            .write(0, |data: &'_ mut [Vector<u32, 3>]| {
                 data[..instance_data.len()].copy_from_slice(&instance_data[..]);
             })
             .expect("failed to write to buffer");
@@ -1405,7 +1672,7 @@ impl Renderer for Vulkan {
                 let buffer_copy = vk::BufferCopy {
                     src_offset: 0,
                     dst_offset: 0,
-                    size: 32768,
+                    size: 1048576,
                 };
 
                 commands.copy_buffer(
@@ -1479,7 +1746,7 @@ impl Renderer for Vulkan {
                         if let None = shader_type {
                             continue;
                         }
-                        dbg!(&shader_type);
+
                         let source =
                             fs::read_to_string(&in_path).expect("failed to read shader source");
 
@@ -1616,7 +1883,7 @@ impl Renderer for Vulkan {
                 },
             ];
 
-            trace!("making new graphics pipeline...");
+            info!("making new graphics pipeline...");
 
             let old_swapchain = self.render_data.take().map(|data| data.swapchain);
 
@@ -1645,7 +1912,7 @@ impl Renderer for Vulkan {
                 entry_point: "main",
             };
 
-            trace!("making new compute pipelines...");
+            info!("making new compute pipelines...");
 
             self.compute_data = Some(VulkanComputeData::init(
                 self.device.clone(),
@@ -1655,6 +1922,11 @@ impl Renderer for Vulkan {
         }
 
         self.last_batch = batch;
+
+        let compute_data = self
+            .compute_data
+            .as_mut()
+            .expect("failed to retrieve compute data");
 
         let render_data = self
             .render_data
@@ -1680,142 +1952,409 @@ impl Renderer for Vulkan {
             }
         };
 
-        for i in 0..render_data.descriptor_sets.len() {
-            let uniform_buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.data_buffer,
-                offset: ubo_offset as _,
-                range: mem::size_of::<UniformBufferObject>(),
-            };
-
-            let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.descriptor_sets[image_index as usize],
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UniformBuffer,
-                buffer_infos: &[uniform_buffer_info],
-                image_infos: &[],
-            };
-
-            let cubelet_data_info = vk::DescriptorImageInfo {
-                sampler: &self.cubelet_data_sampler,
-                image_view: &self.cubelet_data_view,
-                image_layout: vk::ImageLayout::ShaderReadOnly,
-            };
-
-            let cubelet_data_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.descriptor_sets[image_index as usize],
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::CombinedImageSampler,
-                buffer_infos: &[],
-                image_infos: &[cubelet_data_info],
-            };
-
-            let cubelet_sdf_info = vk::DescriptorImageInfo {
-                sampler: &self.cubelet_sdf_sampler,
-                image_view: &self.cubelet_sdf_view,
-                image_layout: vk::ImageLayout::ShaderReadOnly,
-            };
-
-            let cubelet_sdf_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.descriptor_sets[image_index as usize],
-                dst_binding: 2,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::CombinedImageSampler,
-                buffer_infos: &[],
-                image_infos: &[cubelet_sdf_info],
-            };
-
-            vk::DescriptorSet::update(
-                &[
-                    uniform_buffer_descriptor_write,
-                    cubelet_data_descriptor_write,
-                    cubelet_sdf_descriptor_write,
-                ],
-                &[],
-            );
-        }
-
-        self.command_buffer
-            .reset()
-            .expect("failed to reset command buffer");
-
-        self.command_buffer
-            .record(|commands| {
-                let render_pass_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: &render_data.render_pass,
-                    framebuffer: &render_data.framebuffers[image_index as usize],
-                    render_area: vk::Rect2d {
-                        offset: (0, 0),
-                        extent: self.render_info.extent,
-                    },
-                    color_clear_values: &[[0.0385, 0.0385, 0.0385, 1.0]],
-                    depth_stencil_clear_value: Some((1.0, 0)),
+        if unsafe { !JFAI_DONE } {
+            for i in 0..compute_data.seed_descriptor_sets.len() {
+                let uniform_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: ubo_offset as _,
+                    range: mem::size_of::<UniformBufferObject>(),
                 };
 
-                commands.begin_render_pass(render_pass_begin_info);
+                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.seed_descriptor_sets[image_index as usize],
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[uniform_buffer_info],
+                    image_infos: &[],
+                };
 
-                commands.bind_pipeline(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.graphics_pipeline,
-                );
+                let cubelet_sdf_source_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_data_sampler,
+                    image_view: &self.cubelet_data_view,
+                    image_layout: vk::ImageLayout::General,
+                };
 
-                commands.bind_vertex_buffers(
-                    0,
-                    2,
-                    &[&self.data_buffer, &self.instance_buffer],
-                    &[0, 0],
-                );
+                let cubelet_sdf_source_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.seed_descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_sdf_source_info],
+                };
 
-                commands.bind_index_buffer(
-                    &self.data_buffer,
-                    vertex_count * mem::size_of::<Vertex>(),
-                    vk::IndexType::Uint16,
-                );
+                let cubelet_sdf_result_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_sdf_result_sampler,
+                    image_view: &self.cubelet_sdf_result_view,
+                    image_layout: vk::ImageLayout::General,
+                };
 
-                commands.bind_descriptor_sets(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.graphics_pipeline_layout,
-                    0,
-                    &[&render_data.descriptor_sets[image_index as usize]],
+                let cubelet_sdf_result_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.seed_descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_sdf_result_info],
+                };
+
+                let jfai_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: jfai_offset as _,
+                    range: mem::size_of::<JfaiBufferObject>(),
+                };
+
+                let jfai_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.seed_descriptor_sets[image_index as usize],
+                    dst_binding: 3,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageBuffer,
+                    buffer_infos: &[jfai_buffer_info],
+                    image_infos: &[],
+                };
+
+                vk::DescriptorSet::update(
+                    &[
+                        uniform_buffer_descriptor_write,
+                        cubelet_sdf_source_descriptor_write,
+                        cubelet_sdf_result_descriptor_write,
+                        jfai_buffer_descriptor_write,
+                    ],
                     &[],
                 );
+            }
 
-                let chunks = 2 * self.ubo.render_distance as u32;
+            self.command_buffer
+                .reset()
+                .expect("failed to reset command buffer");
 
-                let volume = chunks * chunks * chunks;
+            self.command_buffer
+                .record(|commands| {
+                    commands
+                        .bind_pipeline(vk::PipelineBindPoint::Compute, &compute_data.seed_pipeline);
 
-                commands.draw_indexed(index_count as _, volume, 0, 0, 0);
+                    commands.bind_descriptor_sets(
+                        vk::PipelineBindPoint::Compute,
+                        &compute_data.seed_pipeline_layout,
+                        0,
+                        &[&compute_data.seed_descriptor_sets[image_index as usize]],
+                        &[],
+                    );
 
-                commands.end_render_pass();
-            })
-            .expect("failed to record command buffer");
+                    commands.dispatch(self.jfai.seed_amount, 1, 1);
+                })
+                .expect("failed to record command buffer");
 
-        let submit_info = vk::SubmitInfo {
-            wait_semaphores: &[&self.image_available_semaphore],
-            wait_stages: &[vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT],
-            command_buffers: &[&self.command_buffer],
-            signal_semaphores: &[&mut self.render_finished_semaphore],
-        };
+            let submit_info = vk::SubmitInfo {
+                wait_semaphores: &[],
+                wait_stages: &[],
+                command_buffers: &[&self.command_buffer],
+                signal_semaphores: &[],
+            };
 
-        self.queue
-            .submit(&[submit_info], Some(&mut self.in_flight_fence))
-            .expect("failed to submit draw command buffer");
+            for i in 0..compute_data.jfa_descriptor_sets.len() {
+                let uniform_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: ubo_offset as _,
+                    range: mem::size_of::<UniformBufferObject>(),
+                };
 
-        let present_info = vk::PresentInfo {
-            wait_semaphores: &[&self.render_finished_semaphore],
-            swapchains: &[&render_data.swapchain],
-            image_indices: &[image_index],
-        };
+                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[uniform_buffer_info],
+                    image_infos: &[],
+                };
 
-        let present_result = self.queue.present(present_info);
+                let cubelet_sdf_source_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_data_sampler,
+                    image_view: &self.cubelet_data_view,
+                    image_layout: vk::ImageLayout::General,
+                };
 
-        match present_result {
-            Ok(()) => {}
-            Err(e) => warn!("failed to present: {:?}", e),
+                let cubelet_sdf_source_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_sdf_source_info],
+                };
+
+                let cubelet_sdf_result_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_sdf_result_sampler,
+                    image_view: &self.cubelet_sdf_result_view,
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let cubelet_sdf_result_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_sdf_result_info],
+                };
+
+                let jfai_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: jfai_offset as _,
+                    range: mem::size_of::<JfaiBufferObject>(),
+                };
+
+                let jfai_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
+                    dst_binding: 3,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageBuffer,
+                    buffer_infos: &[jfai_buffer_info],
+                    image_infos: &[],
+                };
+
+                vk::DescriptorSet::update(
+                    &[
+                        uniform_buffer_descriptor_write,
+                        cubelet_sdf_source_descriptor_write,
+                        cubelet_sdf_result_descriptor_write,
+                        jfai_buffer_descriptor_write,
+                    ],
+                    &[],
+                );
+            }
+
+            self.command_buffer
+                .reset()
+                .expect("failed to reset command buffer");
+
+            let cubelet_size = 2 * self.ubo.render_distance as usize * CHUNK_SIZE;
+
+            self.jfai.step_size = cubelet_size as _;
+
+            self.staging_buffer_memory
+                .write(jfai_offset, |data: &'_ mut [JfaiBufferObject]| {
+                    data[0..1].copy_from_slice(&[self.jfai]);
+                })
+                .expect("failed to write to buffer");
+
+            self.command_buffer
+                .record(|commands| {
+                    let buffer_copy = vk::BufferCopy {
+                        src_offset: 0,
+                        dst_offset: 0,
+                        size: 1048576,
+                    };
+
+                    commands.copy_buffer(
+                        &self.staging_buffer,
+                        &mut self.data_buffer,
+                        &[buffer_copy],
+                    );
+                })
+                .expect("failed to record command buffer");
+
+            let submit_info = vk::SubmitInfo {
+                wait_semaphores: &[],
+                wait_stages: &[],
+                command_buffers: &[&self.command_buffer],
+                signal_semaphores: &[],
+            };
+
+            self.queue
+                .submit(&[submit_info], None)
+                .expect("failed to submit draw command buffer");
+
+            self.queue.wait_idle().expect("failed to wait on queue");
+
+            self.command_buffer
+                .record(|commands| {
+                    commands
+                        .bind_pipeline(vk::PipelineBindPoint::Compute, &compute_data.jfa_pipeline);
+
+                    commands.bind_descriptor_sets(
+                        vk::PipelineBindPoint::Compute,
+                        &compute_data.jfa_pipeline_layout,
+                        0,
+                        &[&compute_data.jfa_descriptor_sets[image_index as usize]],
+                        &[],
+                    );
+
+                    let thread_groups_x = cubelet_size / 8;
+                    let thread_groups_y = cubelet_size / 8;
+                    let thread_groups_z = cubelet_size / 8;
+
+                    commands.dispatch(
+                        thread_groups_x as u32,
+                        thread_groups_y as u32,
+                        thread_groups_z as u32,
+                    );
+                })
+                .expect("failed to record command buffer");
+
+            let submit_info = vk::SubmitInfo {
+                wait_semaphores: &[],
+                wait_stages: &[],
+                command_buffers: &[&self.command_buffer],
+                signal_semaphores: &[],
+            };
+
+            self.queue
+                .submit(&[submit_info], None)
+                .expect("failed to submit draw command buffer");
+
+            self.queue.wait_idle().expect("failed to wait on queue");
+        }
+        unsafe {
+            JFAI_DONE = true;
+        }
+        {
+            for i in 0..render_data.descriptor_sets.len() {
+                let uniform_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: ubo_offset as _,
+                    range: mem::size_of::<UniformBufferObject>(),
+                };
+
+                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.descriptor_sets[image_index as usize],
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[uniform_buffer_info],
+                    image_infos: &[],
+                };
+
+                let cubelet_data_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_data_sampler,
+                    image_view: &self.cubelet_data_view,
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let cubelet_data_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_data_info],
+                };
+
+                let cubelet_sdf_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_sdf_result_sampler,
+                    image_view: &self.cubelet_sdf_result_view,
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let cubelet_sdf_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_sdf_info],
+                };
+
+                vk::DescriptorSet::update(
+                    &[
+                        uniform_buffer_descriptor_write,
+                        cubelet_data_descriptor_write,
+                        cubelet_sdf_descriptor_write,
+                    ],
+                    &[],
+                );
+            }
+
+            self.command_buffer
+                .reset()
+                .expect("failed to reset command buffer");
+
+            self.command_buffer
+                .record(|commands| {
+                    let render_pass_begin_info = vk::RenderPassBeginInfo {
+                        render_pass: &render_data.render_pass,
+                        framebuffer: &render_data.framebuffers[image_index as usize],
+                        render_area: vk::Rect2d {
+                            offset: (0, 0),
+                            extent: self.render_info.extent,
+                        },
+                        color_clear_values: &[[0.0385, 0.0385, 0.0385, 1.0]],
+                        depth_stencil_clear_value: Some((1.0, 0)),
+                    };
+
+                    commands.begin_render_pass(render_pass_begin_info);
+
+                    commands.bind_pipeline(
+                        vk::PipelineBindPoint::Graphics,
+                        &render_data.graphics_pipeline,
+                    );
+
+                    commands.bind_vertex_buffers(
+                        0,
+                        2,
+                        &[&self.data_buffer, &self.instance_buffer],
+                        &[0, 0],
+                    );
+
+                    commands.bind_index_buffer(
+                        &self.data_buffer,
+                        vertex_count * mem::size_of::<Vertex>(),
+                        vk::IndexType::Uint16,
+                    );
+
+                    commands.bind_descriptor_sets(
+                        vk::PipelineBindPoint::Graphics,
+                        &render_data.graphics_pipeline_layout,
+                        0,
+                        &[&render_data.descriptor_sets[image_index as usize]],
+                        &[],
+                    );
+
+                    let chunks = 2 * self.ubo.render_distance as u32;
+
+                    let volume = chunks * chunks * chunks;
+
+                    commands.draw_indexed(index_count as _, volume, 0, 0, 0);
+
+                    commands.end_render_pass();
+                })
+                .expect("failed to record command buffer");
+
+            let submit_info = vk::SubmitInfo {
+                wait_semaphores: &[&self.image_available_semaphore],
+                wait_stages: &[vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT],
+                command_buffers: &[&self.command_buffer],
+                signal_semaphores: &[&mut self.render_finished_semaphore],
+            };
+
+            self.queue
+                .submit(&[submit_info], Some(&mut self.in_flight_fence))
+                .expect("failed to submit draw command buffer");
+
+            let present_info = vk::PresentInfo {
+                wait_semaphores: &[&self.render_finished_semaphore],
+                swapchains: &[&render_data.swapchain],
+                image_indices: &[image_index],
+            };
+
+            let present_result = self.queue.present(present_info);
+
+            match present_result {
+                Ok(()) => {}
+                Err(e) => warn!("failed to present: {:?}", e),
+            }
         }
     }
 

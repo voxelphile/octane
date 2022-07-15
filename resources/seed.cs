@@ -2,7 +2,7 @@
 
 const uint CHUNK_SIZE = 32;
 
-layout (local_size_x = 64, local_size_y = 64, local_size_z = 64) in;
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -12,13 +12,13 @@ layout(binding = 0) uniform UniformBufferObject {
     uint render_distance;
 } ubo;
 
-layout(binding = 1, rgba32f) uniform image3D cubelet_data;
-layout(binding = 2, rgba32f) uniform image3D cubelet_sdf_source;
-layout(binding = 3, rgba32f) uniform image3D cubelet_sdf_result;
+layout(binding = 1, rgba32f) uniform image3D cubelet_sdf_source;
+layout(binding = 2, rgba32f) uniform image3D cubelet_sdf_result;
 
-layout(binding = 4) buffer JFAI
+layout(binding = 3) buffer JFAI
 {
     uint step_size;
+    uint seed_amount;
     uvec3 seeds[];
 } jfai;
 

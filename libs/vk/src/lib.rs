@@ -249,6 +249,7 @@ mod ffi {
         R32Uint = 98,
         R32Sfloat = 100,
         Rg32Sfloat = 103,
+        Rgb32Uint = 104,
         Rgb32Sfloat = 106,
         Rgba32Sfloat = 109,
         D32Sfloat = 126,
@@ -260,6 +261,7 @@ mod ffi {
         R32Uint,
         R32Sfloat,
         Rg32Sfloat,
+        Rgb32Uint,
         Rgb32Sfloat,
         Rgba32Sfloat,
         D32Sfloat
@@ -1509,10 +1511,18 @@ mod ffi {
     #[repr(C)]
     pub enum DescriptorType {
         CombinedImageSampler = 1,
+        StorageImage = 3,
         UniformBuffer = 6,
+        StorageBuffer = 7,
     }
 
-    impl_from!(DescriptorType, CombinedImageSampler, UniformBuffer);
+    impl_from!(
+        DescriptorType,
+        CombinedImageSampler,
+        StorageImage,
+        UniformBuffer,
+        StorageBuffer
+    );
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -2031,6 +2041,12 @@ mod ffi {
             vertex_offset: c_int,
             first_instance: c_uint,
         );
+        pub fn vkCmdDispatch(
+            command_buffer: CommandBuffer,
+            group_count_x: c_uint,
+            group_count_y: c_uint,
+            group_count_z: c_uint,
+        );
         pub fn vkCmdBindVertexBuffers(
             command_buffer: CommandBuffer,
             first_binding: c_uint,
@@ -2235,6 +2251,7 @@ pub const PIPELINE_STAGE_TOP_OF_PIPE: u32 = 0x00000001;
 pub const PIPELINE_STAGE_FRAGMENT_SHADER: u32 = 0x00000080;
 pub const PIPELINE_STAGE_EARLY_FRAGMENT_TESTS: u32 = 0x00000100;
 pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
+pub const PIPELINE_STAGE_COMPUTE_SHADER: u32 = 0x00000800;
 pub const PIPELINE_STAGE_TRANSFER: u32 = 0x00001000;
 
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
@@ -2242,13 +2259,15 @@ pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE: u32 = 0x00000400;
 
 pub const BUFFER_USAGE_TRANSFER_SRC: u32 = 0x00000001;
 pub const BUFFER_USAGE_TRANSFER_DST: u32 = 0x00000002;
-pub const BUFFER_USAGE_VERTEX: u32 = 0x00000080;
-pub const BUFFER_USAGE_INDEX: u32 = 0x00000040;
 pub const BUFFER_USAGE_UNIFORM: u32 = 0x00000010;
+pub const BUFFER_USAGE_STORAGE: u32 = 0x00000020;
+pub const BUFFER_USAGE_INDEX: u32 = 0x00000040;
+pub const BUFFER_USAGE_VERTEX: u32 = 0x00000080;
 
 pub const IMAGE_USAGE_TRANSFER_SRC: u32 = 0x00000001;
 pub const IMAGE_USAGE_TRANSFER_DST: u32 = 0x00000002;
 pub const IMAGE_USAGE_SAMPLED: u32 = 0x00000004;
+pub const IMAGE_USAGE_STORAGE: u32 = 0x00000008;
 pub const IMAGE_USAGE_COLOR_ATTACHMENT: u32 = 0x00000010;
 pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 0x00000020;
 
@@ -2298,6 +2317,7 @@ pub enum Format {
     R32Uint,
     R32Sfloat,
     Rg32Sfloat,
+    Rgb32Uint,
     Rgb32Sfloat,
     Rgba32Sfloat,
     D32Sfloat,
@@ -4604,7 +4624,7 @@ impl Pipeline {
             .iter()
             .enumerate()
             .map(|(i, create_info)| ffi::ComputePipelineCreateInfo {
-                structure_type: ffi::StructureType::GraphicsPipelineCreateInfo,
+                structure_type: ffi::StructureType::ComputePipelineCreateInfo,
                 p_next: ptr::null(),
                 flags: 0,
                 stage: stages[i],
@@ -5045,6 +5065,17 @@ impl Commands<'_> {
         };
     }
 
+    pub fn dispatch(&mut self, group_count_x: u32, group_count_y: u32, group_count_z: u32) {
+        unsafe {
+            ffi::vkCmdDispatch(
+                self.command_buffer.handle,
+                group_count_x,
+                group_count_y,
+                group_count_z,
+            )
+        }
+    }
+
     pub fn copy_buffer(
         &mut self,
         src_buffer: &Buffer,
@@ -5458,7 +5489,9 @@ impl Drop for Buffer {
 #[derive(Clone, Copy)]
 pub enum DescriptorType {
     CombinedImageSampler,
+    StorageImage,
     UniformBuffer,
+    StorageBuffer,
 }
 
 pub struct DescriptorSetLayoutBinding {
@@ -5925,7 +5958,7 @@ impl Memory {
                 self.device.handle,
                 self.handle,
                 offset as _,
-                self.size,
+                self.size - offset as u64,
                 0,
                 &mut mem as *mut _ as _,
             )
