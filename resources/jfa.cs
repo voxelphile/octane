@@ -42,11 +42,11 @@ void main() {
 
 	for (int i = 0; i < step_amount; i++) {
 		int step = int(pow(2, step_amount - i - 1));
-		for (int x = -1; x <= 1; x += 2) 
+		for (int x = -1; x <= 1; x += 1) 
 		{
-			for (int y = -1; y <= 1; y += 2) 
+			for (int y = -1; y <= 1; y += 1) 
 			{
-				for (int z = -1; z <= 1; z += 2) 
+				for (int z = -1; z <= 1; z += 1) 
 				{
 					ivec3 step_size = ivec3(x,y,z) * step;
 					vec4 info = imageLoad(cubelet_sdf_source, ivec3(id) + step_size);

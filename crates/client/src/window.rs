@@ -136,22 +136,6 @@ mod linux {
                 self.resolution.0 as i32 / 2,
                 self.resolution.1 as i32 / 2,
             );
-            x11::flush(self.display);
-
-            while x11::pending(self.display) > 0 {
-                let event = x11::next_event(self.display);
-
-                if let Ok(event) = event {
-                    self.event_buffer.push(event);
-                }
-            }
-
-            for i in (0..self.event_buffer.len()).rev() {
-                if let x11::Event::MotionNotify { .. } = self.event_buffer[i] {
-                    self.event_buffer.remove(i);
-                    break;
-                }
-            }
         }
 
         pub fn next_event(&mut self) -> Option<Event> {

@@ -85,9 +85,16 @@ fn main() {
         projection[3][2] = (near * far) / (near - far);
     }
 
+    let mut base_path = std::env::current_exe().expect("failed to load path of executable");
+    base_path.pop();
+    let base_path_str = base_path.to_str().unwrap();
+
+    let hq4x = format!("{}/assets/hq4x.png", base_path_str);
+    dbg!(&hq4x);
     let render_info = render::RendererInfo {
         window: &window,
-        render_distance: 1,
+        render_distance: 6,
+        hq4x,
     };
 
     let mut vulkan = render::Vulkan::init(render_info);
@@ -96,21 +103,23 @@ fn main() {
     vulkan.ubo.view = camera.inverse();
     vulkan.ubo.model = model;
 
-    let vertex_shader = "/home/brynn/dev/octane/assets/default.vs.spirv";
-    let fragment_shader = "/home/brynn/dev/octane/assets/default.fs.spirv";
-    let seed_shader = "/home/brynn/dev/octane/assets/seed.cs.spirv";
-    let jfa_shader = "/home/brynn/dev/octane/assets/jfa.cs.spirv";
+    let present_vertex_shader = format!("{}/assets/present.vs.spirv", base_path_str);
+    let present_fragment_shader = format!("{}/assets/present.fs.spirv", base_path_str);
+    let graphics_vertex_shader = format!("{}/assets/default.vs.spirv", base_path_str);
+    let graphics_fragment_shader = format!("{}/assets/default.fs.spirv", base_path_str);
+    let jfa_shader = format!("{}/assets/jfa.cs.spirv", base_path_str);
 
-    let cube_obj =
-        fs::File::open("/home/brynn/dev/octane/assets/cube.obj").expect("failed to open obj");
+    let cube = format!("{}/assets/cube.obj", base_path_str);
+    let cube_obj = fs::File::open(cube).expect("failed to open obj");
 
     let mut cube = Mesh::from_obj(cube_obj);
 
     let batch = render::Batch {
-        vertex_shader: &vertex_shader,
-        fragment_shader: &fragment_shader,
-        seed_shader: &seed_shader,
-        jfa_shader: &jfa_shader,
+        graphics_vertex_shader,
+        graphics_fragment_shader,
+        present_vertex_shader,
+        present_fragment_shader,
+        jfa_shader,
     };
 
     let entries = [render::Entry { mesh: &cube }];
@@ -122,7 +131,8 @@ fn main() {
 
     let mut x_rot = 0.0;
     let mut y_rot = 0.0;
-    let mut position = Vector::<f32, 4>::new([0.0, 0.0, 10.0, 1.0]);
+    let middle = (2.0 * 6.0 * 32.0) / 2.0;
+    let mut position = Vector::<f32, 4>::new([middle, 60.0, middle, 1.0]);
     let mut should_capture = false;
 
     let mut fps_instant = startup;
@@ -130,7 +140,7 @@ fn main() {
 
     'main: loop {
         let current = std::time::Instant::now();
-        let delta_time = current.duration_since(last).as_secs_f32();
+        let delta_time = current.duration_since(last).as_secs_f64();
         last = current;
 
         if current.duration_since(fps_instant).as_secs_f32() > 1.0 {
@@ -146,7 +156,7 @@ fn main() {
 
         //TODO must be done soon.. tired of this convoluted movement code.
         //simplify movement code
-        let sens = 20.0;
+        let sens = 2.0;
 
         while let Some(event) = window.next_event() {
             match event {
@@ -160,10 +170,12 @@ fn main() {
                 }
                 WindowEvent::PointerMotion { x, y } => {
                     if should_capture {
-                        x_rot -=
-                            (x as f32 - window.resolution().0 as f32 / 2.0) / sens * delta_time;
-                        y_rot -=
-                            (y as f32 - window.resolution().1 as f32 / 2.0) / sens * delta_time;
+                        x_rot -= ((x as f64 - window.resolution().0 as f64 / 2.0) * delta_time)
+                            as f32
+                            / sens;
+                        y_rot -= ((y as f64 - window.resolution().1 as f64 / 2.0) * delta_time)
+                            as f32
+                            / sens;
                     }
                 }
                 WindowEvent::CloseRequested => {
@@ -217,10 +229,10 @@ fn main() {
                     m[3][0] += 1.0;
                 }
                 Keycode::Space => {
-                    position[1] += movement_speed * delta_time;
+                    position[1] += movement_speed * delta_time as f32;
                 }
                 Keycode::LeftShift => {
-                    position[1] -= movement_speed * delta_time;
+                    position[1] -= movement_speed * delta_time as f32;
                 }
                 Keycode::Escape => {
                     if time == current {
@@ -240,8 +252,8 @@ fn main() {
         } else {
             p
         };
-        position[0] += p[0] * movement_speed * delta_time;
-        position[2] += p[2] * movement_speed * delta_time;
+        position[0] += p[0] * movement_speed * delta_time as f32;
+        position[2] += p[2] * movement_speed * delta_time as f32;
 
         camera[3][0] = position[0];
         camera[3][1] = position[1];

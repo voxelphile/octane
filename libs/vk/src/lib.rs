@@ -245,6 +245,7 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub enum Format {
+        Rgba8Srgb = 43,
         Bgra8Srgb = 50,
         R32Uint = 98,
         R32Sfloat = 100,
@@ -257,6 +258,7 @@ mod ffi {
 
     impl_from!(
         Format,
+        Rgba8Srgb,
         Bgra8Srgb,
         R32Uint,
         R32Sfloat,
@@ -2313,6 +2315,7 @@ pub enum Error {
 
 #[derive(Clone, Copy)]
 pub enum Format {
+    Rgba8Srgb,
     Bgra8Srgb,
     R32Uint,
     R32Sfloat,
