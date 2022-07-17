@@ -247,6 +247,7 @@ mod ffi {
     pub enum Format {
         Rgba8Srgb = 43,
         Bgra8Srgb = 50,
+        R16Uint = 74,
         R32Uint = 98,
         R32Sfloat = 100,
         Rg32Sfloat = 103,
@@ -260,6 +261,7 @@ mod ffi {
         Format,
         Rgba8Srgb,
         Bgra8Srgb,
+        R16Uint,
         R32Uint,
         R32Sfloat,
         Rg32Sfloat,
@@ -2317,6 +2319,7 @@ pub enum Error {
 pub enum Format {
     Rgba8Srgb,
     Bgra8Srgb,
+    R16Uint,
     R32Uint,
     R32Sfloat,
     Rg32Sfloat,

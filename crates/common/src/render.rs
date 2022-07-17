@@ -15,7 +15,7 @@ use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
 
 pub const CHUNK_SIZE: usize = 32;
-static mut JFAI_DONE: bool = false;
+static mut JFAI_DONE: bool = true;
 //temporary for here for now.
 #[derive(Default, Clone, Copy)]
 pub struct UniformBufferObject {
@@ -1249,7 +1249,7 @@ impl Vulkan {
         data_buffer.bind_memory(&data_buffer_memory);
 
         let mut staging_buffer =
-            vk::Buffer::new(device.clone(), 2000000000, vk::BUFFER_USAGE_TRANSFER_SRC)
+            vk::Buffer::new(device.clone(), 3000000000, vk::BUFFER_USAGE_TRANSFER_SRC)
                 .expect("failed to create buffer");
 
         let staging_buffer_memory_allocate_info = vk::MemoryAllocateInfo {
@@ -1285,7 +1285,7 @@ impl Vulkan {
 
         let cubelet_data_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
-            format: vk::Format::Rgba32Sfloat,
+            format: vk::Format::R16Uint,
             extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
             mip_levels: 1,
             array_layers: 1,
@@ -1317,7 +1317,7 @@ impl Vulkan {
         let cubelet_data_view_create_info = vk::ImageViewCreateInfo {
             image: &cubelet_data,
             view_type: vk::ImageViewType::ThreeDim,
-            format: vk::Format::Rgba32Sfloat,
+            format: vk::Format::R16Uint,
             components: vk::ComponentMapping {
                 r: vk::ComponentSwizzle::Identity,
                 g: vk::ComponentSwizzle::Identity,
@@ -1435,7 +1435,7 @@ impl Vulkan {
 
         let cubelet_sdf_result_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::ThreeDim,
-            format: vk::Format::Rgba32Sfloat,
+            format: vk::Format::R16Uint,
             extent: (cubelet_size as _, cubelet_size as _, cubelet_size as _),
             mip_levels: 1,
             array_layers: 1,
@@ -1467,7 +1467,7 @@ impl Vulkan {
         let cubelet_sdf_result_view_create_info = vk::ImageViewCreateInfo {
             image: &cubelet_sdf_result,
             view_type: vk::ImageViewType::ThreeDim,
-            format: vk::Format::Rgba32Sfloat,
+            format: vk::Format::R32Sfloat,
             components: vk::ComponentMapping {
                 r: vk::ComponentSwizzle::Identity,
                 g: vk::ComponentSwizzle::Identity,
@@ -1515,41 +1515,29 @@ impl Vulkan {
         use noise::NoiseFn;
         let perlin = noise::Perlin::new();
 
-        let mut pool: Vec<Vec<Vec<f32>>> = vec![];
         let mut instance_data = vec![];
 
+        for cx in 0..2 * ubo.render_distance {
+            for cy in 0..2 * ubo.render_distance {
+                for cz in 0..2 * ubo.render_distance {
+                    let chunk = Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]);
+                    instance_data.push(chunk);
+                }
+            }
+        }
+
         staging_buffer_memory
-            .write(0, |data: &'_ mut [[f32; 4]]| {
+            .write(0, |data: &'_ mut [u16]| {
                 for x in 0..ct {
-                    pool.push(vec![]);
                     for y in 0..ct {
-                        pool[x].push(vec![]);
                         for z in 0..ct {
                             let max_y = ((ct / 5) as isize
-                                + (10.0 * perlin.get([x as f64 / 32.0, z as f64 / 32.0])) as isize)
-                                as usize;
-                            if y == max_y {
-                                if voxels < jfai.seed_amount as _ {
-                                    jfai.seeds[voxels] =
-                                        Vector::<u32, 3>::new([x as _, y as _, z as _]);
-                                }
-                            }
+                                + (50.0 * perlin.get([x as f64 / 256.0, z as f64 / 256.0]))
+                                    as isize) as usize;
                             if y < max_y {
-                                let color: [f32; 4] = [0.0, 0.6, 0.1, 1.0];
+                                let block = 1;
 
-                                pool[x][y].push(0.0);
-                                data[voxels..voxels + 1].copy_from_slice(&[color]);
-
-                                let chunk = Vector::<u32, 3>::new([
-                                    x as u32 / CHUNK_SIZE as u32,
-                                    y as u32 / CHUNK_SIZE as u32,
-                                    z as u32 / CHUNK_SIZE as u32,
-                                ]);
-                                if !instance_data.contains(&chunk) {
-                                    instance_data.push(chunk);
-                                }
-                            } else {
-                                pool[x][y].push(100000.0);
+                                data[voxels..voxels + 1].copy_from_slice(&[block]);
                             }
 
                             voxels += 1;
@@ -1956,11 +1944,15 @@ impl Renderer for Vulkan {
 
         self.queue.wait_idle().expect("failed to wait on queue");
 
-        #[cfg(debug_assertions)]
+        //#[cfg(debug_assertions)]
+        //TODO switch to shaderc
         {
-            let base_path = "/home/brynn/dev/octane";
-            let resources_path = format!("{}/{}/", base_path, "resources");
-            let assets_path = format!("{}/{}/", base_path, "assets");
+            let mut base_path = std::env::current_exe().expect("failed to get current exe");
+            base_path.pop();
+            let base_path_str = base_path.to_str().unwrap();
+
+            let resources_path = format!("{}/{}", base_path_str, "resources");
+            let assets_path = format!("{}/{}", base_path_str, "assets");
 
             for entry in fs::read_dir(resources_path).expect("failed to read directory") {
                 let entry = entry.expect("failed to get directory entry");
@@ -1973,9 +1965,9 @@ impl Renderer for Vulkan {
                     let in_path = entry.path();
 
                     let out_path = format!(
-                        "{}{}.spirv",
+                        "{}/{}.spirv",
                         assets_path,
-                        in_path.file_name().unwrap().to_string_lossy(),
+                        in_path.file_stem().unwrap().to_string_lossy(),
                     );
 
                     let metadata = fs::metadata(&in_path);
@@ -1995,11 +1987,21 @@ impl Renderer for Vulkan {
                         .or_insert(time::SystemTime::now());
 
                     if mod_time != last_mod_time {
-                        let shader_type = in_path.extension().and_then(|ext| {
-                            match ext.to_string_lossy().as_ref() {
-                                "vs" => Some(glsl_to_spirv::ShaderType::Vertex),
-                                "fs" => Some(glsl_to_spirv::ShaderType::Fragment),
-                                "cs" => Some(glsl_to_spirv::ShaderType::Compute),
+                        if in_path.extension().and_then(|os_str| os_str.to_str()) != Some("glsl") {
+                            continue;
+                        }
+
+                        let shader_type = in_path.file_stem().and_then(|stem| {
+                            let stem_str = stem.to_string_lossy();
+
+                            let stem_str_spl = stem_str.split(".").collect::<Vec<_>>();
+
+                            let ty = stem_str_spl[stem_str_spl.len() - 1];
+
+                            match ty {
+                                "vert" => Some(glsl_to_spirv::ShaderType::Vertex),
+                                "frag" => Some(glsl_to_spirv::ShaderType::Fragment),
+                                "comp" => Some(glsl_to_spirv::ShaderType::Compute),
                                 _ => None,
                             }
                         });
@@ -2031,7 +2033,7 @@ impl Renderer for Vulkan {
                             .expect("failed to read compilation to buffer");
 
                         if fs::metadata(&assets_path).is_err() {
-                            fs::create_dir("/home/brynn/dev/octane/assets/")
+                            fs::create_dir(&assets_path)
                                 .expect("failed to create assets directory");
                         }
 

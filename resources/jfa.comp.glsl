@@ -12,8 +12,8 @@ layout(binding = 0) uniform UniformBufferObject {
     uint render_distance;
 } ubo;
 
-layout(binding = 1, rgba32f) uniform image3D cubelet_sdf_source;
-layout(binding = 2, rgba32f) uniform image3D cubelet_sdf_result;
+layout(binding = 1, r16ui) uniform uimage3D cubelet_sdf_source;
+layout(binding = 2, r16ui) uniform uimage3D cubelet_sdf_result;
 
 layout(binding = 3) buffer JFAI
 {
@@ -22,9 +22,9 @@ layout(binding = 3) buffer JFAI
     uvec3 seeds[];
 } jfai;
 
-void get_min_distance_point(vec3 pos, vec4 info, inout vec4 data) {
-	if (info.a > 0) {
-		float dst = distance(pos, info.xyz);
+void get_min_distance_point(vec3 pos, ivec4 info, inout vec4 data) {
+	if (info.w > 0) {
+		float dst = distance(pos, vec3(info.xyz));
 		if (dst < data.w) {
 			data = vec4(info.xyz, dst);
 		}
@@ -49,8 +49,10 @@ void main() {
 				for (int z = -1; z <= 1; z += 1) 
 				{
 					ivec3 step_size = ivec3(x,y,z) * step;
-					vec4 info = imageLoad(cubelet_sdf_source, ivec3(id) + step_size);
+					uint block = imageLoad(cubelet_sdf_source, ivec3(id) + step_size).x;
+					ivec4 info;
 					info.xyz = ivec3(id) + step_size;
+					info.w = int(block);
 					get_min_distance_point(vec3(id), info, data);
 				}
 
@@ -58,5 +60,5 @@ void main() {
 		}
 	}
 
-	imageStore(cubelet_sdf_result, ivec3(id), data);
+	imageStore(cubelet_sdf_result, ivec3(id), uvec4(data.w));
 }

@@ -13,6 +13,3 @@ net 	= { path = "../../libs/net" }
 
 log = "*"
 raw-window-handle = "*"
-
-[build-dependencies]
-glsl-to-spirv = "*"

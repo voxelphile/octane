@@ -89,11 +89,13 @@ fn main() {
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
 
+    let render_distance = 12;
+
     let hq4x = format!("{}/assets/hq4x.png", base_path_str);
-    dbg!(&hq4x);
+
     let render_info = render::RendererInfo {
         window: &window,
-        render_distance: 6,
+        render_distance,
         hq4x,
     };
 
@@ -103,11 +105,11 @@ fn main() {
     vulkan.ubo.view = camera.inverse();
     vulkan.ubo.model = model;
 
-    let present_vertex_shader = format!("{}/assets/present.vs.spirv", base_path_str);
-    let present_fragment_shader = format!("{}/assets/present.fs.spirv", base_path_str);
-    let graphics_vertex_shader = format!("{}/assets/default.vs.spirv", base_path_str);
-    let graphics_fragment_shader = format!("{}/assets/default.fs.spirv", base_path_str);
-    let jfa_shader = format!("{}/assets/jfa.cs.spirv", base_path_str);
+    let present_vertex_shader = format!("{}/assets/present.vert.spirv", base_path_str);
+    let present_fragment_shader = format!("{}/assets/present.frag.spirv", base_path_str);
+    let graphics_vertex_shader = format!("{}/assets/default.vert.spirv", base_path_str);
+    let graphics_fragment_shader = format!("{}/assets/default.frag.spirv", base_path_str);
+    let jfa_shader = format!("{}/assets/jfa.comp.spirv", base_path_str);
 
     let cube = format!("{}/assets/cube.obj", base_path_str);
     let cube_obj = fs::File::open(cube).expect("failed to open obj");
@@ -131,8 +133,9 @@ fn main() {
 
     let mut x_rot = 0.0;
     let mut y_rot = 0.0;
-    let middle = (2.0 * 6.0 * 32.0) / 2.0;
-    let mut position = Vector::<f32, 4>::new([middle, 60.0, middle, 1.0]);
+    let middle = (2.0 * render_distance as f32 * 32.0) / 2.0 - 16.0;
+    let height = (2.0 * render_distance as f32 * 32.0) / 5.0;
+    let mut position = Vector::<f32, 4>::new([middle, height, middle, 1.0]);
     let mut should_capture = false;
 
     let mut fps_instant = startup;

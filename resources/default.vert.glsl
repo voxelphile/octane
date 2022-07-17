@@ -21,7 +21,7 @@ layout(location = 2) out uvec3 out_chunk_position;
 
 void main() {
 	mat4 true_model = ubo.model;
-
+	
 	true_model[3].xyz += vec3(in_chunk_position) * CHUNK_SIZE;
 	
 	vec3 position = in_position * CHUNK_SIZE / 2;

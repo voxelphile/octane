@@ -12,8 +12,8 @@ layout(binding = 0) uniform UniformBufferObject {
 	uint render_distance;
 } ubo;
 
-layout(binding = 1, rgba32f) uniform image3D cubelet_data;
-layout(binding = 2, rgba32f) uniform image3D cubelet_sdf;
+layout(binding = 1, r16ui) uniform uimage3D cubelet_data;
+layout(binding = 2, r16ui) uniform uimage3D cubelet_sdf;
 
 layout(location = 0) in vec3 in_uvw;
 layout(location = 1) in vec3 in_position;
@@ -142,18 +142,18 @@ void main() {
 		ivec3 rayStep = ivec3(sign(dir));
 		side_dist = (sign(dir) * (vec3(map_point) - point) + (sign(dir) * 0.5) + 0.5) * delta_dist; 
 
-		for (int i = 0; i < int(2 * 2 * float(ubo.render_distance) * float(CHUNK_SIZE)); i++)
+		for (int i = 0; i < 8192; i++)
 		{
 			ivec3 pos = map_point + ivec3(in_chunk_position) * int(CHUNK_SIZE);
 
-			vec4 col = imageLoad(cubelet_data, pos);
+			uint block = imageLoad(cubelet_data, pos).x;
 
-			if (col.a == 1) { 
-				final = col;
+			if (block == 1) { 
+				final = vec4(0.0, 0.6, 0.1, 1.0);
 				break;
 			}
 
-			float dist = imageLoad(cubelet_sdf, pos).w;
+			uint dist = imageLoad(cubelet_sdf, pos).x;
 
 			for (int j = 0; j < 1; j++) {
 				mask = lessThanEqual(side_dist.xyz, min(side_dist.yzx, side_dist.zxy));
