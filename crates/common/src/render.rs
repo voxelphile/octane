@@ -1304,7 +1304,7 @@ impl Vulkan {
 
         let mut octree_buffer = vk::Buffer::new(
             device.clone(),
-            1048576,
+            10485760,
             vk::BUFFER_USAGE_TRANSFER_DST
                 | vk::BUFFER_USAGE_VERTEX
                 | vk::BUFFER_USAGE_INDEX
@@ -1513,7 +1513,7 @@ impl Vulkan {
                 let buffer_copy = vk::BufferCopy {
                     src_offset: 0,
                     dst_offset: 0,
-                    size: 1048576,
+                    size: 10485760,
                 };
 
                 commands.copy_buffer(&staging_buffer, &mut octree_buffer, &[buffer_copy]);
@@ -2308,7 +2308,7 @@ impl Renderer for Vulkan {
                 let octree_buffer_info = vk::DescriptorBufferInfo {
                     buffer: &self.octree_buffer,
                     offset: 0,
-                    range: 1048576,
+                    range: 10485760,
                 };
 
                 let octree_buffer_descriptor_write = vk::WriteDescriptorSet {

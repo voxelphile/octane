@@ -230,6 +230,8 @@ void main() {
 			if (m == n)
 			{
 				ind = octree.data[ind].child + b;
+			} else {
+				break;
 			}
 
 			x -= px * h;
