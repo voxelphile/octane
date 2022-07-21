@@ -1,7 +1,6 @@
 //TODO implement From for ffi types
 
 use std::ffi::{CStr, CString};
-use std::marker;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::rc::Rc;
@@ -10,7 +9,7 @@ use std::slice;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
 mod ffi {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CStr;
     use std::fmt;
     use std::mem;
 
@@ -204,7 +203,9 @@ mod ffi {
         CommandBufferAllocateInfo = 40,
         CommandBufferBeginInfo = 42,
         RenderPassBeginInfo = 43,
+        BufferMemoryBarrier = 44,
         ImageMemoryBarrier = 45,
+        MemoryBarrier = 46,
         SwapchainCreateInfo = 1000001000,
         PresentInfo = 1000001001,
         XlibSurfaceCreateInfo = 1000004000,
@@ -1156,6 +1157,18 @@ mod ffi {
         DecrementAndWrap = 7,
     }
 
+    impl_from!(
+        StencilOp,
+        Keep,
+        Zero,
+        Replace,
+        IncrementAndClamp,
+        DecrementAndClamp,
+        Invert,
+        IncrementAndWrap,
+        DecrementAndWrap
+    );
+
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct StencilOpState {
@@ -1397,13 +1410,7 @@ mod ffi {
         Secondary = 1,
     }
 
-    impl From<super::CommandBufferLevel> for CommandBufferLevel {
-        fn from(level: super::CommandBufferLevel) -> Self {
-            match level {
-                super::CommandBufferLevel::Primary => Self::Primary,
-            }
-        }
-    }
+    impl_from!(CommandBufferLevel, Primary, Secondary);
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -1819,11 +1826,26 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct MemoryBarrier {}
+    pub struct MemoryBarrier {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub src_access_mask: c_uint,
+        pub dst_access_mask: c_uint,
+    }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
-    pub struct BufferMemoryBarrier {}
+    pub struct BufferMemoryBarrier {
+        pub structure_type: StructureType,
+        pub p_next: *const c_void,
+        pub src_access_mask: c_uint,
+        pub dst_access_mask: c_uint,
+        pub src_queue_family_index: c_uint,
+        pub dst_queue_family_index: c_uint,
+        pub buffer: Buffer,
+        pub offset: c_ulong,
+        pub size: c_ulong,
+    }
 
     #[link(name = "vulkan")]
     #[allow(non_snake_case)]
@@ -4802,6 +4824,7 @@ impl Drop for CommandPool {
 #[derive(Clone, Copy)]
 pub enum CommandBufferLevel {
     Primary,
+    Secondary,
 }
 
 pub struct CommandBufferAllocateInfo<'a> {
@@ -5163,11 +5186,15 @@ impl Commands<'_> {
     ) {
         let memory_barriers = memory_barriers
             .iter()
-            .map(|barrier| ffi::MemoryBarrier {})
+            .map(|barrier| ffi::MemoryBarrier {
+                structure_type: ffi::StructureType::MemoryBarrier,
+                p_next: ptr::null(),
+                src_access_mask: barrier.src_access_mask as _,
+                dst_access_mask: barrier.dst_access_mask as _,
+            })
             .collect::<Vec<_>>();
 
         let memory_barriers_ptr = if memory_barriers.len() > 0 {
-            unimplemented!();
             memory_barriers.as_ptr()
         } else {
             ptr::null()
@@ -5175,11 +5202,20 @@ impl Commands<'_> {
 
         let buffer_memory_barriers = buffer_memory_barriers
             .iter()
-            .map(|barrier| ffi::BufferMemoryBarrier {})
+            .map(|barrier| ffi::BufferMemoryBarrier {
+                structure_type: ffi::StructureType::BufferMemoryBarrier,
+                p_next: ptr::null(),
+                src_access_mask: barrier.src_access_mask as _,
+                dst_access_mask: barrier.dst_access_mask as _,
+                src_queue_family_index: barrier.src_queue_family_index as _,
+                dst_queue_family_index: barrier.dst_queue_family_index as _,
+                buffer: barrier.buffer.handle,
+                offset: barrier.offset as _,
+                size: barrier.size as _,
+            })
             .collect::<Vec<_>>();
 
         let buffer_memory_barriers_ptr = if buffer_memory_barriers.len() > 0 {
-            unimplemented!();
             buffer_memory_barriers.as_ptr()
         } else {
             ptr::null()
@@ -6141,6 +6177,18 @@ pub enum CompareOp {
     Always,
 }
 
+#[derive(Clone, Copy)]
+pub enum StencilOp {
+    Keep,
+    Zero,
+    Replace,
+    IncrementAndClamp,
+    DecrementAndClamp,
+    Invert,
+    IncrementAndWrap,
+    DecrementAndWrap,
+}
+
 pub struct ImageMemoryBarrier<'a> {
     pub src_access_mask: u32,
     pub dst_access_mask: u32,
@@ -6152,6 +6200,17 @@ pub struct ImageMemoryBarrier<'a> {
     pub subresource_range: ImageSubresourceRange,
 }
 
-pub struct MemoryBarrier {}
+pub struct MemoryBarrier {
+    pub src_access_mask: u32,
+    pub dst_access_mask: u32,
+}
 
-pub struct BufferMemoryBarrier {}
+pub struct BufferMemoryBarrier<'a> {
+    pub src_access_mask: u32,
+    pub dst_access_mask: u32,
+    pub src_queue_family_index: u32,
+    pub dst_queue_family_index: u32,
+    pub buffer: &'a Buffer,
+    pub offset: u64,
+    pub size: u64,
+}
