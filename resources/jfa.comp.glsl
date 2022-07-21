@@ -12,10 +12,9 @@ layout(binding = 0) uniform UniformBufferObject {
     uint render_distance;
 } ubo;
 
-layout(binding = 1, r16ui) uniform uimage3D cubelet_sdf_source;
-layout(binding = 2, r16ui) uniform uimage3D cubelet_sdf_result;
+layout(binding = 1, r16ui) uniform uimage3D cubelet_sdf_result;
 
-layout(binding = 3) buffer JFAI
+layout(binding = 2) buffer JFAI
 {
     uint step_size;
     uint seed_amount;
@@ -32,6 +31,7 @@ void get_min_distance_point(vec3 pos, ivec4 info, inout vec4 data) {
 }
 
 void main() {
+	/*
 	uvec3 id = gl_GlobalInvocationID.xyz;
 	vec4 data = imageLoad(cubelet_sdf_result, ivec3(id));
 	if (data == vec4(0)) {
@@ -61,4 +61,5 @@ void main() {
 	}
 
 	imageStore(cubelet_sdf_result, ivec3(id), uvec4(data.w));
-}
+
+	*/}

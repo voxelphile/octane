@@ -1,4 +1,5 @@
 pub mod mesh;
+pub mod octree;
 pub mod render;
 
 pub mod prelude {

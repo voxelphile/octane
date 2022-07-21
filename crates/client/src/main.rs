@@ -89,7 +89,7 @@ fn main() {
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
 
-    let render_distance = 12;
+    let render_distance = 1;
 
     let hq4x = format!("{}/assets/hq4x.png", base_path_str);
 
@@ -185,12 +185,28 @@ fn main() {
                     break 'main;
                 }
                 WindowEvent::Resized { resolution } => {
+                    {
+                        let fov = 45.0_f32 * 2.0 * std::f32::consts::PI / 360.0;
+
+                        let focal_length = 1.0 / (fov / 2.0).tan();
+
+                        let aspect_ratio = resolution.0 as f32 / resolution.1 as f32;
+
+                        let near = 0.01;
+                        let far = 1000.0;
+
+                        projection[0][0] = focal_length / aspect_ratio;
+                        projection[1][1] = -focal_length;
+                        projection[2][2] = far / (near - far);
+                        projection[2][3] = -1.0;
+                        projection[3][2] = (near * far) / (near - far);
+                    }
                     vulkan.resize(resolution);
                 }
             }
         }
 
-        let movement_speed = 5.612;
+        let movement_speed = 10.92;
 
         let mut camera = Matrix::<f32, 4, 4>::identity();
 

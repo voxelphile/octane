@@ -12,8 +12,19 @@ layout(binding = 0) uniform UniformBufferObject {
 	uint render_distance;
 } ubo;
 
-layout(binding = 1, r16ui) uniform uimage3D cubelet_data;
-layout(binding = 2, r16ui) uniform uimage3D cubelet_sdf;
+struct Node {
+	uint child;
+	uint valid;
+	uint block;
+};
+
+layout( binding = 1) buffer OctreeBuffer {
+	uint size;
+	uint len;
+	Node data[];
+} octree;
+
+//layout(binding = 2, r16ui) uniform uimage3D cubelet_sdf;
 
 layout(location = 0) in vec3 in_uvw;
 layout(location = 1) in vec3 in_position;
@@ -104,6 +115,41 @@ float raycast(mat4 true_model, vec3 ray_pos, vec3 dir) {
 	return t_min;
 }
 
+uint get_position_mask(ivec3 pos, uint level) {
+	float h = pow(2, octree.size);
+
+	uint hierarchy[64];
+
+	for (int i = 0; i < octree.size; i++) {
+		h = h / 2;
+
+		bool px = float(pos.x) >= h;
+		bool py = float(pos.y) >= h;
+		bool pz = float(pos.z) >= h;
+
+		uint ind = 0;
+
+		if (px) {
+			ind += 4;
+			pos.x -= int(h);
+		}
+
+		if (py) {
+			ind += 2;
+			pos.y -= int(h);
+		}
+
+		if (pz) {
+			ind += 1;
+			pos.z -= int(h);
+		}
+
+		hierarchy[i] = 1 << ind;
+	}
+
+	return hierarchy[level];
+}
+
 void main() {
 	mat4 true_model = ubo.model;
 
@@ -121,7 +167,7 @@ void main() {
 
 	float obb_dist = raycast(true_model, camera_position, dir);
 
-	vec3 point = camera_position + dir * obb_dist; 
+	vec3 point = camera_position + dir * (obb_dist - 1);
 
 	point = (inverse(true_model) * vec4(point, 1)).xyz;
 
@@ -130,39 +176,85 @@ void main() {
 	dir = (inverse(true_model) * vec4(dir, 0)).xyz;
 	dir = normalize(dir);
 
-	vec4 final = vec4(0.0);
+	vec4 final = vec4(0.1);
 
-	ivec3 map_point = ivec3(floor(point + 0.));
+	ivec3 map_point = ivec3(floor(point + 0.0)) ;
 	vec3 side_dist;
 	bvec3 mask;
 	vec3 delta_dist;
 	int total = 0;
-	{
-		delta_dist = 1.0 / abs(dir);
-		ivec3 rayStep = ivec3(sign(dir));
-		side_dist = (sign(dir) * (vec3(map_point) - point) + (sign(dir) * 0.5) + 0.5) * delta_dist; 
 
-		for (int i = 0; i < 8192; i++)
-		{
-			ivec3 pos = map_point + ivec3(in_chunk_position) * int(CHUNK_SIZE);
+	delta_dist = 1.0 / abs(dir);
+	ivec3 ray_step = ivec3(sign(dir));
+	side_dist = (sign(dir) * (vec3(map_point) - point) + (sign(dir) * 0.5) + 0.5) * delta_dist; 
+	map_point += ivec3(in_chunk_position) * int(CHUNK_SIZE);
 
-			uint block = imageLoad(cubelet_data, pos).x;
+	uint stack[64];
+	uint stack_index = 0;
+	stack[0] = 0;
 
-			if (block == 1) { 
-				final = vec4(0.0, 0.6, 0.1, 1.0);
-				break;
+	bool traverse = true;
+	int trav = 0;
+
+	uint size = 64;
+
+	bool early = false;
+
+	while (traverse) {
+		bool in_bounds = all(greaterThanEqual(map_point, ivec3(0))) && all(lessThan(map_point, ivec3(size)));
+		bool rough_in_bounds = all(greaterThanEqual(map_point, ivec3(-1))) && all(lessThan(map_point, ivec3(size + 1)));
+		if (!rough_in_bounds) {
+			traverse = false;
+			break;
+		}
+
+		uint s = size;
+		uint h = 0;
+		uint ind = 0;
+		uint px,py,pz,childindex;
+		uint x = map_point.x;
+		uint y = map_point.y;
+		uint z = map_point.z;
+
+		for (int i = 0; i < octree.size; i++) {
+			h = s / 2;
+
+			px = uint(x >= h);
+			py = uint(y >= h);
+			pz = uint(z >= h);
+			uint k = px * 4 + py * 2 + pz;
+			uint n = 1 << k;
+			uint m = octree.data[ind].valid & n;
+			uint b = bitCount(octree.data[ind].valid & (n - 1));
+			
+			if (m == n)
+			{
+				ind = octree.data[ind].child + b;
 			}
 
-			uint dist = imageLoad(cubelet_sdf, pos).x;
+			x -= px * h;
+			y -= py * h;
+			z -= pz * h;
 
-			for (int j = 0; j < 1; j++) {
-				mask = lessThanEqual(side_dist.xyz, min(side_dist.yzx, side_dist.zxy));
-				side_dist += vec3(mask) * delta_dist;
-				map_point += ivec3(vec3(mask)) * rayStep;
+			s = h;
+		}
 
-			}
 
-			total += 1;
+		Node current = octree.data[ind];
+
+		if (current.block == 1 && in_bounds) {
+			final = vec4(0.5, 1.0, 0.1, 1.0);
+			break;
+		}
+
+		mask = lessThanEqual(side_dist.xyz, min(side_dist.yzx, side_dist.zxy));
+		side_dist += vec3(mask) * delta_dist;
+		map_point += ivec3(vec3(mask)) * ray_step;
+
+		trav += 1;
+		if (trav > 200) {
+			out_final = final;
+			return;
 		}
 	}
 
