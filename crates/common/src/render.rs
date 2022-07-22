@@ -1034,6 +1034,8 @@ impl Vulkan {
             println!("X: {}", x);
         }
 
+        octree.place(32, 48, 32, 2);
+
         let application_info = vk::ApplicationInfo {
             application_name: "Octane",
             application_version: (0, 1, 0).into(),
