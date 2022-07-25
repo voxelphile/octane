@@ -5,7 +5,7 @@
 #define EPSILON 1e-2
 #define PI 3.14159265359
 
-layout(early_fragment_tests) in;
+#define SUN vec4(1000,1000,1000)
 
 layout(binding = 0) uniform UniformBufferObject {
 	mat4 model;
@@ -33,12 +33,60 @@ layout(location = 0) in vec3 in_uvw;
 layout(location = 1) in vec3 in_position;
 layout(location = 2) in flat uvec3 in_chunk_position;
 
-layout(location = 0) out vec4 out_final;
+layout(location = 0) out vec4 out_color;
+layout(location = 1) out vec4 out_occlusion;
 
 int   seed = 1;
 void  srand(int s ) { seed = s; }
 int   rand(void)  { seed=seed*0x343fd+0x269ec3; return (seed>>16)&32767; }
 float frand(void) { return float(rand())/32767.0; }
+
+vec4 get_albedo(uint block) {
+	vec4 albedo = vec4(0);
+
+	if (block == 1) {
+		albedo = vec4(0.25, 0.5, 0.1, 1);
+	} else if (block == 2) {
+		albedo = vec4(0, 0.41, 0.58, 0.1);
+	} else if (block == 3) {
+		albedo = vec4(.72, .39, .12, 1);
+	}
+
+	return albedo;
+}
+
+float get_refraction(uint block) {
+	float refraction;
+
+	if (block == 1) {
+		refraction = 1.5;
+	} else if (block == 2) {
+		refraction = 1.3;
+	} else if (block == 42069) {
+		refraction = 1.000;
+	} else if (block == 3) {
+		refraction = 1.5;
+	}
+
+	return refraction;
+}
+
+float get_reflectivity(uint block) {
+	float reflectivity;
+
+	if (block == 1) {
+		reflectivity = 0.0;
+	} else if (block == 2) {
+		reflectivity = 0.2;
+	} else if (block == 42069) {
+		reflectivity = 0.0;
+	} else if (block == 3) {
+		reflectivity = 0.0;
+	}
+
+	return reflectivity;
+}
+
 
 uint get_position_mask(ivec3 pos, uint level) {
 	float h = pow(2, octree.size);
@@ -75,18 +123,19 @@ uint get_position_mask(ivec3 pos, uint level) {
 	return hierarchy[level];
 }
 
-bool get_voxel(vec3 position, out uint node_index) {
-	uint size = 64;
+bool get_voxel(vec3 position, out uint node_index, out uint node_depth, bool ignore_transparent) {
+	uint size = 2 * ubo.render_distance * CHUNK_SIZE;
 	
 	ivec3 map_point = ivec3(floor(position + 0.0)) ;
 	
 	uint s = size;
 	uint h = 0;
-	uint pre_node_index = 0;
 	uint px,py,pz;
 	uint x = map_point.x;
 	uint y = map_point.y;
 	uint z = map_point.z;
+	
+	node_index = 0;
 
 	for (int i = 0; i < octree.size; i++) {
 		h = s / 2;
@@ -96,13 +145,14 @@ bool get_voxel(vec3 position, out uint node_index) {
 		pz = uint(z >= h);
 		uint k = px * 4 + py * 2 + pz;
 		uint n = 1 << k;
-		uint m = octree.data[pre_node_index].valid & n;
-		uint b = bitCount(octree.data[pre_node_index].valid & (n - 1));
+		uint m = octree.data[node_index].valid & n;
+		uint b = bitCount(octree.data[node_index].valid & (n - 1));
 
 		if (m == n)
 		{
-			pre_node_index = octree.data[pre_node_index].child + b;
+			node_index = octree.data[node_index].child + b;
 		} else {
+			node_depth = i;
 			return false;
 		}
 
@@ -113,9 +163,13 @@ bool get_voxel(vec3 position, out uint node_index) {
 		s = h;
 	}
 
-	node_index = pre_node_index;
-	return true;
+	node_depth = octree.size - 1;
+
+	Node node = octree.data[node_index];
+
+	return !(get_albedo(node.block).a != 1 && ignore_transparent);
 }
+
 
 float vertex_ao(vec2 side, float corner) {
 	return (side.x + side.y + max(corner, side.x * side.y)) / 3.0;
@@ -125,17 +179,17 @@ vec4 voxel_ao(vec3 pos, vec3 d1, vec3 d2) {
 	uint _;
 
 	vec4 side = vec4(
-			float(get_voxel(pos + d1, _)), 
-			float(get_voxel(pos + d2, _)), 
-			float(get_voxel(pos - d1, _)), 
-			float(get_voxel(pos - d2, _))
+			float(get_voxel(pos + d1, _, _, true)), 
+			float(get_voxel(pos + d2, _, _, true)), 
+			float(get_voxel(pos - d1, _, _, true)), 
+			float(get_voxel(pos - d2, _, _, true))
 			);
 
 	vec4 corner = vec4(
-			float(get_voxel(pos + d1 + d2, _)), 
-			float(get_voxel(pos - d1 + d2, _)), 
-			float(get_voxel(pos - d1 - d2, _)), 
-			float(get_voxel(pos + d1 - d2, _))
+			float(get_voxel(pos + d1 + d2, _, _, true)), 
+			float(get_voxel(pos - d1 + d2, _, _, true)), 
+			float(get_voxel(pos - d1 - d2, _, _, true)), 
+			float(get_voxel(pos + d1 - d2, _, _, true))
 			);
 
 	vec4 ao;
@@ -234,6 +288,7 @@ struct Ray {
 	vec3 origin;
 	vec3 direction;
 	float max_dist;
+	uint medium;
 };
 
 struct RayHit {
@@ -242,6 +297,7 @@ struct RayHit {
 	vec3 back_step;
 	vec3 normal;
 	vec3 reflection;
+	vec3 refraction;
 	vec2 uv;
 	float dist;
 };
@@ -252,13 +308,23 @@ bool ray_cast(Ray ray, out RayHit hit) {
 	ivec3 map_point = ivec3(floor(ray.origin + 0.0)) ;
 	vec3 delta_dist = 1.0 / abs(ray.direction);
 	ivec3 ray_step = ivec3(sign(ray.direction));
-	vec3 side_dist = (sign(ray.direction) * (vec3(map_point) - ray.origin) + (sign(ray.direction) * 0.5) + 0.5) * delta_dist; 
+	vec3 side_dist = (sign(ray.direction) * -mod(ray.origin,1) + (sign(ray.direction) * 0.5) + 0.5) * delta_dist; 
 	bvec3 mask;
 
 	map_point += CHUNK_SIZE * ivec3(in_chunk_position);
 
-	uint size = 64;
+	uint size = 2 * ubo.render_distance * CHUNK_SIZE;
 
+	bool ignore_transparent = false;
+
+	vec3 position = ray.origin;
+
+	float pre_dist = 0;
+	vec3 post;
+
+	uint node_index;
+	uint node_depth;
+	
 	for (int step_count = 0; step_count < MAX_STEP_COUNT; step_count++) {
 		bool in_bounds = all(greaterThanEqual(map_point, ivec3(0))) && all(lessThan(map_point, ivec3(size)));
 		bool rough_in_bounds = all(greaterThanEqual(map_point, ivec3(-1))) && all(lessThan(map_point, ivec3(size + 1)));
@@ -266,35 +332,41 @@ bool ray_cast(Ray ray, out RayHit hit) {
 			return false;
 		}
 
-
 		float dist = length(vec3(mask) * (side_dist - delta_dist));
 
-		if (dist > ray.max_dist) {
-			return false;
-		}
-
 		uint node_index;
+		uint node_depth;
 
-		bool voxel_found = get_voxel(vec3(map_point), node_index);
+		bool voxel_found = get_voxel(vec3(map_point), node_index, node_depth, false);
 
 		if (voxel_found) {
 			Node current = octree.data[node_index];
 
-			if (current.block != 42069 && in_bounds) {
+			if (in_bounds && ray.medium != current.block) {
+				vec3 destination = ray.origin + ray.direction * dist;
+				vec3 back_step = map_point - ray_step * vec3(mask);
+				vec3 normal = vec3(mask) * sign(-ray.direction);
+				vec2 uv = mod(vec2(dot(vec3(mask) * destination.yzx, vec3(1.0)), dot(vec3(mask) * destination.zxy, vec3(1.0))), vec2(1.0));
+				vec3 reflection = reflect(ray.direction, normal);
+				float eta = get_refraction(ray.medium) / get_refraction(current.block);
+				vec3 refraction = refract(ray.direction, normal, eta);
+
 				hit.node = node_index;	
-				hit.destination = ray.origin + ray.direction * dist;
-				hit.back_step = map_point - ray_step * vec3(mask);
-				hit.normal = vec3(mask) * sign(-ray.direction);
-				hit.reflection = ray.direction - 2 * dot(ray.direction, hit.normal) * hit.normal;
-				hit.uv = mod(vec2(dot(vec3(mask) * hit.destination.yzx, vec3(1.0)), dot(vec3(mask) * hit.destination.zxy, vec3(1.0))), vec2(1.0));
+				hit.destination = destination;
+				hit.back_step = back_step;
+				hit.normal = normal;
+				hit.reflection = reflection;
+				hit.refraction = refraction;
+				hit.uv = uv;
 				hit.dist = dist;
 				return true;
 			}
 		}
-
+		
 		mask = lessThanEqual(side_dist.xyz, min(side_dist.yzx, side_dist.zxy));
 		side_dist += vec3(mask) * delta_dist;
 		map_point += ivec3(vec3(mask)) * ray_step;
+
 	}
 
 	return false;
@@ -319,7 +391,18 @@ vec3 hemisphere_point(vec3 normal)
 	return p;
 }
 
+float depth(mat4 true_model, vec3 position) {
+	vec4 projected = ubo.proj * ubo.view * true_model * vec4(position, 1);
+	return projected.z / projected.w;
+}
+
 void main() {
+	out_color = vec4(1);
+	out_occlusion = vec4(1);
+	gl_FragDepth = 1;
+
+	vec3 sun_pos = vec3(1000, 2000, 100);
+
 	mat4 true_model = ubo.model;
 
 	true_model[3].xyz += in_chunk_position * CHUNK_SIZE;
@@ -345,31 +428,91 @@ void main() {
 	dir = (inverse(true_model) * vec4(dir, 0)).xyz;
 	dir = normalize(dir);
 
-	vec4 final = vec4(0.1);
+	vec4 color = vec4(0);
 
-	Ray initial_ray = Ray(point, dir, 200);
-	RayHit initial_ray_hit;
+	uint node_index;
+	uint node_depth;
 
-	bool initial_success = ray_cast(initial_ray, initial_ray_hit);
+	bool voxel_found = get_voxel(point + CHUNK_SIZE * ivec3(in_chunk_position), node_index, node_depth, false);
 
+	uint medium = voxel_found ? octree.data[node_index].block : 42069;
+	vec4 albedo = voxel_found ? get_albedo(medium) : vec4(0);
+
+	Ray ray = Ray(point, dir, 4000, medium);
+	RayHit ray_hit;
+
+	uint last_medium = medium;
 	//Albedo
-	if (initial_success) {
-		final = vec4(0, 1, 0, 1);
-	} else {
-		out_final = final;
-		return;
+	for (int c_sample = 0; c_sample < 4;  c_sample++ ) {
+		bool success = ray_cast(ray, ray_hit);
+		if (success) {
+			Node node = octree.data[ray_hit.node];
+			albedo.xyz *= max(pow(ray_hit.dist, 2), 1);
+			albedo += get_albedo(node.block);
+			float reflectivity = get_reflectivity(node.block);
+			if (reflectivity > 0) {
+				Ray ref = Ray(ray_hit.destination + ray_hit.reflection * EPSILON, ray_hit.reflection, 4000, node.block);
+				RayHit ref_hit;
+
+				bool ref_success = ray_cast(ref, ref_hit);
+
+				if (ref_success) {
+					Node node = octree.data[ref_hit.node];
+					albedo += get_albedo(node.block) * reflectivity;
+				}
+			}
+			if (albedo.a < 1) {
+				ray = Ray(ray_hit.destination + ray_hit.refraction * EPSILON, ray_hit.refraction, 4000, node.block);
+				last_medium = ray.medium;
+			} else {
+				break;
+			}
+		} else {
+
+			vec3 sun_dir = normalize(sun_pos - dir);
+
+			if(dot(dir, sun_dir) > 0.9999) {
+				out_color = vec4(0.97, 0.85, 0.15, 1);
+				gl_FragDepth = 0.999;
+				return;
+			}
+
+			out_color = vec4(0.57, 0.74, 1.0, 1.0);
+			gl_FragDepth = 0.999;
+			return;
+		}
 	}
+
+	color = vec4(normalize(albedo.xyz), 1);
 
 	//Ambient Occlusion
 	vec4 ambient = voxel_ao(
-			initial_ray_hit.back_step, 
-			abs(initial_ray_hit.normal.zxy), 
-			abs(initial_ray_hit.normal.yzx)
+			ray_hit.back_step, 
+			abs(ray_hit.normal.zxy), 
+			abs(ray_hit.normal.yzx)
 			);
 
-	float ao = mix(mix(ambient.z, ambient.w, initial_ray_hit.uv.x), mix(ambient.y, ambient.x, initial_ray_hit.uv.x), initial_ray_hit.uv.y);
+	float ao = mix(mix(ambient.z, ambient.w, ray_hit.uv.x), mix(ambient.y, ambient.x, ray_hit.uv.x), ray_hit.uv.y);
 
-	final.xyz = final.xyz - vec3(1 - ao) * 0.25;
+	color.xyz = color.xyz - vec3(1 - ao) * 0.25;	
 
-	out_final = final;	
+	//Depth
+	vec3 real_pos = ray_hit.destination - vec3(CHUNK_SIZE / 2);
+	gl_FragDepth = depth(true_model, real_pos.xyz);
+
+	//Lighting
+	vec3 pos = ray_hit.destination;
+	vec3 sun_dir = normalize(sun_pos - pos);
+	ray = Ray(pos + sun_dir * EPSILON, sun_dir, 4000, last_medium);
+
+	bool success = ray_cast(ray, ray_hit);
+
+	float occlusion = 1;
+
+	if (success) {
+		occlusion = ray_hit.dist / (distance(ray_hit.destination, sun_pos) + ray_hit.dist);
+	}
+
+	out_color = color;	
+	out_occlusion = vec4(occlusion, 0, 0, 1);
 }

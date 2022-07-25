@@ -89,7 +89,7 @@ fn main() {
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
 
-    let render_distance = 1;
+    let render_distance = 2;
 
     let hq4x = format!("{}/assets/hq4x.png", base_path_str);
 
@@ -105,8 +105,10 @@ fn main() {
     vulkan.ubo.view = camera.inverse();
     vulkan.ubo.model = model;
 
-    let present_vertex_shader = format!("{}/assets/present.vert.spirv", base_path_str);
+    let present_vertex_shader = format!("{}/assets/fullscreen.vert.spirv", base_path_str);
     let present_fragment_shader = format!("{}/assets/present.frag.spirv", base_path_str);
+    let postfx_vertex_shader = format!("{}/assets/fullscreen.vert.spirv", base_path_str);
+    let postfx_fragment_shader = format!("{}/assets/postfx.frag.spirv", base_path_str);
     let graphics_vertex_shader = format!("{}/assets/default.vert.spirv", base_path_str);
     let graphics_fragment_shader = format!("{}/assets/default.frag.spirv", base_path_str);
     let jfa_shader = format!("{}/assets/jfa.comp.spirv", base_path_str);
@@ -119,6 +121,8 @@ fn main() {
     let batch = render::Batch {
         graphics_vertex_shader,
         graphics_fragment_shader,
+        postfx_vertex_shader,
+        postfx_fragment_shader,
         present_vertex_shader,
         present_fragment_shader,
         jfa_shader,
@@ -134,7 +138,7 @@ fn main() {
     let mut x_rot = 0.0;
     let mut y_rot = 0.0;
     let middle = (2.0 * render_distance as f32 * 32.0) / 2.0 - 16.0;
-    let height = (2.0 * render_distance as f32 * 32.0) / 5.0;
+    let height = (2.0 * render_distance as f32 * 32.0);
     let mut position = Vector::<f32, 4>::new([middle, height, middle, 1.0]);
     let mut should_capture = false;
 

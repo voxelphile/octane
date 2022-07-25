@@ -10,6 +10,7 @@ pub struct Octree {
     size: usize,
     node_count: Vec<RangeInclusive<usize>>,
     data: Vec<Node>,
+    holes: Vec<(usize, usize)>,
 }
 
 impl Octree {
@@ -17,6 +18,7 @@ impl Octree {
         let size = 0;
         let mut node_count = vec![];
         let mut data = Vec::with_capacity(1000000000);
+        let mut holes = vec![];
 
         node_count.push(0..=0);
         data.push(Node::default());
@@ -25,11 +27,12 @@ impl Octree {
             size,
             node_count,
             data,
+            holes,
         }
     }
 
     pub fn place(&mut self, x: usize, y: usize, z: usize, cubelet: u16) {
-        self.size = 6;
+        self.size = 7;
 
         let mut hierarchy = self.get_position_hierarchy(x, y, z);
 
@@ -69,23 +72,23 @@ impl Octree {
             {
                 index = self.data[index].child as usize + p as usize;
             } else {
+                let node = self.data[index];
+
                 self.data[index].valid |= mask as u32;
 
                 let p = (self.data[index].valid & (mask as u32 - 1)).count_ones();
-                //dbg!(p);
-                if self.data[index].child == u32::MAX {
-                    self.data[index].child = self.data.len() as _;
+                let q = self.data[index].valid.count_ones() - 1;
+
+                self.data[index].child = self.data.len() as _;
+
+                for i in 0..q {
+                    let x = self.data[index].child as usize + i as usize;
+                    let y = node.child as usize + i as usize;
+                    let n = self.data[y];
+                    self.data.insert(x, n);
                 }
 
-                let child = self.data[index].child + p as u32;
-
-                for i in 0..self.data.len() {
-                    if self.data[i].child != u32::MAX {
-                        if self.data[i].child >= child as _ && i != index {
-                            self.data[i].child += 1;
-                        }
-                    }
-                }
+                let child = self.data[index].child as usize + p as usize;
 
                 self.data.insert(child as _, Node::default());
 

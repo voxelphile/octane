@@ -49,6 +49,8 @@ pub trait Renderer {
 pub struct Batch {
     pub present_vertex_shader: String,
     pub present_fragment_shader: String,
+    pub postfx_vertex_shader: String,
+    pub postfx_fragment_shader: String,
     pub graphics_vertex_shader: String,
     pub graphics_fragment_shader: String,
     pub jfa_shader: String,
@@ -111,6 +113,7 @@ fn create_graphics_pipeline(
     render_pass: &'_ vk::RenderPass,
     layout: &'_ vk::PipelineLayout,
     extent: (u32, u32),
+    attachment_count: usize,
 ) -> vk::Pipeline {
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
         topology: vk::PrimitiveTopology::TriangleList,
@@ -162,24 +165,26 @@ fn create_graphics_pipeline(
         max_depth_bounds: 1.0,
     };
 
-    let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
-        color_write_mask: vk::COLOR_COMPONENT_R
-            | vk::COLOR_COMPONENT_G
-            | vk::COLOR_COMPONENT_B
-            | vk::COLOR_COMPONENT_A,
-        blend_enable: true,
-        src_color_blend_factor: vk::BlendFactor::SrcAlpha,
-        dst_color_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
-        color_blend_op: vk::BlendOp::Add,
-        src_alpha_blend_factor: vk::BlendFactor::One,
-        dst_alpha_blend_factor: vk::BlendFactor::Zero,
-        alpha_blend_op: vk::BlendOp::Add,
-    };
+    let color_blend_attachments = (0..attachment_count)
+        .map(|_| vk::PipelineColorBlendAttachmentState {
+            color_write_mask: vk::COLOR_COMPONENT_R
+                | vk::COLOR_COMPONENT_G
+                | vk::COLOR_COMPONENT_B
+                | vk::COLOR_COMPONENT_A,
+            blend_enable: true,
+            src_color_blend_factor: vk::BlendFactor::SrcAlpha,
+            dst_color_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
+            color_blend_op: vk::BlendOp::Add,
+            src_alpha_blend_factor: vk::BlendFactor::One,
+            dst_alpha_blend_factor: vk::BlendFactor::Zero,
+            alpha_blend_op: vk::BlendOp::Add,
+        })
+        .collect::<Vec<_>>();
 
     let color_blending = vk::PipelineColorBlendStateCreateInfo {
         logic_op_enable: false,
         logic_op: vk::LogicOp::Copy,
-        attachments: &[color_blend_attachment],
+        attachments: &color_blend_attachments[..],
         blend_constants: &[0.0, 0.0, 0.0, 0.0],
     };
 
@@ -212,6 +217,7 @@ fn create_graphics_pipeline(
 
 pub struct Vulkan {
     pub ubo: UniformBufferObject,
+    octree: Octree,
     jfai: JfaiBufferObject,
     last_batch: Batch,
     look_up_table_sampler: vk::Sampler,
@@ -375,13 +381,18 @@ impl VulkanComputeData {
 }
 
 pub struct VulkanRenderData {
-    color_samplers: Vec<vk::Sampler>,
-    color_views: Vec<vk::ImageView>,
-    color_memory: Vec<vk::Memory>,
-    color: Vec<vk::Image>,
-    depth_view: vk::ImageView,
-    depth_memory: vk::Memory,
-    depth: vk::Image,
+    graphics_color_samplers: Vec<vk::Sampler>,
+    graphics_color_views: Vec<vk::ImageView>,
+    graphics_color_memory: Vec<vk::Memory>,
+    graphics_color: Vec<vk::Image>,
+    graphics_occlusion_samplers: Vec<vk::Sampler>,
+    graphics_occlusion_views: Vec<vk::ImageView>,
+    graphics_occlusion_memory: Vec<vk::Memory>,
+    graphics_occlusion: Vec<vk::Image>,
+    graphics_depth_sampler: vk::Sampler,
+    graphics_depth_view: vk::ImageView,
+    graphics_depth_memory: vk::Memory,
+    graphics_depth: vk::Image,
     graphics_framebuffers: Vec<vk::Framebuffer>,
     graphics_pipeline: vk::Pipeline,
     graphics_pipeline_layout: vk::PipelineLayout,
@@ -389,6 +400,17 @@ pub struct VulkanRenderData {
     graphics_descriptor_pool: vk::DescriptorPool,
     graphics_descriptor_set_layout: vk::DescriptorSetLayout,
     graphics_render_pass: vk::RenderPass,
+    postfx_color_samplers: Vec<vk::Sampler>,
+    postfx_color_views: Vec<vk::ImageView>,
+    postfx_color_memory: Vec<vk::Memory>,
+    postfx_color: Vec<vk::Image>,
+    postfx_framebuffers: Vec<vk::Framebuffer>,
+    postfx_pipeline: vk::Pipeline,
+    postfx_pipeline_layout: vk::PipelineLayout,
+    postfx_descriptor_sets: Vec<vk::DescriptorSet>,
+    postfx_descriptor_pool: vk::DescriptorPool,
+    postfx_descriptor_set_layout: vk::DescriptorSetLayout,
+    postfx_render_pass: vk::RenderPass,
     present_framebuffers: Vec<vk::Framebuffer>,
     present_pipeline: vk::Pipeline,
     present_pipeline_layout: vk::PipelineLayout,
@@ -406,67 +428,12 @@ impl VulkanRenderData {
         physical_device: &vk::PhysicalDevice,
         surface: &vk::Surface,
         graphics_shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
+        postfx_shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
         present_shader_stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
         old_swapchain: Option<vk::Swapchain>,
         render_info: &VulkanRenderInfo,
     ) -> Self {
-        let depth_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TwoDim,
-            format: vk::Format::D32Sfloat,
-            extent: (
-                render_info.extent.0 / render_info.scaling_factor,
-                render_info.extent.1 / render_info.scaling_factor,
-                1,
-            ),
-            mip_levels: 1,
-            array_layers: 1,
-            samples: vk::SAMPLE_COUNT_1,
-            tiling: vk::ImageTiling::Optimal,
-            image_usage: vk::IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT,
-            initial_layout: vk::ImageLayout::Undefined,
-        };
-
-        let mut depth =
-            vk::Image::new(device.clone(), depth_create_info).expect("failed to allocate image");
-
-        let depth_memory_allocate_info = vk::MemoryAllocateInfo {
-            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
-        };
-
-        let depth_memory = vk::Memory::allocate(
-            device.clone(),
-            depth_memory_allocate_info,
-            depth.memory_requirements(),
-            physical_device.memory_properties(),
-        )
-        .expect("failed to allocate memory");
-
-        depth
-            .bind_memory(&depth_memory)
-            .expect("failed to bind image to memory");
-
-        let depth_view_create_info = vk::ImageViewCreateInfo {
-            image: &depth,
-            view_type: vk::ImageViewType::TwoDim,
-            format: vk::Format::D32Sfloat,
-            components: vk::ComponentMapping {
-                r: vk::ComponentSwizzle::Identity,
-                g: vk::ComponentSwizzle::Identity,
-                b: vk::ComponentSwizzle::Identity,
-                a: vk::ComponentSwizzle::Identity,
-            },
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::IMAGE_ASPECT_DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
-        };
-
-        let depth_view = vk::ImageView::new(device.clone(), depth_view_create_info)
-            .expect("failed to create image view");
-
+        //SWAPCHAIN
         let swapchain_create_info = vk::SwapchainCreateInfo {
             surface,
             min_image_count: render_info.image_count,
@@ -517,9 +484,91 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
-        let mut color = (0..swapchain_images.len())
+        //GRAPHICS
+        let graphics_depth_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TwoDim,
+            format: vk::Format::D32Sfloat,
+            extent: (
+                render_info.extent.0 / render_info.scaling_factor,
+                render_info.extent.1 / render_info.scaling_factor,
+                1,
+            ),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage: vk::IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | vk::IMAGE_USAGE_SAMPLED,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut graphics_depth = vk::Image::new(device.clone(), graphics_depth_create_info)
+            .expect("failed to allocate image");
+
+        let graphics_depth_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let graphics_depth_memory = vk::Memory::allocate(
+            device.clone(),
+            graphics_depth_memory_allocate_info,
+            graphics_depth.memory_requirements(),
+            physical_device.memory_properties(),
+        )
+        .expect("failed to allocate memory");
+
+        graphics_depth
+            .bind_memory(&graphics_depth_memory)
+            .expect("failed to bind image to memory");
+
+        let graphics_depth_view_create_info = vk::ImageViewCreateInfo {
+            image: &graphics_depth,
+            view_type: vk::ImageViewType::TwoDim,
+            format: vk::Format::D32Sfloat,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let graphics_depth_view =
+            vk::ImageView::new(device.clone(), graphics_depth_view_create_info)
+                .expect("failed to create image view");
+
+        let graphics_depth_sampler = {
+            let graphics_depth_sampler_create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::Nearest,
+                min_filter: vk::Filter::Nearest,
+                mipmap_mode: vk::SamplerMipmapMode::Nearest,
+                address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+                address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+                address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+                mip_lod_bias: 0.0,
+                anisotropy_enable: false,
+                max_anisotropy: 0.0,
+                compare_enable: false,
+                compare_op: vk::CompareOp::Always,
+                min_lod: 0.0,
+                max_lod: 0.0,
+                border_color: vk::BorderColor::IntTransparentBlack,
+                unnormalized_coordinates: false,
+            };
+
+            vk::Sampler::new(device.clone(), graphics_depth_sampler_create_info)
+                .expect("failed to create sampler")
+        };
+
+        let mut graphics_color = (0..swapchain_images.len())
             .map(|_| {
-                let color_create_info = vk::ImageCreateInfo {
+                let graphics_color_create_info = vk::ImageCreateInfo {
                     image_type: vk::ImageType::TwoDim,
                     format: vk::Format::Rgba32Sfloat,
                     extent: (
@@ -535,38 +584,39 @@ impl VulkanRenderData {
                     initial_layout: vk::ImageLayout::Undefined,
                 };
 
-                vk::Image::new(device.clone(), color_create_info).expect("failed to allocate image")
+                vk::Image::new(device.clone(), graphics_color_create_info)
+                    .expect("failed to allocate image")
             })
             .collect::<Vec<_>>();
 
-        let color_memory = color
+        let graphics_color_memory = graphics_color
             .iter_mut()
-            .map(|color| {
-                let color_memory_allocate_info = vk::MemoryAllocateInfo {
+            .map(|graphics_color| {
+                let graphics_color_memory_allocate_info = vk::MemoryAllocateInfo {
                     property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
                 };
 
-                let color_memory = vk::Memory::allocate(
+                let graphics_color_memory = vk::Memory::allocate(
                     device.clone(),
-                    color_memory_allocate_info,
-                    color.memory_requirements(),
+                    graphics_color_memory_allocate_info,
+                    graphics_color.memory_requirements(),
                     physical_device.memory_properties(),
                 )
                 .expect("failed to allocate memory");
 
-                color
-                    .bind_memory(&color_memory)
+                graphics_color
+                    .bind_memory(&graphics_color_memory)
                     .expect("failed to bind image to memory");
 
-                color_memory
+                graphics_color_memory
             })
             .collect::<Vec<_>>();
 
-        let color_views = color
+        let graphics_color_views = graphics_color
             .iter()
-            .map(|color| {
-                let color_view_create_info = vk::ImageViewCreateInfo {
-                    image: color,
+            .map(|graphics_color| {
+                let graphics_color_view_create_info = vk::ImageViewCreateInfo {
+                    image: graphics_color,
                     view_type: vk::ImageViewType::TwoDim,
                     format: vk::Format::Rgba32Sfloat,
                     components: vk::ComponentMapping {
@@ -584,14 +634,14 @@ impl VulkanRenderData {
                     },
                 };
 
-                vk::ImageView::new(device.clone(), color_view_create_info)
+                vk::ImageView::new(device.clone(), graphics_color_view_create_info)
                     .expect("failed to create image view")
             })
             .collect::<Vec<_>>();
 
-        let color_samplers = (0..color.len())
+        let graphics_color_samplers = (0..graphics_color.len())
             .map(|_| {
-                let color_sampler_create_info = vk::SamplerCreateInfo {
+                let graphics_color_sampler_create_info = vk::SamplerCreateInfo {
                     mag_filter: vk::Filter::Nearest,
                     min_filter: vk::Filter::Nearest,
                     mipmap_mode: vk::SamplerMipmapMode::Nearest,
@@ -609,7 +659,429 @@ impl VulkanRenderData {
                     unnormalized_coordinates: false,
                 };
 
-                vk::Sampler::new(device.clone(), color_sampler_create_info)
+                vk::Sampler::new(device.clone(), graphics_color_sampler_create_info)
+                    .expect("failed to create sampler")
+            })
+            .collect::<Vec<_>>();
+
+        let mut graphics_occlusion = (0..swapchain_images.len())
+            .map(|_| {
+                let graphics_occlusion_create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TwoDim,
+                    format: vk::Format::Rgba32Sfloat,
+                    extent: (
+                        render_info.extent.0 / render_info.scaling_factor,
+                        render_info.extent.1 / render_info.scaling_factor,
+                        1,
+                    ),
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SAMPLE_COUNT_1,
+                    tiling: vk::ImageTiling::Optimal,
+                    image_usage: vk::IMAGE_USAGE_COLOR_ATTACHMENT | vk::IMAGE_USAGE_STORAGE,
+                    initial_layout: vk::ImageLayout::Undefined,
+                };
+
+                vk::Image::new(device.clone(), graphics_occlusion_create_info)
+                    .expect("failed to allocate image")
+            })
+            .collect::<Vec<_>>();
+
+        let graphics_occlusion_memory = graphics_occlusion
+            .iter_mut()
+            .map(|graphics_occlusion| {
+                let graphics_occlusion_memory_allocate_info = vk::MemoryAllocateInfo {
+                    property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+                };
+
+                let graphics_occlusion_memory = vk::Memory::allocate(
+                    device.clone(),
+                    graphics_occlusion_memory_allocate_info,
+                    graphics_occlusion.memory_requirements(),
+                    physical_device.memory_properties(),
+                )
+                .expect("failed to allocate memory");
+
+                graphics_occlusion
+                    .bind_memory(&graphics_occlusion_memory)
+                    .expect("failed to bind image to memory");
+
+                graphics_occlusion_memory
+            })
+            .collect::<Vec<_>>();
+
+        let graphics_occlusion_views = graphics_occlusion
+            .iter()
+            .map(|graphics_occlusion| {
+                let graphics_occlusion_view_create_info = vk::ImageViewCreateInfo {
+                    image: graphics_occlusion,
+                    view_type: vk::ImageViewType::TwoDim,
+                    format: vk::Format::Rgba32Sfloat,
+                    components: vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::Identity,
+                        g: vk::ComponentSwizzle::Identity,
+                        b: vk::ComponentSwizzle::Identity,
+                        a: vk::ComponentSwizzle::Identity,
+                    },
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                };
+
+                vk::ImageView::new(device.clone(), graphics_occlusion_view_create_info)
+                    .expect("failed to create image view")
+            })
+            .collect::<Vec<_>>();
+
+        let graphics_occlusion_samplers = (0..graphics_occlusion.len())
+            .map(|_| {
+                let graphics_occlusion_sampler_create_info = vk::SamplerCreateInfo {
+                    mag_filter: vk::Filter::Nearest,
+                    min_filter: vk::Filter::Nearest,
+                    mipmap_mode: vk::SamplerMipmapMode::Nearest,
+                    address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+                    address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+                    address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+                    mip_lod_bias: 0.0,
+                    anisotropy_enable: false,
+                    max_anisotropy: 0.0,
+                    compare_enable: false,
+                    compare_op: vk::CompareOp::Always,
+                    min_lod: 0.0,
+                    max_lod: 0.0,
+                    border_color: vk::BorderColor::IntTransparentBlack,
+                    unnormalized_coordinates: false,
+                };
+
+                vk::Sampler::new(device.clone(), graphics_occlusion_sampler_create_info)
+                    .expect("failed to create sampler")
+            })
+            .collect::<Vec<_>>();
+
+        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+            bindings: &[uniform_buffer_binding, octree_buffer_binding],
+        };
+
+        let graphics_descriptor_set_layout =
+            vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
+                .expect("failed to create descriptor set layout");
+
+        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let octree_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: swapchain_images.len() as _,
+            pool_sizes: &[uniform_buffer_pool_size, octree_buffer_pool_size],
+        };
+
+        let graphics_descriptor_pool =
+            vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
+                .expect("failed to create descriptor pool");
+
+        let set_layouts = iter::repeat(&graphics_descriptor_set_layout)
+            .take(swapchain_images.len() as _)
+            .collect::<Vec<_>>();
+
+        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: &graphics_descriptor_pool,
+            set_layouts: &set_layouts,
+        };
+
+        let graphics_descriptor_sets =
+            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
+                .expect("failed to allocate descriptor sets");
+
+        let graphics_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+            set_layouts: &[&graphics_descriptor_set_layout],
+        };
+
+        let graphics_pipeline_layout =
+            vk::PipelineLayout::new(device.clone(), graphics_pipeline_layout_create_info)
+                .expect("failed to create pipeline layout");
+
+        let color_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::Rgba32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::Store,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let occlusion_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::Rgba32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::Store,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::D32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::DontCare,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::DepthStencilAttachment,
+        };
+
+        let color_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let occlusion_attachment_reference = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 2,
+            layout: vk::ImageLayout::DepthStencilAttachment,
+        };
+
+        let subpass_description = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::Graphics,
+            input_attachments: &[],
+            color_attachments: &[color_attachment_reference, occlusion_attachment_reference],
+            resolve_attachments: &[],
+            depth_stencil_attachment: Some(&depth_attachment_reference),
+            preserve_attachments: &[],
+        };
+
+        let subpass_dependency = vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            dst_subpass: 0,
+            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
+                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
+            src_access_mask: 0,
+            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
+                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
+            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE
+                | vk::ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+        };
+
+        let render_pass_create_info = vk::RenderPassCreateInfo {
+            attachments: &[
+                color_attachment_description,
+                occlusion_attachment_description,
+                depth_attachment_description,
+            ],
+            subpasses: &[subpass_description],
+            dependencies: &[subpass_dependency],
+        };
+
+        let graphics_render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
+            .expect("failed to create render pass");
+
+        let vertex_binding = vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: mem::size_of::<Vertex>(),
+            input_rate: vk::VertexInputRate::Vertex,
+        };
+
+        let instance_binding = vk::VertexInputBindingDescription {
+            binding: 1,
+            stride: mem::size_of::<Vector<u32, 3>>(),
+            input_rate: vk::VertexInputRate::Instance,
+        };
+
+        let position_attribute = vk::VertexInputAttributeDescription {
+            binding: 0,
+            location: 0,
+            format: vk::Format::Rgb32Sfloat,
+            offset: 0,
+        };
+
+        let normal_attribute = vk::VertexInputAttributeDescription {
+            binding: 0,
+            location: 1,
+            format: vk::Format::Rgb32Sfloat,
+            offset: mem::size_of::<[f32; 3]>() as u32,
+        };
+
+        let uv_attribute = vk::VertexInputAttributeDescription {
+            binding: 0,
+            location: 2,
+            format: vk::Format::Rgb32Sfloat,
+            offset: 2 * mem::size_of::<[f32; 3]>() as u32,
+        };
+
+        let chunk_position_attribute = vk::VertexInputAttributeDescription {
+            binding: 1,
+            location: 3,
+            format: vk::Format::Rgb32Uint,
+            offset: 0,
+        };
+
+        let graphics_vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+            bindings: &[vertex_binding, instance_binding],
+            attributes: &[
+                position_attribute,
+                normal_attribute,
+                uv_attribute,
+                chunk_position_attribute,
+            ],
+        };
+
+        let graphics_pipeline = create_graphics_pipeline(
+            device.clone(),
+            graphics_vertex_input_info,
+            graphics_shader_stages,
+            &graphics_render_pass,
+            &graphics_pipeline_layout,
+            (render_info.extent.0 / 4, render_info.extent.1 / 4),
+            2,
+        );
+
+        let graphics_framebuffers = graphics_color_views
+            .iter()
+            .zip(graphics_occlusion_views.iter())
+            .map(|(graphics_color_view, graphics_occlusion_view)| {
+                let framebuffer_create_info = vk::FramebufferCreateInfo {
+                    render_pass: &graphics_render_pass,
+                    attachments: &[
+                        &graphics_color_view,
+                        &graphics_occlusion_view,
+                        &graphics_depth_view,
+                    ],
+                    width: render_info.extent.0 / 4,
+                    height: render_info.extent.1 / 4,
+                    layers: 1,
+                };
+
+                vk::Framebuffer::new(device.clone(), framebuffer_create_info)
+                    .expect("failed to create framebuffer")
+            })
+            .collect::<Vec<_>>();
+
+        //POSTFX
+        let mut postfx_color = (0..swapchain_images.len())
+            .map(|_| {
+                let postfx_color_create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TwoDim,
+                    format: vk::Format::Rgba32Sfloat,
+                    extent: (
+                        render_info.extent.0 / render_info.scaling_factor,
+                        render_info.extent.1 / render_info.scaling_factor,
+                        1,
+                    ),
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SAMPLE_COUNT_1,
+                    tiling: vk::ImageTiling::Optimal,
+                    image_usage: vk::IMAGE_USAGE_COLOR_ATTACHMENT | vk::IMAGE_USAGE_STORAGE,
+                    initial_layout: vk::ImageLayout::Undefined,
+                };
+
+                vk::Image::new(device.clone(), postfx_color_create_info)
+                    .expect("failed to allocate image")
+            })
+            .collect::<Vec<_>>();
+
+        let postfx_color_memory = postfx_color
+            .iter_mut()
+            .map(|postfx_color| {
+                let postfx_color_memory_allocate_info = vk::MemoryAllocateInfo {
+                    property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+                };
+
+                let postfx_color_memory = vk::Memory::allocate(
+                    device.clone(),
+                    postfx_color_memory_allocate_info,
+                    postfx_color.memory_requirements(),
+                    physical_device.memory_properties(),
+                )
+                .expect("failed to allocate memory");
+
+                postfx_color
+                    .bind_memory(&postfx_color_memory)
+                    .expect("failed to bind image to memory");
+
+                postfx_color_memory
+            })
+            .collect::<Vec<_>>();
+
+        let postfx_color_views = postfx_color
+            .iter()
+            .map(|postfx_color| {
+                let postfx_color_view_create_info = vk::ImageViewCreateInfo {
+                    image: postfx_color,
+                    view_type: vk::ImageViewType::TwoDim,
+                    format: vk::Format::Rgba32Sfloat,
+                    components: vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::Identity,
+                        g: vk::ComponentSwizzle::Identity,
+                        b: vk::ComponentSwizzle::Identity,
+                        a: vk::ComponentSwizzle::Identity,
+                    },
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                };
+
+                vk::ImageView::new(device.clone(), postfx_color_view_create_info)
+                    .expect("failed to create image view")
+            })
+            .collect::<Vec<_>>();
+
+        let postfx_color_samplers = (0..postfx_color.len())
+            .map(|_| {
+                let postfx_color_sampler_create_info = vk::SamplerCreateInfo {
+                    mag_filter: vk::Filter::Nearest,
+                    min_filter: vk::Filter::Nearest,
+                    mipmap_mode: vk::SamplerMipmapMode::Nearest,
+                    address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+                    address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+                    address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+                    mip_lod_bias: 0.0,
+                    anisotropy_enable: false,
+                    max_anisotropy: 0.0,
+                    compare_enable: false,
+                    compare_op: vk::CompareOp::Always,
+                    min_lod: 0.0,
+                    max_lod: 0.0,
+                    border_color: vk::BorderColor::IntTransparentBlack,
+                    unnormalized_coordinates: false,
+                };
+
+                vk::Sampler::new(device.clone(), postfx_color_sampler_create_info)
                     .expect("failed to create sampler")
             })
             .collect::<Vec<_>>();
@@ -621,7 +1093,181 @@ impl VulkanRenderData {
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
 
-        let color_binding = vk::DescriptorSetLayoutBinding {
+        let graphics_color_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let graphics_occlusion_binding = vk::DescriptorSetLayoutBinding {
+            binding: 2,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let graphics_depth_binding = vk::DescriptorSetLayoutBinding {
+            binding: 3,
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+            bindings: &[
+                uniform_buffer_binding,
+                graphics_color_binding,
+                graphics_occlusion_binding,
+                graphics_depth_binding,
+            ],
+        };
+
+        let postfx_descriptor_set_layout =
+            vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
+                .expect("failed to create descriptor set layout");
+
+        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let graphics_color_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let graphics_occlusion_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let graphics_depth_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: swapchain_images.len() as _,
+            pool_sizes: &[
+                uniform_buffer_pool_size,
+                graphics_color_pool_size,
+                graphics_occlusion_pool_size,
+                graphics_depth_pool_size,
+            ],
+        };
+
+        let postfx_descriptor_pool =
+            vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
+                .expect("failed to create descriptor pool");
+
+        let set_layouts = iter::repeat(&postfx_descriptor_set_layout)
+            .take(swapchain_images.len() as _)
+            .collect::<Vec<_>>();
+
+        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: &postfx_descriptor_pool,
+            set_layouts: &set_layouts,
+        };
+
+        let postfx_descriptor_sets =
+            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
+                .expect("failed to allocate descriptor sets");
+
+        let postfx_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+            set_layouts: &[&postfx_descriptor_set_layout],
+        };
+
+        let postfx_pipeline_layout =
+            vk::PipelineLayout::new(device.clone(), postfx_pipeline_layout_create_info)
+                .expect("failed to create pipeline layout");
+
+        let color_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::Rgba32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::Store,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let color_attachment_reference = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let subpass_description = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::Graphics,
+            input_attachments: &[],
+            color_attachments: &[color_attachment_reference],
+            resolve_attachments: &[],
+            depth_stencil_attachment: None,
+            preserve_attachments: &[],
+        };
+
+        let subpass_dependency = vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            dst_subpass: 0,
+            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
+                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
+            src_access_mask: 0,
+            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
+                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
+            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE
+                | vk::ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+        };
+
+        let render_pass_create_info = vk::RenderPassCreateInfo {
+            attachments: &[color_attachment_description],
+            subpasses: &[subpass_description],
+            dependencies: &[subpass_dependency],
+        };
+
+        let postfx_render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
+            .expect("failed to create render pass");
+
+        let postfx_vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+            bindings: &[],
+            attributes: &[],
+        };
+
+        let postfx_pipeline = create_graphics_pipeline(
+            device.clone(),
+            postfx_vertex_input_info,
+            postfx_shader_stages,
+            &postfx_render_pass,
+            &postfx_pipeline_layout,
+            (render_info.extent.0 / 4, render_info.extent.1 / 4),
+            1,
+        );
+
+        let postfx_framebuffers = postfx_color_views
+            .iter()
+            .map(|postfx_color_view| {
+                let framebuffer_create_info = vk::FramebufferCreateInfo {
+                    render_pass: &postfx_render_pass,
+                    attachments: &[&postfx_color_view],
+                    width: render_info.extent.0 / 4,
+                    height: render_info.extent.1 / 4,
+                    layers: 1,
+                };
+
+                vk::Framebuffer::new(device.clone(), framebuffer_create_info)
+                    .expect("failed to create framebuffer")
+            })
+            .collect::<Vec<_>>();
+
+        //PRESENT
+        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let postfx_color_binding = vk::DescriptorSetLayoutBinding {
             binding: 1,
             descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: 1,
@@ -636,7 +1282,11 @@ impl VulkanRenderData {
         };
 
         let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
-            bindings: &[uniform_buffer_binding, color_binding, look_up_table_binding],
+            bindings: &[
+                uniform_buffer_binding,
+                postfx_color_binding,
+                look_up_table_binding,
+            ],
         };
 
         let present_descriptor_set_layout =
@@ -648,7 +1298,7 @@ impl VulkanRenderData {
             descriptor_count: swapchain_images.len() as _,
         };
 
-        let color_pool_size = vk::DescriptorPoolSize {
+        let postfx_color_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: swapchain_images.len() as _,
         };
@@ -662,7 +1312,7 @@ impl VulkanRenderData {
             max_sets: swapchain_images.len() as _,
             pool_sizes: &[
                 uniform_buffer_pool_size,
-                color_pool_size,
+                postfx_color_pool_size,
                 look_up_table_pool_size,
             ],
         };
@@ -747,6 +1397,7 @@ impl VulkanRenderData {
             &present_render_pass,
             &present_pipeline_layout,
             render_info.extent,
+            1,
         );
 
         let present_framebuffers = swapchain_image_views
@@ -765,235 +1416,21 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
-        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
-            binding: 0,
-            descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
-        };
-
-        let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
-            binding: 1,
-            descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_FRAGMENT,
-        };
-
-        /*let cubelet_sdf_binding = vk::DescriptorSetLayoutBinding {
-            binding: 2,
-            descriptor_type: vk::DescriptorType::StorageImage,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_FRAGMENT,
-        };*/
-
-        let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
-            bindings: &[
-                uniform_buffer_binding,
-                octree_buffer_binding,
-                //cubelet_sdf_binding,
-            ],
-        };
-
-        let graphics_descriptor_set_layout =
-            vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
-                .expect("failed to create descriptor set layout");
-
-        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: swapchain_images.len() as _,
-        };
-
-        let octree_buffer_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: swapchain_images.len() as _,
-        };
-        /*
-                let cubelet_sdf_pool_size = vk::DescriptorPoolSize {
-                    descriptor_type: vk::DescriptorType::StorageImage,
-                    descriptor_count: swapchain_images.len() as _,
-                };
-        */
-        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
-            max_sets: swapchain_images.len() as _,
-            pool_sizes: &[
-                uniform_buffer_pool_size,
-                octree_buffer_pool_size,
-                //cubelet_sdf_pool_size,
-            ],
-        };
-
-        let graphics_descriptor_pool =
-            vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
-                .expect("failed to create descriptor pool");
-
-        let set_layouts = iter::repeat(&graphics_descriptor_set_layout)
-            .take(swapchain_images.len() as _)
-            .collect::<Vec<_>>();
-
-        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: &graphics_descriptor_pool,
-            set_layouts: &set_layouts,
-        };
-
-        let graphics_descriptor_sets =
-            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
-                .expect("failed to allocate descriptor sets");
-
-        let graphics_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
-            set_layouts: &[&graphics_descriptor_set_layout],
-        };
-
-        let graphics_pipeline_layout =
-            vk::PipelineLayout::new(device.clone(), graphics_pipeline_layout_create_info)
-                .expect("failed to create pipeline layout");
-
-        let depth_attachment_description = vk::AttachmentDescription {
-            format: vk::Format::D32Sfloat,
-            samples: vk::SAMPLE_COUNT_1,
-            load_op: vk::AttachmentLoadOp::Clear,
-            store_op: vk::AttachmentStoreOp::DontCare,
-            stencil_load_op: vk::AttachmentLoadOp::DontCare,
-            stencil_store_op: vk::AttachmentStoreOp::DontCare,
-            initial_layout: vk::ImageLayout::Undefined,
-            final_layout: vk::ImageLayout::DepthStencilAttachment,
-        };
-
-        let color_attachment_description = vk::AttachmentDescription {
-            format: vk::Format::Rgba32Sfloat,
-            samples: vk::SAMPLE_COUNT_1,
-            load_op: vk::AttachmentLoadOp::Clear,
-            store_op: vk::AttachmentStoreOp::Store,
-            stencil_load_op: vk::AttachmentLoadOp::DontCare,
-            stencil_store_op: vk::AttachmentStoreOp::DontCare,
-            initial_layout: vk::ImageLayout::Undefined,
-            final_layout: vk::ImageLayout::ColorAttachment,
-        };
-
-        let color_attachment_reference = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::ColorAttachment,
-        };
-
-        let depth_attachment_reference = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DepthStencilAttachment,
-        };
-
-        let subpass_description = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::Graphics,
-            input_attachments: &[],
-            color_attachments: &[color_attachment_reference],
-            resolve_attachments: &[],
-            depth_stencil_attachment: Some(&depth_attachment_reference),
-            preserve_attachments: &[],
-        };
-
-        let subpass_dependency = vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
-                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
-            src_access_mask: 0,
-            dst_stage_mask: vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT
-                | vk::PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,
-            dst_access_mask: vk::ACCESS_COLOR_ATTACHMENT_WRITE
-                | vk::ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
-        };
-
-        let render_pass_create_info = vk::RenderPassCreateInfo {
-            attachments: &[color_attachment_description, depth_attachment_description],
-            subpasses: &[subpass_description],
-            dependencies: &[subpass_dependency],
-        };
-
-        let graphics_render_pass = vk::RenderPass::new(device.clone(), render_pass_create_info)
-            .expect("failed to create render pass");
-
-        let vertex_binding = vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: mem::size_of::<Vertex>(),
-            input_rate: vk::VertexInputRate::Vertex,
-        };
-
-        let instance_binding = vk::VertexInputBindingDescription {
-            binding: 1,
-            stride: mem::size_of::<Vector<u32, 3>>(),
-            input_rate: vk::VertexInputRate::Instance,
-        };
-
-        let position_attribute = vk::VertexInputAttributeDescription {
-            binding: 0,
-            location: 0,
-            format: vk::Format::Rgb32Sfloat,
-            offset: 0,
-        };
-
-        let normal_attribute = vk::VertexInputAttributeDescription {
-            binding: 0,
-            location: 1,
-            format: vk::Format::Rgb32Sfloat,
-            offset: mem::size_of::<[f32; 3]>() as u32,
-        };
-
-        let uv_attribute = vk::VertexInputAttributeDescription {
-            binding: 0,
-            location: 2,
-            format: vk::Format::Rgb32Sfloat,
-            offset: 2 * mem::size_of::<[f32; 3]>() as u32,
-        };
-
-        let chunk_position_attribute = vk::VertexInputAttributeDescription {
-            binding: 1,
-            location: 3,
-            format: vk::Format::Rgb32Uint,
-            offset: 0,
-        };
-
-        let graphics_vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
-            bindings: &[vertex_binding, instance_binding],
-            attributes: &[
-                position_attribute,
-                normal_attribute,
-                uv_attribute,
-                chunk_position_attribute,
-            ],
-        };
-
-        let graphics_pipeline = create_graphics_pipeline(
-            device.clone(),
-            graphics_vertex_input_info,
-            graphics_shader_stages,
-            &graphics_render_pass,
-            &graphics_pipeline_layout,
-            (render_info.extent.0 / 4, render_info.extent.1 / 4),
-        );
-
-        let graphics_framebuffers = color_views
-            .iter()
-            .map(|color_view| {
-                let framebuffer_create_info = vk::FramebufferCreateInfo {
-                    render_pass: &graphics_render_pass,
-                    attachments: &[&color_view, &depth_view],
-                    width: render_info.extent.0 / 4,
-                    height: render_info.extent.1 / 4,
-                    layers: 1,
-                };
-
-                vk::Framebuffer::new(device.clone(), framebuffer_create_info)
-                    .expect("failed to create framebuffer")
-            })
-            .collect::<Vec<_>>();
-
         Self {
-            color,
-            color_memory,
-            color_views,
-            color_samplers,
-            depth_view,
-            depth_memory,
-            depth,
             swapchain,
             swapchain_image_views,
+            graphics_color,
+            graphics_color_memory,
+            graphics_color_views,
+            graphics_color_samplers,
+            graphics_occlusion,
+            graphics_occlusion_memory,
+            graphics_occlusion_views,
+            graphics_occlusion_samplers,
+            graphics_depth_view,
+            graphics_depth_memory,
+            graphics_depth_sampler,
+            graphics_depth,
             graphics_render_pass,
             graphics_descriptor_set_layout,
             graphics_descriptor_pool,
@@ -1001,6 +1438,17 @@ impl VulkanRenderData {
             graphics_pipeline_layout,
             graphics_pipeline,
             graphics_framebuffers,
+            postfx_color,
+            postfx_color_memory,
+            postfx_color_views,
+            postfx_color_samplers,
+            postfx_render_pass,
+            postfx_descriptor_set_layout,
+            postfx_descriptor_pool,
+            postfx_descriptor_sets,
+            postfx_pipeline_layout,
+            postfx_pipeline,
+            postfx_framebuffers,
             present_render_pass,
             present_descriptor_set_layout,
             present_descriptor_pool,
@@ -1016,7 +1464,7 @@ impl Vulkan {
     pub fn init(info: RendererInfo<'_>) -> Self {
         let mut octree = Octree::new();
 
-        let ct = 64;
+        let ct = 2 * info.render_distance as usize * CHUNK_SIZE;
         let mut voxels = 0;
 
         use noise::NoiseFn;
@@ -1024,17 +1472,24 @@ impl Vulkan {
 
         for x in 0..ct {
             for z in 0..ct {
-                let max_y = (32 as isize
-                    + (25.0 * perlin.get([x as f64 / 32.0, z as f64 / 32.0])) as isize)
-                    as usize;
-                for y in 0..max_y {
-                    octree.place(x, y, z, 1);
+                let mut max_y = (ct / 2) as isize;
+                for o in 1..=4 {
+                    max_y += (((ct / 4) as f64 / (o as f64).powf(0.5))
+                        * perlin.get([x as f64 / (o as f64 * 32.0), z as f64 / (o as f64 * 32.0)]))
+                        as isize;
+                }
+                for y in 0..ct {
+                    if y >= max_y as usize && y < (ct / 2) {
+                        octree.place(x, y, z, 2);
+                    } else if y == max_y as usize - 1 {
+                        octree.place(x, y, z, 1);
+                    } else if y < max_y as usize {
+                        octree.place(x, y, z, 3);
+                    }
                 }
             }
             println!("X: {}", x);
         }
-
-        octree.place(32, 48, 32, 2);
 
         let application_info = vk::ApplicationInfo {
             application_name: "Octane",
@@ -1304,9 +1759,11 @@ impl Vulkan {
             seeds: [Default::default(); 512],
         };
 
+        let octree_bytes = octree.data().len() * mem::size_of::<crate::octree::Node>();
+
         let mut octree_buffer = vk::Buffer::new(
             device.clone(),
-            10485760,
+            octree_bytes as u64,
             vk::BUFFER_USAGE_TRANSFER_DST
                 | vk::BUFFER_USAGE_VERTEX
                 | vk::BUFFER_USAGE_INDEX
@@ -1515,7 +1972,7 @@ impl Vulkan {
                 let buffer_copy = vk::BufferCopy {
                     src_offset: 0,
                     dst_offset: 0,
-                    size: 10485760,
+                    size: octree_bytes as _,
                 };
 
                 commands.copy_buffer(&staging_buffer, &mut octree_buffer, &[buffer_copy]);
@@ -1711,6 +2168,7 @@ impl Vulkan {
             staging_buffer_memory,
             ubo,
             jfai,
+            octree,
             octree_buffer,
             octree_buffer_memory,
             look_up_table,
@@ -1991,6 +2449,46 @@ impl Renderer for Vulkan {
             });
 
         self.shaders
+            .entry(batch.postfx_vertex_shader.clone())
+            .or_insert_with(|| {
+                info!("loading vertex shader");
+
+                reload_graphics = true;
+
+                let bytes = fs::read(&batch.postfx_vertex_shader).unwrap();
+
+                let code = convert_bytes_to_spirv_data(bytes);
+
+                let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+
+                let shader_module =
+                    vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+                        .expect("failed to create shader module");
+
+                shader_module
+            });
+
+        self.shaders
+            .entry(batch.postfx_fragment_shader.clone())
+            .or_insert_with(|| {
+                info!("loading fragment shader");
+
+                reload_graphics = true;
+
+                let bytes = fs::read(&batch.postfx_fragment_shader).unwrap();
+
+                let code = convert_bytes_to_spirv_data(bytes);
+
+                let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+
+                let shader_module =
+                    vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+                        .expect("failed to create shader module");
+
+                shader_module
+            });
+
+        self.shaders
             .entry(batch.present_vertex_shader.clone())
             .or_insert_with(|| {
                 info!("loading vertex shader");
@@ -2053,6 +2551,8 @@ impl Renderer for Vulkan {
         if reload_graphics
             || self.last_batch.graphics_vertex_shader != batch.graphics_vertex_shader
             || self.last_batch.graphics_fragment_shader != batch.graphics_fragment_shader
+            || self.last_batch.postfx_vertex_shader != batch.postfx_vertex_shader
+            || self.last_batch.postfx_fragment_shader != batch.postfx_fragment_shader
             || self.last_batch.present_vertex_shader != batch.present_vertex_shader
             || self.last_batch.present_fragment_shader != batch.present_fragment_shader
         {
@@ -2067,6 +2567,19 @@ impl Renderer for Vulkan {
                 vk::PipelineShaderStageCreateInfo {
                     stage: vk::SHADER_STAGE_FRAGMENT,
                     module: &self.shaders[&batch.graphics_fragment_shader],
+                    entry_point: "main",
+                },
+            ];
+
+            let postfx_shaders = [
+                vk::PipelineShaderStageCreateInfo {
+                    stage: vk::SHADER_STAGE_VERTEX,
+                    module: &self.shaders[&batch.postfx_vertex_shader],
+                    entry_point: "main",
+                },
+                vk::PipelineShaderStageCreateInfo {
+                    stage: vk::SHADER_STAGE_FRAGMENT,
+                    module: &self.shaders[&batch.postfx_fragment_shader],
                     entry_point: "main",
                 },
             ];
@@ -2093,6 +2606,7 @@ impl Renderer for Vulkan {
                 &self.physical_device,
                 &self.surface,
                 &graphics_shaders,
+                &postfx_shaders,
                 &present_shaders,
                 old_swapchain,
                 &self.render_info,
@@ -2307,10 +2821,11 @@ impl Renderer for Vulkan {
                     image_infos: &[],
                 };
 
+                let octree_bytes = self.octree.data().len() * mem::size_of::<crate::octree::Node>();
                 let octree_buffer_info = vk::DescriptorBufferInfo {
                     buffer: &self.octree_buffer,
                     offset: 0,
-                    range: 10485760,
+                    range: octree_bytes,
                 };
 
                 let octree_buffer_descriptor_write = vk::WriteDescriptorSet {
@@ -2366,7 +2881,7 @@ impl Renderer for Vulkan {
                                 self.render_info.extent.1 / self.render_info.scaling_factor,
                             ),
                         },
-                        color_clear_values: &[[0.0385, 0.0385, 0.0385, 1.0]],
+                        color_clear_values: &[[0.0385, 0.0385, 0.0385, 1.0], [1.0, 1.0, 1.0, 1.0]],
                         depth_stencil_clear_value: Some((1.0, 0)),
                     };
 
@@ -2402,12 +2917,202 @@ impl Renderer for Vulkan {
 
                     commands.end_render_pass();
 
-                    let barrier = vk::ImageMemoryBarrier {
+                    let color_barrier = vk::ImageMemoryBarrier {
                         old_layout: vk::ImageLayout::Undefined,
                         new_layout: vk::ImageLayout::General,
                         src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                         dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                        image: &render_data.color[image_index as usize],
+                        image: &render_data.graphics_color[image_index as usize],
+                        src_access_mask: 0,
+                        dst_access_mask: 0,
+                        subresource_range: vk::ImageSubresourceRange {
+                            aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                    };
+
+                    let occlusion_barrier = vk::ImageMemoryBarrier {
+                        old_layout: vk::ImageLayout::Undefined,
+                        new_layout: vk::ImageLayout::General,
+                        src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                        dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                        image: &render_data.graphics_occlusion[image_index as usize],
+                        src_access_mask: 0,
+                        dst_access_mask: 0,
+                        subresource_range: vk::ImageSubresourceRange {
+                            aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                    };
+
+                    let depth_barrier = vk::ImageMemoryBarrier {
+                        old_layout: vk::ImageLayout::Undefined,
+                        new_layout: vk::ImageLayout::ShaderReadOnly,
+                        src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                        dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                        image: &render_data.graphics_depth,
+                        src_access_mask: 0,
+                        dst_access_mask: 0,
+                        subresource_range: vk::ImageSubresourceRange {
+                            aspect_mask: vk::IMAGE_ASPECT_DEPTH,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                    };
+
+                    commands.pipeline_barrier(
+                        vk::PIPELINE_STAGE_TOP_OF_PIPE,
+                        vk::PIPELINE_STAGE_FRAGMENT_SHADER,
+                        0,
+                        &[],
+                        &[],
+                        &[color_barrier, occlusion_barrier, depth_barrier],
+                    );
+                })
+                .expect("failed to record command buffer");
+
+            let submit_info = vk::SubmitInfo {
+                wait_semaphores: &[],
+                wait_stages: &[],
+                command_buffers: &[&self.command_buffer],
+                signal_semaphores: &[],
+            };
+
+            self.queue
+                .submit(&[submit_info], None)
+                .expect("failed to submit draw command buffer");
+
+            self.queue.wait_idle().expect("failed to wait on queue");
+
+            for i in 0..render_data.postfx_descriptor_sets.len() {
+                let uniform_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: ubo_offset as _,
+                    range: mem::size_of::<UniformBufferObject>(),
+                };
+
+                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[uniform_buffer_info],
+                    image_infos: &[],
+                };
+
+                let color_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.graphics_color_samplers[image_index as usize],
+                    image_view: &render_data.graphics_color_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let color_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[color_info],
+                };
+
+                let occlusion_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.graphics_occlusion_samplers[image_index as usize],
+                    image_view: &render_data.graphics_occlusion_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let occlusion_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[occlusion_info],
+                };
+
+                let depth_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.graphics_depth_sampler,
+                    image_view: &render_data.graphics_depth_view,
+                    image_layout: vk::ImageLayout::ShaderReadOnly,
+                };
+
+                let depth_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 3,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::CombinedImageSampler,
+                    buffer_infos: &[],
+                    image_infos: &[depth_info],
+                };
+
+                vk::DescriptorSet::update(
+                    &[
+                        uniform_buffer_descriptor_write,
+                        color_descriptor_write,
+                        occlusion_descriptor_write,
+                        depth_descriptor_write,
+                    ],
+                    &[],
+                );
+            }
+
+            self.command_buffer
+                .reset()
+                .expect("failed to reset command buffer");
+
+            self.command_buffer
+                .record(|commands| {
+                    let render_pass_begin_info = vk::RenderPassBeginInfo {
+                        render_pass: &render_data.postfx_render_pass,
+                        framebuffer: &render_data.postfx_framebuffers[image_index as usize],
+                        render_area: vk::Rect2d {
+                            offset: (0, 0),
+                            extent: (
+                                self.render_info.extent.0 / self.render_info.scaling_factor,
+                                self.render_info.extent.1 / self.render_info.scaling_factor,
+                            ),
+                        },
+                        color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
+                        depth_stencil_clear_value: None,
+                    };
+
+                    commands.begin_render_pass(render_pass_begin_info);
+
+                    commands.bind_pipeline(
+                        vk::PipelineBindPoint::Graphics,
+                        &render_data.postfx_pipeline,
+                    );
+
+                    commands.bind_descriptor_sets(
+                        vk::PipelineBindPoint::Graphics,
+                        &render_data.postfx_pipeline_layout,
+                        0,
+                        &[&render_data.postfx_descriptor_sets[image_index as usize]],
+                        &[],
+                    );
+
+                    commands.draw(3, 1, 0, 0);
+
+                    commands.end_render_pass();
+
+                    let color_barrier = vk::ImageMemoryBarrier {
+                        old_layout: vk::ImageLayout::Undefined,
+                        new_layout: vk::ImageLayout::General,
+                        src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                        dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                        image: &render_data.postfx_color[image_index as usize],
                         src_access_mask: 0,
                         dst_access_mask: 0,
                         subresource_range: vk::ImageSubresourceRange {
@@ -2425,7 +3130,7 @@ impl Renderer for Vulkan {
                         0,
                         &[],
                         &[],
-                        &[barrier],
+                        &[color_barrier],
                     );
                 })
                 .expect("failed to record command buffer");
@@ -2461,8 +3166,8 @@ impl Renderer for Vulkan {
                 };
 
                 let color_info = vk::DescriptorImageInfo {
-                    sampler: &render_data.color_samplers[image_index as usize],
-                    image_view: &render_data.color_views[image_index as usize],
+                    sampler: &render_data.postfx_color_samplers[image_index as usize],
+                    image_view: &render_data.postfx_color_views[image_index as usize],
                     image_layout: vk::ImageLayout::General,
                 };
 
@@ -2582,6 +3287,19 @@ impl Renderer for Vulkan {
             },
         ];
 
+        let postfx_shaders = [
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::SHADER_STAGE_VERTEX,
+                module: &self.shaders[&self.last_batch.postfx_vertex_shader],
+                entry_point: "main",
+            },
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::SHADER_STAGE_FRAGMENT,
+                module: &self.shaders[&self.last_batch.postfx_fragment_shader],
+                entry_point: "main",
+            },
+        ];
+
         let present_shaders = [
             vk::PipelineShaderStageCreateInfo {
                 stage: vk::SHADER_STAGE_VERTEX,
@@ -2607,6 +3325,7 @@ impl Renderer for Vulkan {
             &self.physical_device,
             &self.surface,
             &graphics_shaders,
+            &postfx_shaders,
             &present_shaders,
             Some(swapchain),
             &self.render_info,
