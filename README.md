@@ -4,5 +4,9 @@ A voxel raycasting engine built entirely in Rust using Vulkan, with the help of 
 The goal of this project is to build a specialized game engine for use in future projects. It also has served as a learning exercise in many ways.
 
 # Screenshot
-Features a raycasting engine built to render octrees.
-![Octree Raycasting](https://imgur.com/1nK4g09.png)
+Features:
+- A raycasting engine built to render octrees.
+- Lighting with soft shadows.
+- Ambient occlusion.
+- Accurate reflection and refraction of light.
+![Octree Raycasting](https://i.imgur.com/9N85cXv.png)
