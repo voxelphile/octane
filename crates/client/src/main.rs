@@ -89,7 +89,7 @@ fn main() {
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
 
-    let render_distance = 2;
+    let render_distance = 16;
 
     let hq4x = format!("{}/assets/hq4x.png", base_path_str);
 
@@ -101,9 +101,10 @@ fn main() {
 
     let mut vulkan = render::Vulkan::init(render_info);
 
-    vulkan.ubo.proj = projection;
-    vulkan.ubo.view = camera.inverse();
-    vulkan.ubo.model = model;
+    vulkan.camera.proj = projection;
+    vulkan.camera.view = camera.inverse();
+    vulkan.camera.camera = camera;
+    vulkan.camera.model = model;
 
     let present_vertex_shader = format!("{}/assets/fullscreen.vert.spirv", base_path_str);
     let present_fragment_shader = format!("{}/assets/present.frag.spirv", base_path_str);
@@ -137,8 +138,8 @@ fn main() {
 
     let mut x_rot = 0.0;
     let mut y_rot = 0.0;
-    let middle = (2.0 * render_distance as f32 * 32.0) / 2.0 - 16.0;
-    let height = (2.0 * render_distance as f32 * 32.0);
+    let middle = (2.0 * render_distance as f32 * 8.0) / 2.0 - 4.0;
+    let height = 32.0;
     let mut position = Vector::<f32, 4>::new([middle, height, middle, 1.0]);
     let mut should_capture = false;
 
@@ -285,13 +286,15 @@ fn main() {
         let follow = 2.0 * 1.0 as f32;
         let angle: f32 = 0.0;
 
-        vulkan.ubo.model = Matrix::<f32, 4, 4>::identity();
-        vulkan.ubo.model[0][0] = angle.cos();
-        vulkan.ubo.model[2][0] = angle.sin();
-        vulkan.ubo.model[0][2] = -angle.sin();
-        vulkan.ubo.model[2][2] = angle.cos();
+        vulkan.camera.model = Matrix::<f32, 4, 4>::identity();
+        vulkan.camera.model[0][0] = angle.cos();
+        vulkan.camera.model[2][0] = angle.sin();
+        vulkan.camera.model[0][2] = -angle.sin();
+        vulkan.camera.model[2][2] = angle.cos();
 
-        vulkan.ubo.view = camera.inverse();
+        vulkan.camera.view = camera.inverse();
+
+        vulkan.camera.camera = camera;
 
         vulkan.draw_batch(batch.clone(), &entries);
 

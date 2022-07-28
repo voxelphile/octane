@@ -2,29 +2,26 @@
 
 layout(origin_upper_left) in vec4 gl_FragCoord;
 
-layout(binding = 0) uniform UniformBufferObject {
-	mat4 model;
-	mat4 view;
-	mat4 proj;
+layout(binding = 0) uniform RenderSettings {
 	vec2 resolution;
 	uint render_distance;
-} ubo;
+} settings;
 
 layout(binding = 1, rgba32f) uniform image2D source_color;
 layout(binding = 2, rgba32f) uniform image2D source_occlusion;
-layout(binding = 3) uniform sampler2D source_depth;
+layout(binding = 3, rgba32f) uniform image2D source_depth;
 
 layout(location = 0) out vec4 out_color;
 
 void main() {
-	vec2 uv_coords = gl_FragCoord.xy / (ubo.resolution / 4);
+	vec2 uv_coords = gl_FragCoord.xy / (settings.resolution / 4);
 	ivec2 pixel = ivec2(gl_FragCoord.xy);
 
 	vec4 color = imageLoad(source_color, pixel);
 
 	float occlusion = clamp(imageLoad(source_occlusion, pixel).x, 0, 1); 
 
-	float depth = clamp(texture(source_depth, uv_coords).x, 0.1, 1);
+	float depth = clamp(imageLoad(source_depth, pixel).x, 0.1, 1);
 
 	//SHADOWS
 	int sample_size = int(((1 - occlusion) * 5) / depth);
@@ -44,7 +41,7 @@ void main() {
 			if (pos_occ == 1 && (nearest_lit == vec2(sample_size * sample_size) || ijdist < middledist)){ 
 				nearest_lit = vec2(i, j);
 
-				nearest_lit_depth = texture(source_depth, vec2(pos)).x;
+				nearest_lit_depth = clamp(imageLoad(source_depth, pos), 0.1, 1).x;
 			}
 		}
 	}

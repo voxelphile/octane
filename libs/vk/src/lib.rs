@@ -5920,6 +5920,7 @@ pub struct Memory {
     device: Rc<Device>,
     handle: ffi::DeviceMemory,
     size: u64,
+    mem: Option<*mut u8>,
 }
 
 impl Memory {
@@ -5928,6 +5929,7 @@ impl Memory {
         allocate_info: MemoryAllocateInfo,
         requirements: MemoryRequirements,
         properties: MemoryProperties,
+        mapped: bool,
     ) -> Result<Self, Error> {
         let size = requirements.size;
 
@@ -5968,10 +5970,31 @@ impl Memory {
             ffi::Result::Success => {
                 let handle = unsafe { handle.assume_init() };
 
+                let mem = if mapped {
+                    let mut mem = ptr::null_mut::<u8>();
+
+                    let result = unsafe {
+                        ffi::vkMapMemory(device.handle, handle, 0, size, 0, &mut mem as *mut _ as _)
+                    };
+
+                    match result {
+                        ffi::Result::Success => {}
+                        ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
+                        ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
+                        ffi::Result::MemoryMapFailed => Err(Error::MemoryMapFailed)?,
+                        _ => panic!("unexpected result: {:?}", result),
+                    }
+
+                    Some(mem)
+                } else {
+                    None
+                };
+
                 let memory = Self {
                     device,
                     handle,
                     size,
+                    mem,
                 };
 
                 Ok(memory)
@@ -5993,37 +6016,16 @@ impl Memory {
             panic!("attempt to overflow buffer");
         }
 
-        let mut mem = ptr::null_mut::<u8>();
-
-        let result = unsafe {
-            ffi::vkMapMemory(
-                self.device.handle,
-                self.handle,
-                offset as _,
-                self.size - offset as u64,
-                0,
-                &mut mem as *mut _ as _,
-            )
-        };
-
-        match result {
-            ffi::Result::Success => {}
-            ffi::Result::OutOfHostMemory => Err(Error::OutOfHostMemory)?,
-            ffi::Result::OutOfDeviceMemory => Err(Error::OutOfDeviceMemory)?,
-            ffi::Result::MemoryMapFailed => Err(Error::MemoryMapFailed)?,
-            _ => panic!("unexpected result: {:?}", result),
-        }
+        let mem = self.mem.ok_or(Error::MemoryMapFailed)?;
 
         let data = unsafe {
             slice::from_raw_parts_mut(
-                mem as _,
+                mem.add(offset) as _,
                 (self.size as usize - offset) / mem::size_of::<T>(),
             )
         };
 
         script(data);
-
-        unsafe { ffi::vkUnmapMemory(self.device.handle, self.handle) };
 
         Ok(())
     }
@@ -6031,6 +6033,9 @@ impl Memory {
 
 impl Drop for Memory {
     fn drop(&mut self) {
+        if let Some(_) = self.mem {
+            unsafe { ffi::vkUnmapMemory(self.device.handle, self.handle) };
+        }
         unsafe { ffi::vkFreeMemory(self.device.handle, self.handle, ptr::null()) };
     }
 }

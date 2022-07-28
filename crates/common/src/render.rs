@@ -1,5 +1,6 @@
+use crate::bucket::Bucket;
 use crate::mesh::{Mesh, Vertex};
-use crate::octree::*;
+use crate::octree::{Node, Octree};
 
 use math::prelude::{Matrix, Vector};
 
@@ -15,23 +16,21 @@ use std::time;
 use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
 
-pub const CHUNK_SIZE: usize = 32;
+pub const CHUNK_SIZE: usize = 8;
 static mut JFAI_DONE: bool = true;
 //temporary for here for now.
 #[derive(Default, Clone, Copy)]
-pub struct UniformBufferObject {
+pub struct Camera {
     pub model: Matrix<f32, 4, 4>,
     pub view: Matrix<f32, 4, 4>,
     pub proj: Matrix<f32, 4, 4>,
-    pub resolution: Vector<f32, 2>,
-    pub render_distance: u32,
+    pub camera: Matrix<f32, 4, 4>,
 }
 
-#[derive(Clone, Copy)]
-pub struct JfaiBufferObject {
-    pub step_size: u32,
-    pub seed_amount: u32,
-    pub seeds: [Vector<u32, 3>; 512],
+#[derive(Default, Clone, Copy)]
+pub struct RenderSettings {
+    pub resolution: Vector<f32, 2>,
+    pub render_distance: u32,
 }
 
 pub struct RendererInfo<'a> {
@@ -114,6 +113,7 @@ fn create_graphics_pipeline(
     layout: &'_ vk::PipelineLayout,
     extent: (u32, u32),
     attachment_count: usize,
+    cull_mode: u32,
 ) -> vk::Pipeline {
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
         topology: vk::PrimitiveTopology::TriangleList,
@@ -145,7 +145,7 @@ fn create_graphics_pipeline(
         depth_clamp_enable: false,
         rasterizer_discard_enable: false,
         polygon_mode: vk::PolygonMode::Fill,
-        cull_mode: vk::CULL_MODE_FRONT,
+        cull_mode,
         front_face: vk::FrontFace::CounterClockwise,
         depth_bias_enable: false,
         depth_bias_constant_factor: 0.0,
@@ -175,8 +175,8 @@ fn create_graphics_pipeline(
             src_color_blend_factor: vk::BlendFactor::SrcAlpha,
             dst_color_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
             color_blend_op: vk::BlendOp::Add,
-            src_alpha_blend_factor: vk::BlendFactor::One,
-            dst_alpha_blend_factor: vk::BlendFactor::Zero,
+            src_alpha_blend_factor: vk::BlendFactor::SrcAlpha,
+            dst_alpha_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
             alpha_blend_op: vk::BlendOp::Add,
         })
         .collect::<Vec<_>>();
@@ -216,9 +216,10 @@ fn create_graphics_pipeline(
 }
 
 pub struct Vulkan {
-    pub ubo: UniformBufferObject,
+    pub camera: Bucket<Camera>,
+    pub settings: Bucket<RenderSettings>,
+    last_camera: Option<Camera>,
     octree: Octree,
-    jfai: JfaiBufferObject,
     last_batch: Batch,
     look_up_table_sampler: vk::Sampler,
     look_up_table_view: vk::ImageView,
@@ -389,10 +390,6 @@ pub struct VulkanRenderData {
     graphics_occlusion_views: Vec<vk::ImageView>,
     graphics_occlusion_memory: Vec<vk::Memory>,
     graphics_occlusion: Vec<vk::Image>,
-    graphics_depth_sampler: vk::Sampler,
-    graphics_depth_view: vk::ImageView,
-    graphics_depth_memory: vk::Memory,
-    graphics_depth: vk::Image,
     graphics_framebuffers: Vec<vk::Framebuffer>,
     graphics_pipeline: vk::Pipeline,
     graphics_pipeline_layout: vk::PipelineLayout,
@@ -418,6 +415,14 @@ pub struct VulkanRenderData {
     present_descriptor_pool: vk::DescriptorPool,
     present_descriptor_set_layout: vk::DescriptorSetLayout,
     present_render_pass: vk::RenderPass,
+    distance_samplers: Vec<vk::Sampler>,
+    distance_views: Vec<vk::ImageView>,
+    distance_memory: Vec<vk::Memory>,
+    distance: Vec<vk::Image>,
+    depth_sampler: vk::Sampler,
+    depth_view: vk::ImageView,
+    depth_memory: vk::Memory,
+    depth: vk::Image,
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain: vk::Swapchain,
 }
@@ -433,6 +438,84 @@ impl VulkanRenderData {
         old_swapchain: Option<vk::Swapchain>,
         render_info: &VulkanRenderInfo,
     ) -> Self {
+        //DEPTH
+        let depth_create_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TwoDim,
+            format: vk::Format::D32Sfloat,
+            extent: (render_info.extent.0, render_info.extent.1, 1),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage: vk::IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut depth =
+            vk::Image::new(device.clone(), depth_create_info).expect("failed to allocate image");
+
+        let depth_memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let depth_memory = vk::Memory::allocate(
+            device.clone(),
+            depth_memory_allocate_info,
+            depth.memory_requirements(),
+            physical_device.memory_properties(),
+            false,
+        )
+        .expect("failed to allocate memory");
+
+        depth
+            .bind_memory(&depth_memory)
+            .expect("failed to bind image to memory");
+
+        let depth_view_create_info = vk::ImageViewCreateInfo {
+            image: &depth,
+            view_type: vk::ImageViewType::TwoDim,
+            format: vk::Format::D32Sfloat,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let depth_view = vk::ImageView::new(device.clone(), depth_view_create_info)
+            .expect("failed to create image view");
+
+        let depth_sampler = {
+            let depth_sampler_create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::Nearest,
+                min_filter: vk::Filter::Nearest,
+                mipmap_mode: vk::SamplerMipmapMode::Nearest,
+                address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+                address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+                address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+                mip_lod_bias: 0.0,
+                anisotropy_enable: false,
+                max_anisotropy: 0.0,
+                compare_enable: false,
+                compare_op: vk::CompareOp::Always,
+                min_lod: 0.0,
+                max_lod: 0.0,
+                border_color: vk::BorderColor::IntTransparentBlack,
+                unnormalized_coordinates: false,
+            };
+
+            vk::Sampler::new(device.clone(), depth_sampler_create_info)
+                .expect("failed to create sampler")
+        };
+
         //SWAPCHAIN
         let swapchain_create_info = vk::SwapchainCreateInfo {
             surface,
@@ -484,88 +567,107 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
+        //DISTANCE
+        let mut distance = (0..swapchain_images.len())
+            .map(|_| {
+                let distance_create_info = vk::ImageCreateInfo {
+                    image_type: vk::ImageType::TwoDim,
+                    format: vk::Format::Rgba32Sfloat,
+                    extent: (
+                        render_info.extent.0 / render_info.scaling_factor,
+                        render_info.extent.1 / render_info.scaling_factor,
+                        1,
+                    ),
+                    mip_levels: 1,
+                    array_layers: 1,
+                    samples: vk::SAMPLE_COUNT_1,
+                    tiling: vk::ImageTiling::Optimal,
+                    image_usage: vk::IMAGE_USAGE_COLOR_ATTACHMENT | vk::IMAGE_USAGE_STORAGE,
+                    initial_layout: vk::ImageLayout::Undefined,
+                };
+
+                vk::Image::new(device.clone(), distance_create_info)
+                    .expect("failed to allocate image")
+            })
+            .collect::<Vec<_>>();
+
+        let distance_memory = distance
+            .iter_mut()
+            .map(|distance| {
+                let distance_memory_allocate_info = vk::MemoryAllocateInfo {
+                    property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+                };
+
+                let distance_memory = vk::Memory::allocate(
+                    device.clone(),
+                    distance_memory_allocate_info,
+                    distance.memory_requirements(),
+                    physical_device.memory_properties(),
+                    false,
+                )
+                .expect("failed to allocate memory");
+
+                distance
+                    .bind_memory(&distance_memory)
+                    .expect("failed to bind image to memory");
+
+                distance_memory
+            })
+            .collect::<Vec<_>>();
+
+        let distance_views = distance
+            .iter()
+            .map(|distance| {
+                let distance_view_create_info = vk::ImageViewCreateInfo {
+                    image: distance,
+                    view_type: vk::ImageViewType::TwoDim,
+                    format: vk::Format::Rgba32Sfloat,
+                    components: vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::Identity,
+                        g: vk::ComponentSwizzle::Identity,
+                        b: vk::ComponentSwizzle::Identity,
+                        a: vk::ComponentSwizzle::Identity,
+                    },
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                };
+
+                vk::ImageView::new(device.clone(), distance_view_create_info)
+                    .expect("failed to create image view")
+            })
+            .collect::<Vec<_>>();
+
+        let distance_samplers = (0..distance.len())
+            .map(|_| {
+                let distance_sampler_create_info = vk::SamplerCreateInfo {
+                    mag_filter: vk::Filter::Nearest,
+                    min_filter: vk::Filter::Nearest,
+                    mipmap_mode: vk::SamplerMipmapMode::Nearest,
+                    address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+                    address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+                    address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+                    mip_lod_bias: 0.0,
+                    anisotropy_enable: false,
+                    max_anisotropy: 0.0,
+                    compare_enable: false,
+                    compare_op: vk::CompareOp::Always,
+                    min_lod: 0.0,
+                    max_lod: 0.0,
+                    border_color: vk::BorderColor::IntTransparentBlack,
+                    unnormalized_coordinates: false,
+                };
+
+                vk::Sampler::new(device.clone(), distance_sampler_create_info)
+                    .expect("failed to create sampler")
+            })
+            .collect::<Vec<_>>();
+
         //GRAPHICS
-        let graphics_depth_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::TwoDim,
-            format: vk::Format::D32Sfloat,
-            extent: (
-                render_info.extent.0 / render_info.scaling_factor,
-                render_info.extent.1 / render_info.scaling_factor,
-                1,
-            ),
-            mip_levels: 1,
-            array_layers: 1,
-            samples: vk::SAMPLE_COUNT_1,
-            tiling: vk::ImageTiling::Optimal,
-            image_usage: vk::IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | vk::IMAGE_USAGE_SAMPLED,
-            initial_layout: vk::ImageLayout::Undefined,
-        };
-
-        let mut graphics_depth = vk::Image::new(device.clone(), graphics_depth_create_info)
-            .expect("failed to allocate image");
-
-        let graphics_depth_memory_allocate_info = vk::MemoryAllocateInfo {
-            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
-        };
-
-        let graphics_depth_memory = vk::Memory::allocate(
-            device.clone(),
-            graphics_depth_memory_allocate_info,
-            graphics_depth.memory_requirements(),
-            physical_device.memory_properties(),
-        )
-        .expect("failed to allocate memory");
-
-        graphics_depth
-            .bind_memory(&graphics_depth_memory)
-            .expect("failed to bind image to memory");
-
-        let graphics_depth_view_create_info = vk::ImageViewCreateInfo {
-            image: &graphics_depth,
-            view_type: vk::ImageViewType::TwoDim,
-            format: vk::Format::D32Sfloat,
-            components: vk::ComponentMapping {
-                r: vk::ComponentSwizzle::Identity,
-                g: vk::ComponentSwizzle::Identity,
-                b: vk::ComponentSwizzle::Identity,
-                a: vk::ComponentSwizzle::Identity,
-            },
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::IMAGE_ASPECT_DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
-        };
-
-        let graphics_depth_view =
-            vk::ImageView::new(device.clone(), graphics_depth_view_create_info)
-                .expect("failed to create image view");
-
-        let graphics_depth_sampler = {
-            let graphics_depth_sampler_create_info = vk::SamplerCreateInfo {
-                mag_filter: vk::Filter::Nearest,
-                min_filter: vk::Filter::Nearest,
-                mipmap_mode: vk::SamplerMipmapMode::Nearest,
-                address_mode_u: vk::SamplerAddressMode::ClampToBorder,
-                address_mode_v: vk::SamplerAddressMode::ClampToBorder,
-                address_mode_w: vk::SamplerAddressMode::ClampToBorder,
-                mip_lod_bias: 0.0,
-                anisotropy_enable: false,
-                max_anisotropy: 0.0,
-                compare_enable: false,
-                compare_op: vk::CompareOp::Always,
-                min_lod: 0.0,
-                max_lod: 0.0,
-                border_color: vk::BorderColor::IntTransparentBlack,
-                unnormalized_coordinates: false,
-            };
-
-            vk::Sampler::new(device.clone(), graphics_depth_sampler_create_info)
-                .expect("failed to create sampler")
-        };
-
         let mut graphics_color = (0..swapchain_images.len())
             .map(|_| {
                 let graphics_color_create_info = vk::ImageCreateInfo {
@@ -601,6 +703,7 @@ impl VulkanRenderData {
                     graphics_color_memory_allocate_info,
                     graphics_color.memory_requirements(),
                     physical_device.memory_properties(),
+                    false,
                 )
                 .expect("failed to allocate memory");
 
@@ -699,6 +802,7 @@ impl VulkanRenderData {
                     graphics_occlusion_memory_allocate_info,
                     graphics_occlusion.memory_requirements(),
                     physical_device.memory_properties(),
+                    false,
                 )
                 .expect("failed to allocate memory");
 
@@ -762,29 +866,45 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
-        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+        let camera_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: 1,
             stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
         };
 
-        let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
+        let settings_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 1,
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
+        };
+
+        let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
+            binding: 2,
             descriptor_type: vk::DescriptorType::StorageBuffer,
             descriptor_count: 1,
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
 
         let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
-            bindings: &[uniform_buffer_binding, octree_buffer_binding],
+            bindings: &[
+                camera_buffer_binding,
+                settings_buffer_binding,
+                octree_buffer_binding,
+            ],
         };
 
         let graphics_descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
                 .expect("failed to create descriptor set layout");
 
-        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+        let camera_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
+        let settings_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: swapchain_images.len() as _,
         };
@@ -796,7 +916,11 @@ impl VulkanRenderData {
 
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
             max_sets: swapchain_images.len() as _,
-            pool_sizes: &[uniform_buffer_pool_size, octree_buffer_pool_size],
+            pool_sizes: &[
+                camera_buffer_pool_size,
+                settings_buffer_pool_size,
+                octree_buffer_pool_size,
+            ],
         };
 
         let graphics_descriptor_pool =
@@ -846,11 +970,22 @@ impl VulkanRenderData {
             final_layout: vk::ImageLayout::ColorAttachment,
         };
 
+        let distance_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::Rgba32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::DontCare,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::ColorAttachment,
+        };
+
         let depth_attachment_description = vk::AttachmentDescription {
             format: vk::Format::D32Sfloat,
             samples: vk::SAMPLE_COUNT_1,
             load_op: vk::AttachmentLoadOp::Clear,
-            store_op: vk::AttachmentStoreOp::DontCare,
+            store_op: vk::AttachmentStoreOp::Store,
             stencil_load_op: vk::AttachmentLoadOp::DontCare,
             stencil_store_op: vk::AttachmentStoreOp::DontCare,
             initial_layout: vk::ImageLayout::Undefined,
@@ -867,15 +1002,24 @@ impl VulkanRenderData {
             layout: vk::ImageLayout::ColorAttachment,
         };
 
-        let depth_attachment_reference = vk::AttachmentReference {
+        let distance_attachment_reference = vk::AttachmentReference {
             attachment: 2,
+            layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 3,
             layout: vk::ImageLayout::DepthStencilAttachment,
         };
 
         let subpass_description = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::Graphics,
             input_attachments: &[],
-            color_attachments: &[color_attachment_reference, occlusion_attachment_reference],
+            color_attachments: &[
+                color_attachment_reference,
+                occlusion_attachment_reference,
+                distance_attachment_reference,
+            ],
             resolve_attachments: &[],
             depth_stencil_attachment: Some(&depth_attachment_reference),
             preserve_attachments: &[],
@@ -897,6 +1041,7 @@ impl VulkanRenderData {
             attachments: &[
                 color_attachment_description,
                 occlusion_attachment_description,
+                distance_attachment_description,
                 depth_attachment_description,
             ],
             subpasses: &[subpass_description],
@@ -963,28 +1108,33 @@ impl VulkanRenderData {
             &graphics_render_pass,
             &graphics_pipeline_layout,
             (render_info.extent.0 / 4, render_info.extent.1 / 4),
-            2,
+            3,
+            vk::CULL_MODE_FRONT,
         );
 
         let graphics_framebuffers = graphics_color_views
             .iter()
             .zip(graphics_occlusion_views.iter())
-            .map(|(graphics_color_view, graphics_occlusion_view)| {
-                let framebuffer_create_info = vk::FramebufferCreateInfo {
-                    render_pass: &graphics_render_pass,
-                    attachments: &[
-                        &graphics_color_view,
-                        &graphics_occlusion_view,
-                        &graphics_depth_view,
-                    ],
-                    width: render_info.extent.0 / 4,
-                    height: render_info.extent.1 / 4,
-                    layers: 1,
-                };
+            .zip(distance_views.iter())
+            .map(
+                |((graphics_color_view, graphics_occlusion_view), distance_view)| {
+                    let framebuffer_create_info = vk::FramebufferCreateInfo {
+                        render_pass: &graphics_render_pass,
+                        attachments: &[
+                            &graphics_color_view,
+                            &graphics_occlusion_view,
+                            &distance_view,
+                            &depth_view,
+                        ],
+                        width: render_info.extent.0 / 4,
+                        height: render_info.extent.1 / 4,
+                        layers: 1,
+                    };
 
-                vk::Framebuffer::new(device.clone(), framebuffer_create_info)
-                    .expect("failed to create framebuffer")
-            })
+                    vk::Framebuffer::new(device.clone(), framebuffer_create_info)
+                        .expect("failed to create framebuffer")
+                },
+            )
             .collect::<Vec<_>>();
 
         //POSTFX
@@ -1023,6 +1173,7 @@ impl VulkanRenderData {
                     postfx_color_memory_allocate_info,
                     postfx_color.memory_requirements(),
                     physical_device.memory_properties(),
+                    false,
                 )
                 .expect("failed to allocate memory");
 
@@ -1086,7 +1237,7 @@ impl VulkanRenderData {
             })
             .collect::<Vec<_>>();
 
-        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+        let settings_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: 1,
@@ -1107,19 +1258,19 @@ impl VulkanRenderData {
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
 
-        let graphics_depth_binding = vk::DescriptorSetLayoutBinding {
+        let distance_binding = vk::DescriptorSetLayoutBinding {
             binding: 3,
-            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: 1,
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
 
         let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
             bindings: &[
-                uniform_buffer_binding,
+                settings_buffer_binding,
                 graphics_color_binding,
                 graphics_occlusion_binding,
-                graphics_depth_binding,
+                distance_binding,
             ],
         };
 
@@ -1127,7 +1278,7 @@ impl VulkanRenderData {
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
                 .expect("failed to create descriptor set layout");
 
-        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+        let settings_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: swapchain_images.len() as _,
         };
@@ -1142,18 +1293,18 @@ impl VulkanRenderData {
             descriptor_count: swapchain_images.len() as _,
         };
 
-        let graphics_depth_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+        let distance_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
             descriptor_count: swapchain_images.len() as _,
         };
 
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
             max_sets: swapchain_images.len() as _,
             pool_sizes: &[
-                uniform_buffer_pool_size,
+                settings_buffer_pool_size,
                 graphics_color_pool_size,
                 graphics_occlusion_pool_size,
-                graphics_depth_pool_size,
+                distance_pool_size,
             ],
         };
 
@@ -1241,6 +1392,7 @@ impl VulkanRenderData {
             &postfx_pipeline_layout,
             (render_info.extent.0 / 4, render_info.extent.1 / 4),
             1,
+            vk::CULL_MODE_BACK,
         );
 
         let postfx_framebuffers = postfx_color_views
@@ -1260,7 +1412,7 @@ impl VulkanRenderData {
             .collect::<Vec<_>>();
 
         //PRESENT
-        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+        let settings_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: 1,
@@ -1281,11 +1433,19 @@ impl VulkanRenderData {
             stage: vk::SHADER_STAGE_FRAGMENT,
         };
 
+        let distance_binding = vk::DescriptorSetLayoutBinding {
+            binding: 3,
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 1,
+            stage: vk::SHADER_STAGE_FRAGMENT,
+        };
+
         let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
             bindings: &[
-                uniform_buffer_binding,
+                settings_buffer_binding,
                 postfx_color_binding,
                 look_up_table_binding,
+                distance_binding,
             ],
         };
 
@@ -1293,7 +1453,7 @@ impl VulkanRenderData {
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
                 .expect("failed to create descriptor set layout");
 
-        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+        let settings_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
             descriptor_count: swapchain_images.len() as _,
         };
@@ -1308,12 +1468,18 @@ impl VulkanRenderData {
             descriptor_count: swapchain_images.len() as _,
         };
 
+        let distance_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: swapchain_images.len() as _,
+        };
+
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
             max_sets: swapchain_images.len() as _,
             pool_sizes: &[
-                uniform_buffer_pool_size,
+                settings_buffer_pool_size,
                 postfx_color_pool_size,
                 look_up_table_pool_size,
+                distance_pool_size,
             ],
         };
 
@@ -1353,9 +1519,25 @@ impl VulkanRenderData {
             final_layout: vk::ImageLayout::PresentSrc,
         };
 
+        let depth_attachment_description = vk::AttachmentDescription {
+            format: vk::Format::D32Sfloat,
+            samples: vk::SAMPLE_COUNT_1,
+            load_op: vk::AttachmentLoadOp::Clear,
+            store_op: vk::AttachmentStoreOp::Store,
+            stencil_load_op: vk::AttachmentLoadOp::DontCare,
+            stencil_store_op: vk::AttachmentStoreOp::DontCare,
+            initial_layout: vk::ImageLayout::Undefined,
+            final_layout: vk::ImageLayout::DepthStencilAttachment,
+        };
+
         let color_attachment_reference = vk::AttachmentReference {
             attachment: 0,
             layout: vk::ImageLayout::ColorAttachment,
+        };
+
+        let depth_attachment_reference = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DepthStencilAttachment,
         };
 
         let subpass_description = vk::SubpassDescription {
@@ -1363,7 +1545,7 @@ impl VulkanRenderData {
             input_attachments: &[],
             color_attachments: &[color_attachment_reference],
             resolve_attachments: &[],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(&depth_attachment_reference),
             preserve_attachments: &[],
         };
 
@@ -1377,7 +1559,7 @@ impl VulkanRenderData {
         };
 
         let render_pass_create_info = vk::RenderPassCreateInfo {
-            attachments: &[color_attachment_description],
+            attachments: &[color_attachment_description, depth_attachment_description],
             subpasses: &[subpass_description],
             dependencies: &[subpass_dependency],
         };
@@ -1398,6 +1580,7 @@ impl VulkanRenderData {
             &present_pipeline_layout,
             render_info.extent,
             1,
+            vk::CULL_MODE_BACK,
         );
 
         let present_framebuffers = swapchain_image_views
@@ -1405,7 +1588,7 @@ impl VulkanRenderData {
             .map(|image_view| {
                 let framebuffer_create_info = vk::FramebufferCreateInfo {
                     render_pass: &present_render_pass,
-                    attachments: &[image_view],
+                    attachments: &[image_view, &depth_view],
                     width: render_info.extent.0,
                     height: render_info.extent.1,
                     layers: 1,
@@ -1419,6 +1602,14 @@ impl VulkanRenderData {
         Self {
             swapchain,
             swapchain_image_views,
+            depth_view,
+            depth_memory,
+            depth_sampler,
+            depth,
+            distance,
+            distance_memory,
+            distance_views,
+            distance_samplers,
             graphics_color,
             graphics_color_memory,
             graphics_color_views,
@@ -1427,10 +1618,6 @@ impl VulkanRenderData {
             graphics_occlusion_memory,
             graphics_occlusion_views,
             graphics_occlusion_samplers,
-            graphics_depth_view,
-            graphics_depth_memory,
-            graphics_depth_sampler,
-            graphics_depth,
             graphics_render_pass,
             graphics_descriptor_set_layout,
             graphics_descriptor_pool,
@@ -1472,14 +1659,14 @@ impl Vulkan {
 
         for x in 0..ct {
             for z in 0..ct {
-                let mut max_y = (ct / 2) as isize;
+                let mut max_y = 16.0 as isize;
                 for o in 1..=4 {
-                    max_y += (((ct / 4) as f64 / (o as f64).powf(0.5))
+                    max_y += ((5.0 as f64 / (o as f64).powf(0.5))
                         * perlin.get([x as f64 / (o as f64 * 32.0), z as f64 / (o as f64 * 32.0)]))
                         as isize;
                 }
                 for y in 0..ct {
-                    if y >= max_y as usize && y < (ct / 2) {
+                    if y >= max_y as usize && y < 16 {
                         octree.place(x, y, z, 2);
                     } else if y == max_y as usize - 1 {
                         octree.place(x, y, z, 1);
@@ -1488,7 +1675,7 @@ impl Vulkan {
                     }
                 }
             }
-            println!("X: {}", x);
+            println!("building: {}%", ((x as f32 / ct as f32) * 100.0) as usize);
         }
 
         let application_info = vk::ApplicationInfo {
@@ -1626,7 +1813,7 @@ impl Vulkan {
         };
 
         //TODO query and choose system compatible
-        let present_mode = vk::PresentMode::Immediate;
+        let present_mode = vk::PresentMode::Mailbox;
 
         let image_count = surface_capabilities.min_image_count + 1;
 
@@ -1694,6 +1881,7 @@ impl Vulkan {
             instance_buffer_memory_allocate_info,
             instance_buffer.memory_requirements(),
             physical_device.memory_properties(),
+            false,
         )
         .expect("failed to allocate memory");
 
@@ -1719,6 +1907,7 @@ impl Vulkan {
             data_buffer_memory_allocate_info,
             data_buffer.memory_requirements(),
             physical_device.memory_properties(),
+            false,
         )
         .expect("failed to allocate memory");
 
@@ -1737,6 +1926,7 @@ impl Vulkan {
             staging_buffer_memory_allocate_info,
             staging_buffer.memory_requirements(),
             physical_device.memory_properties(),
+            true,
         )
         .expect("failed to allocate memory");
 
@@ -1744,22 +1934,20 @@ impl Vulkan {
             .bind_memory(&staging_buffer_memory)
             .expect("failed to bind buffer");
 
-        let mut ubo = UniformBufferObject::default();
-        ubo.resolution = Vector::<f32, 2>::new([960.0, 540.0]);
+        let camera = Bucket::new(Camera::default());
+
+        let mut settings = Bucket::new(RenderSettings::default());
+        settings.resolution = Vector::<f32, 2>::new([960.0, 540.0]);
 
         let render_distance = info.render_distance;
 
-        ubo.render_distance = render_distance as u32;
+        settings.render_distance = render_distance as u32;
 
         let cubelet_size = 2 * render_distance as usize * CHUNK_SIZE;
 
-        let mut jfai = JfaiBufferObject {
-            step_size: 1,
-            seed_amount: 512,
-            seeds: [Default::default(); 512],
-        };
-
-        let octree_bytes = octree.data().len() * mem::size_of::<crate::octree::Node>();
+        //initial padding for octree data then octree size.
+        let octree_bytes =
+            2 * mem::size_of::<u32>() + octree.data().len() * mem::size_of::<crate::octree::Node>();
 
         let mut octree_buffer = vk::Buffer::new(
             device.clone(),
@@ -1781,6 +1969,7 @@ impl Vulkan {
             octree_buffer_memory_allocate_info,
             octree_buffer.memory_requirements(),
             physical_device.memory_properties(),
+            false,
         )
         .expect("failed to allocate memory");
 
@@ -1810,6 +1999,7 @@ impl Vulkan {
             look_up_table_memory_allocate_info,
             look_up_table.memory_requirements(),
             physical_device.memory_properties(),
+            false,
         )
         .expect("failed to allocate memory");
 
@@ -1937,15 +2127,6 @@ impl Vulkan {
             vk::Sampler::new(device.clone(), cubelet_sdf_result_sampler_create_info)
             .expect("failed to create sampler");
         */
-        let mut instance_data = HashSet::new();
-
-        for cx in 0..2 * ubo.render_distance as usize {
-            for cy in 0..2 * ubo.render_distance as usize {
-                for cz in 0..2 * ubo.render_distance as usize {
-                    instance_data.insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
-                }
-            }
-        }
 
         staging_buffer_memory
             .write(0, |buffer_data: &'_ mut [u32]| {
@@ -1964,8 +2145,6 @@ impl Vulkan {
                 },
             )
             .expect("failed to write to buffer");
-
-        let instance_data = instance_data.into_iter().collect::<Vec<_>>();
 
         command_buffer
             .record(|commands| {
@@ -2140,6 +2319,7 @@ impl Vulkan {
 
         queue.wait_idle().expect("failed to wait on queue");
         */
+
         Self {
             instance,
             #[cfg(debug_assertions)]
@@ -2159,15 +2339,16 @@ impl Vulkan {
             render_finished_semaphore,
             image_available_semaphore,
             last_batch,
+            instance_data: vec![],
             instance_buffer,
             instance_buffer_memory,
-            instance_data,
             data_buffer,
             data_buffer_memory,
             staging_buffer,
             staging_buffer_memory,
-            ubo,
-            jfai,
+            settings,
+            last_camera: None,
+            camera,
             octree,
             octree_buffer,
             octree_buffer_memory,
@@ -2185,12 +2366,144 @@ impl Vulkan {
 
 impl Renderer for Vulkan {
     fn draw_batch(&mut self, batch: Batch, entries: &'_ [Entry<'_>]) {
-        self.device.wait_idle().expect("failed to wait on device");
+        let cam_pos = {
+            let camera = self.camera.camera;
+
+            let mut cam_pos = Vector::<f32, 3>::new([camera[3][0], camera[3][1], camera[3][2]]);
+
+            let mut forwards = Vector::<f32, 4>::new([0.0, 0.0, 1.0, 0.0]);
+
+            forwards = self.camera.view * forwards;
+
+            //Without this, there are clipping issues.
+            cam_pos += Vector::<f32, 3>::new([forwards[0], forwards[1], forwards[2]]);
+
+            cam_pos
+        };
+
+        let last_cam_pos = {
+            let camera = self.last_camera.unwrap_or_default().camera;
+
+            let mut cam_pos = Vector::<f32, 3>::new([camera[3][0], camera[3][1], camera[3][2]]);
+
+            let mut forwards = Vector::<f32, 4>::new([0.0, 0.0, 1.0, 0.0]);
+
+            forwards = self.last_camera.unwrap_or_default().view * forwards;
+
+            //Without this, there are clipping issues.
+            cam_pos += Vector::<f32, 3>::new([forwards[0], forwards[1], forwards[2]]);
+
+            cam_pos
+        };
+
+        let camera_chunk_position = Vector::<i32, 3>::new([
+            (cam_pos[0] / CHUNK_SIZE as f32) as i32,
+            (cam_pos[1] / CHUNK_SIZE as f32) as i32,
+            (cam_pos[2] / CHUNK_SIZE as f32) as i32,
+        ]);
+        let last_camera_chunk_position = Vector::<i32, 3>::new([
+            (last_cam_pos[0] / CHUNK_SIZE as f32) as i32,
+            (last_cam_pos[1] / CHUNK_SIZE as f32) as i32,
+            (last_cam_pos[2] / CHUNK_SIZE as f32) as i32,
+        ]);
+
+        let instance_offset = 65536;
+
+        if camera_chunk_position != last_camera_chunk_position {
+            let mut instance_data = HashSet::new();
+
+            for cx in 0..2 * self.settings.render_distance as usize {
+                for cy in 1..=3 {
+                    for cz in 0..2 * self.settings.render_distance as usize {
+                        instance_data
+                            .insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
+                    }
+                }
+            }
+
+            self.instance_data = instance_data.into_iter().collect::<Vec<_>>();
+
+            self.instance_data.sort_by(|a, b| {
+                let a_pos = Vector::<f32, 3>::new([
+                    a[0] as f32 * CHUNK_SIZE as f32,
+                    a[1] as f32 * CHUNK_SIZE as f32,
+                    a[2] as f32 * CHUNK_SIZE as f32,
+                ]);
+
+                let a_offset = Vector::<f32, 3>::new([
+                    cam_pos[0]
+                        .max(a_pos[0] - CHUNK_SIZE as f32 / 2.0)
+                        .min(a_pos[0] + CHUNK_SIZE as f32 / 2.0),
+                    cam_pos[1]
+                        .max(a_pos[1] - CHUNK_SIZE as f32 / 2.0)
+                        .min(a_pos[1] + CHUNK_SIZE as f32 / 2.0),
+                    cam_pos[2]
+                        .max(a_pos[2] - CHUNK_SIZE as f32 / 2.0)
+                        .min(a_pos[2] + CHUNK_SIZE as f32 / 2.0),
+                ]);
+
+                let b_pos = Vector::<f32, 3>::new([
+                    b[0] as f32 * CHUNK_SIZE as f32,
+                    b[1] as f32 * CHUNK_SIZE as f32,
+                    b[2] as f32 * CHUNK_SIZE as f32,
+                ]);
+
+                let b_offset = Vector::<f32, 3>::new([
+                    cam_pos[0]
+                        .max(b_pos[0] - CHUNK_SIZE as f32 / 2.0)
+                        .min(b_pos[0] + CHUNK_SIZE as f32 / 2.0),
+                    cam_pos[1]
+                        .max(b_pos[1] - CHUNK_SIZE as f32 / 2.0)
+                        .min(b_pos[1] + CHUNK_SIZE as f32 / 2.0),
+                    cam_pos[2]
+                        .max(b_pos[2] - CHUNK_SIZE as f32 / 2.0)
+                        .min(b_pos[2] + CHUNK_SIZE as f32 / 2.0),
+                ]);
+
+                let a_dst = a_pos.distance(&cam_pos);
+
+                let b_dst = b_pos.distance(&cam_pos);
+
+                b_dst.partial_cmp(&a_dst).unwrap()
+            });
+
+            self.staging_buffer_memory
+                .write(instance_offset, |data: &'_ mut [Vector<u32, 3>]| {
+                    data[..self.instance_data.len()].copy_from_slice(&self.instance_data[..]);
+                })
+                .expect("failed to write to buffer");
+        }
+
+        self.last_camera = Some(*self.camera);
+
+        let camera_offset = 0;
+
+        let settings_offset = camera_offset + mem::size_of::<Camera>();
+        let settings_offset = ((settings_offset as f64 / 64.0).ceil() * 64.0) as u64;
+
+        if self.camera.is_dirty() {
+            self.staging_buffer_memory
+                .write(camera_offset as _, |data: &'_ mut [Camera]| {
+                    data[0..1].copy_from_slice(&[*self.camera]);
+                })
+                .expect("failed to write to buffer");
+        }
+
+        if self.settings.is_dirty() {
+            self.staging_buffer_memory
+                .write(settings_offset as _, |data: &'_ mut [RenderSettings]| {
+                    data[0..1].copy_from_slice(&[*self.settings]);
+                })
+                .expect("failed to write to buffer");
+        }
+
+        let entry_offset = settings_offset as usize + mem::size_of::<RenderSettings>();
+        let entry_offset = ((entry_offset as f64 / 64.0).ceil() * 64.0) as u64;
 
         let mut vertex_count = 0;
 
         self.staging_buffer_memory
-            .write(0, |data: &'_ mut [Vertex]| {
+            .write(entry_offset as _, |data: &'_ mut [Vertex]| {
                 for entry in entries {
                     let (vertices, _) = entry.mesh.get();
 
@@ -2205,7 +2518,7 @@ impl Renderer for Vulkan {
 
         self.staging_buffer_memory
             .write(
-                vertex_count * mem::size_of::<Vertex>(),
+                entry_offset as usize + vertex_count * mem::size_of::<Vertex>(),
                 |data: &'_ mut [u16]| {
                     for entry in entries {
                         let (_, indices) = entry.mesh.get();
@@ -2217,87 +2530,6 @@ impl Renderer for Vulkan {
                 },
             )
             .expect("failed to write to buffer");
-
-        let ubo_offset =
-            vertex_count * mem::size_of::<Vertex>() + index_count * mem::size_of::<u16>();
-
-        let ubo_offset = ((ubo_offset as f64 / 64.0).ceil() * 64.0) as _;
-
-        self.staging_buffer_memory
-            .write(ubo_offset, |data: &'_ mut [UniformBufferObject]| {
-                data[0..1].copy_from_slice(&[self.ubo]);
-            })
-            .expect("failed to write to buffer");
-
-        let jfai_offset = ubo_offset + mem::size_of::<UniformBufferObject>();
-
-        let jfai_offset = ((jfai_offset as f64 / 64.0).ceil() * 64.0) as _;
-
-        self.staging_buffer_memory
-            .write(jfai_offset, |data: &'_ mut [JfaiBufferObject]| {
-                data[0..1].copy_from_slice(&[self.jfai]);
-            })
-            .expect("failed to write to buffer");
-
-        self.command_buffer
-            .record(|commands| {
-                let buffer_copy = vk::BufferCopy {
-                    src_offset: 0,
-                    dst_offset: 0,
-                    size: 1048576,
-                };
-
-                commands.copy_buffer(&self.staging_buffer, &mut self.data_buffer, &[buffer_copy]);
-            })
-            .expect("failed to record command buffer");
-
-        let submit_info = vk::SubmitInfo {
-            wait_semaphores: &[],
-            wait_stages: &[],
-            command_buffers: &[&self.command_buffer],
-            signal_semaphores: &[],
-        };
-
-        self.queue
-            .submit(&[submit_info], None)
-            .expect("failed to submit buffer copy command buffer");
-
-        self.queue.wait_idle().expect("failed to wait on queue");
-
-        self.staging_buffer_memory
-            .write(0, |data: &'_ mut [Vector<u32, 3>]| {
-                data[..self.instance_data.len()].copy_from_slice(&self.instance_data[..]);
-            })
-            .expect("failed to write to buffer");
-
-        self.command_buffer
-            .record(|commands| {
-                let buffer_copy = vk::BufferCopy {
-                    src_offset: 0,
-                    dst_offset: 0,
-                    size: 1048576,
-                };
-
-                commands.copy_buffer(
-                    &self.staging_buffer,
-                    &mut self.instance_buffer,
-                    &[buffer_copy],
-                );
-            })
-            .expect("failed to record command buffer");
-
-        let submit_info = vk::SubmitInfo {
-            wait_semaphores: &[],
-            wait_stages: &[],
-            command_buffers: &[&self.command_buffer],
-            signal_semaphores: &[],
-        };
-
-        self.queue
-            .submit(&[submit_info], None)
-            .expect("failed to submit buffer copy command buffer");
-
-        self.queue.wait_idle().expect("failed to wait on queue");
 
         //#[cfg(debug_assertions)]
         //TODO switch to shaderc
@@ -2374,7 +2606,11 @@ impl Renderer for Vulkan {
                             glsl_to_spirv::compile(&source, shader_type.unwrap());
 
                         if let Err(e) = compilation_result {
-                            error!("failed to compile shader: {}", e);
+                            error!(
+                                "failed to compile shader: {}",
+                                &in_path.file_stem().unwrap().to_string_lossy()
+                            );
+                            print!("{}", e);
                             self.shader_mod_time.insert(out_path.clone(), mod_time);
                             return;
                         }
@@ -2629,11 +2865,6 @@ impl Renderer for Vulkan {
 
         self.last_batch = batch;
 
-        let compute_data = self
-            .compute_data
-            .as_mut()
-            .expect("failed to retrieve compute data");
-
         let render_data = self
             .render_data
             .as_mut()
@@ -2658,170 +2889,44 @@ impl Renderer for Vulkan {
             }
         };
 
-        if unsafe { !JFAI_DONE } {
-            for i in 0..compute_data.jfa_descriptor_sets.len() {
-                let uniform_buffer_info = vk::DescriptorBufferInfo {
-                    buffer: &self.data_buffer,
-                    offset: ubo_offset as _,
-                    range: mem::size_of::<UniformBufferObject>(),
-                };
-
-                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::UniformBuffer,
-                    buffer_infos: &[uniform_buffer_info],
-                    image_infos: &[],
-                };
-
-                /*let cubelet_sdf_result_info = vk::DescriptorImageInfo {
-                sampler: &self.cubelet_sdf_result_sampler,
-                image_view: &self.cubelet_sdf_result_view,
-                image_layout: vk::ImageLayout::General,
-                };
-
-                let cubelet_sdf_result_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
-                dst_binding: 2,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageImage,
-                buffer_infos: &[],
-                image_infos: &[cubelet_sdf_result_info],
-                };
-                */
-                let jfai_buffer_info = vk::DescriptorBufferInfo {
-                    buffer: &self.data_buffer,
-                    offset: jfai_offset as _,
-                    range: mem::size_of::<JfaiBufferObject>(),
-                };
-
-                let jfai_buffer_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &compute_data.jfa_descriptor_sets[image_index as usize],
-                    dst_binding: 3,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::StorageBuffer,
-                    buffer_infos: &[jfai_buffer_info],
-                    image_infos: &[],
-                };
-
-                vk::DescriptorSet::update(
-                    &[
-                        uniform_buffer_descriptor_write,
-                        todo!(), //cubelet_sdf_source_descriptor_write,
-                        //cubelet_sdf_result_descriptor_write,
-                        jfai_buffer_descriptor_write,
-                    ],
-                    &[],
-                );
-            }
-
-            self.command_buffer
-                .reset()
-                .expect("failed to reset command buffer");
-
-            let cubelet_size = 2 * self.ubo.render_distance as usize * CHUNK_SIZE;
-
-            self.jfai.step_size = cubelet_size as _;
-
-            self.staging_buffer_memory
-                .write(jfai_offset, |data: &'_ mut [JfaiBufferObject]| {
-                    data[0..1].copy_from_slice(&[self.jfai]);
-                })
-                .expect("failed to write to buffer");
-
-            self.command_buffer
-                .record(|commands| {
-                    let buffer_copy = vk::BufferCopy {
-                        src_offset: 0,
-                        dst_offset: 0,
-                        size: 1048576,
-                    };
-
-                    commands.copy_buffer(
-                        &self.staging_buffer,
-                        &mut self.data_buffer,
-                        &[buffer_copy],
-                    );
-                })
-                .expect("failed to record command buffer");
-
-            let submit_info = vk::SubmitInfo {
-                wait_semaphores: &[],
-                wait_stages: &[],
-                command_buffers: &[&self.command_buffer],
-                signal_semaphores: &[],
-            };
-
-            self.queue
-                .submit(&[submit_info], None)
-                .expect("failed to submit draw command buffer");
-
-            self.queue.wait_idle().expect("failed to wait on queue");
-
-            self.command_buffer
-                .record(|commands| {
-                    commands
-                        .bind_pipeline(vk::PipelineBindPoint::Compute, &compute_data.jfa_pipeline);
-
-                    commands.bind_descriptor_sets(
-                        vk::PipelineBindPoint::Compute,
-                        &compute_data.jfa_pipeline_layout,
-                        0,
-                        &[&compute_data.jfa_descriptor_sets[image_index as usize]],
-                        &[],
-                    );
-
-                    let thread_groups_x = cubelet_size / 8;
-                    let thread_groups_y = cubelet_size / 8;
-                    let thread_groups_z = cubelet_size / 8;
-
-                    commands.dispatch(
-                        thread_groups_x as u32,
-                        thread_groups_y as u32,
-                        thread_groups_z as u32,
-                    );
-                })
-                .expect("failed to record command buffer");
-
-            let submit_info = vk::SubmitInfo {
-                wait_semaphores: &[],
-                wait_stages: &[],
-                command_buffers: &[&self.command_buffer],
-                signal_semaphores: &[],
-            };
-
-            self.queue
-                .submit(&[submit_info], None)
-                .expect("failed to submit draw command buffer");
-
-            self.queue.wait_idle().expect("failed to wait on queue");
-        }
-        unsafe {
-            JFAI_DONE = true;
-        }
         {
             for i in 0..render_data.graphics_descriptor_sets.len() {
-                let uniform_buffer_info = vk::DescriptorBufferInfo {
+                let camera_buffer_info = vk::DescriptorBufferInfo {
                     buffer: &self.data_buffer,
-                    offset: ubo_offset as _,
-                    range: mem::size_of::<UniformBufferObject>(),
+                    offset: camera_offset as _,
+                    range: mem::size_of::<Camera>(),
                 };
 
-                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
+                let camera_buffer_descriptor_write = vk::WriteDescriptorSet {
                     dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
                     dst_binding: 0,
                     dst_array_element: 0,
                     descriptor_count: 1,
                     descriptor_type: vk::DescriptorType::UniformBuffer,
-                    buffer_infos: &[uniform_buffer_info],
+                    buffer_infos: &[camera_buffer_info],
                     image_infos: &[],
                 };
 
-                let octree_bytes = self.octree.data().len() * mem::size_of::<crate::octree::Node>();
+                let settings_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: settings_offset as _,
+                    range: mem::size_of::<RenderSettings>(),
+                };
+
+                let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[settings_buffer_info],
+                    image_infos: &[],
+                };
+
+                //initial padding for octree data then octree size.
+                let octree_bytes = 2 * mem::size_of::<u32>()
+                    + self.octree.data().len() * mem::size_of::<crate::octree::Node>();
+
                 let octree_buffer_info = vk::DescriptorBufferInfo {
                     buffer: &self.octree_buffer,
                     offset: 0,
@@ -2830,7 +2935,7 @@ impl Renderer for Vulkan {
 
                 let octree_buffer_descriptor_write = vk::WriteDescriptorSet {
                     dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
-                    dst_binding: 1,
+                    dst_binding: 2,
                     dst_array_element: 0,
                     descriptor_count: 1,
                     descriptor_type: vk::DescriptorType::StorageBuffer,
@@ -2857,7 +2962,8 @@ impl Renderer for Vulkan {
 
                 vk::DescriptorSet::update(
                     &[
-                        uniform_buffer_descriptor_write,
+                        camera_buffer_descriptor_write,
+                        settings_buffer_descriptor_write,
                         octree_buffer_descriptor_write,
                         //cubelet_sdf_descriptor_write,
                     ],
@@ -2865,12 +2971,220 @@ impl Renderer for Vulkan {
                 );
             }
 
-            self.command_buffer
-                .reset()
-                .expect("failed to reset command buffer");
+            for i in 0..render_data.postfx_descriptor_sets.len() {
+                let settings_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: settings_offset as _,
+                    range: mem::size_of::<RenderSettings>(),
+                };
+
+                let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[settings_buffer_info],
+                    image_infos: &[],
+                };
+
+                let color_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.graphics_color_samplers[image_index as usize],
+                    image_view: &render_data.graphics_color_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let color_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[color_info],
+                };
+
+                let occlusion_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.graphics_occlusion_samplers[image_index as usize],
+                    image_view: &render_data.graphics_occlusion_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let occlusion_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[occlusion_info],
+                };
+
+                let distance_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.distance_samplers[image_index as usize],
+                    image_view: &render_data.distance_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let distance_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                    dst_binding: 3,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[distance_info],
+                };
+
+                vk::DescriptorSet::update(
+                    &[
+                        settings_buffer_descriptor_write,
+                        color_descriptor_write,
+                        occlusion_descriptor_write,
+                        distance_descriptor_write,
+                    ],
+                    &[],
+                );
+            }
+
+            for i in 0..render_data.present_descriptor_sets.len() {
+                let settings_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: &self.data_buffer,
+                    offset: settings_offset as _,
+                    range: mem::size_of::<RenderSettings>(),
+                };
+
+                let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UniformBuffer,
+                    buffer_infos: &[settings_buffer_info],
+                    image_infos: &[],
+                };
+
+                let color_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.postfx_color_samplers[image_index as usize],
+                    image_view: &render_data.postfx_color_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let color_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[color_info],
+                };
+
+                let look_up_table_info = vk::DescriptorImageInfo {
+                    sampler: &self.look_up_table_sampler,
+                    image_view: &self.look_up_table_view,
+                    image_layout: vk::ImageLayout::ShaderReadOnly,
+                };
+
+                let look_up_table_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::CombinedImageSampler,
+                    buffer_infos: &[],
+                    image_infos: &[look_up_table_info],
+                };
+
+                let distance_info = vk::DescriptorImageInfo {
+                    sampler: &render_data.distance_samplers[image_index as usize],
+                    image_view: &render_data.distance_views[image_index as usize],
+                    image_layout: vk::ImageLayout::General,
+                };
+
+                let distance_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                    dst_binding: 3,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[distance_info],
+                };
+
+                vk::DescriptorSet::update(
+                    &[
+                        settings_buffer_descriptor_write,
+                        color_descriptor_write,
+                        look_up_table_descriptor_write,
+                        distance_descriptor_write,
+                    ],
+                    &[],
+                );
+            }
 
             self.command_buffer
                 .record(|commands| {
+                    if camera_chunk_position != last_camera_chunk_position {
+                        let buffer_copy = vk::BufferCopy {
+                            src_offset: instance_offset as _,
+                            dst_offset: 0,
+                            size: (self.instance_data.len() * mem::size_of::<Vector<u32, 3>>())
+                                as _,
+                        };
+
+                        commands.copy_buffer(
+                            &self.staging_buffer,
+                            &mut self.instance_buffer,
+                            &[buffer_copy],
+                        );
+                    }
+
+                    if self.camera.is_dirty() {
+                        let buffer_copy = vk::BufferCopy {
+                            src_offset: camera_offset as _,
+                            dst_offset: camera_offset as _,
+                            size: mem::size_of::<Camera>() as _,
+                        };
+
+                        commands.copy_buffer(
+                            &self.staging_buffer,
+                            &mut self.data_buffer,
+                            &[buffer_copy],
+                        );
+                        self.camera.clean();
+                    }
+
+                    if self.settings.is_dirty() {
+                        let buffer_copy = vk::BufferCopy {
+                            src_offset: settings_offset as _,
+                            dst_offset: settings_offset as _,
+                            size: mem::size_of::<RenderSettings>() as _,
+                        };
+
+                        commands.copy_buffer(
+                            &self.staging_buffer,
+                            &mut self.data_buffer,
+                            &[buffer_copy],
+                        );
+                        self.settings.clean();
+                    }
+
+                    //Copy vertices and indices
+                    let buffer_copy = vk::BufferCopy {
+                        src_offset: entry_offset as _,
+                        dst_offset: entry_offset as _,
+                        size: (vertex_count * mem::size_of::<Vertex>()
+                            + index_count * mem::size_of::<u16>())
+                            as _,
+                    };
+
+                    commands.copy_buffer(
+                        &self.staging_buffer,
+                        &mut self.data_buffer,
+                        &[buffer_copy],
+                    );
+                    //Graphics
                     let render_pass_begin_info = vk::RenderPassBeginInfo {
                         render_pass: &render_data.graphics_render_pass,
                         framebuffer: &render_data.graphics_framebuffers[image_index as usize],
@@ -2881,7 +3195,12 @@ impl Renderer for Vulkan {
                                 self.render_info.extent.1 / self.render_info.scaling_factor,
                             ),
                         },
-                        color_clear_values: &[[0.0385, 0.0385, 0.0385, 1.0], [1.0, 1.0, 1.0, 1.0]],
+                        color_clear_values: &[
+                            [0.0385, 0.0385, 0.0385, 1.0],
+                            [1.0, 1.0, 1.0, 1.0],
+                            [1.0, 1.0, 1.0, 1.0],
+                        ],
+                        //this wont run because load_op is set to load
                         depth_stencil_clear_value: Some((1.0, 0)),
                     };
 
@@ -2896,12 +3215,12 @@ impl Renderer for Vulkan {
                         0,
                         2,
                         &[&self.data_buffer, &self.instance_buffer],
-                        &[0, 0],
+                        &[entry_offset as usize, 0],
                     );
 
                     commands.bind_index_buffer(
                         &self.data_buffer,
-                        vertex_count * mem::size_of::<Vertex>(),
+                        entry_offset as usize + vertex_count * mem::size_of::<Vertex>(),
                         vk::IndexType::Uint16,
                     );
 
@@ -2951,16 +3270,16 @@ impl Renderer for Vulkan {
                         },
                     };
 
-                    let depth_barrier = vk::ImageMemoryBarrier {
+                    let distance_barrier = vk::ImageMemoryBarrier {
                         old_layout: vk::ImageLayout::Undefined,
-                        new_layout: vk::ImageLayout::ShaderReadOnly,
+                        new_layout: vk::ImageLayout::General,
                         src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                         dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                        image: &render_data.graphics_depth,
+                        image: &render_data.distance[image_index as usize],
                         src_access_mask: 0,
                         dst_access_mask: 0,
                         subresource_range: vk::ImageSubresourceRange {
-                            aspect_mask: vk::IMAGE_ASPECT_DEPTH,
+                            aspect_mask: vk::IMAGE_ASPECT_COLOR,
                             base_mip_level: 0,
                             level_count: 1,
                             base_array_layer: 0,
@@ -2968,112 +3287,6 @@ impl Renderer for Vulkan {
                         },
                     };
 
-                    commands.pipeline_barrier(
-                        vk::PIPELINE_STAGE_TOP_OF_PIPE,
-                        vk::PIPELINE_STAGE_FRAGMENT_SHADER,
-                        0,
-                        &[],
-                        &[],
-                        &[color_barrier, occlusion_barrier, depth_barrier],
-                    );
-                })
-                .expect("failed to record command buffer");
-
-            let submit_info = vk::SubmitInfo {
-                wait_semaphores: &[],
-                wait_stages: &[],
-                command_buffers: &[&self.command_buffer],
-                signal_semaphores: &[],
-            };
-
-            self.queue
-                .submit(&[submit_info], None)
-                .expect("failed to submit draw command buffer");
-
-            self.queue.wait_idle().expect("failed to wait on queue");
-
-            for i in 0..render_data.postfx_descriptor_sets.len() {
-                let uniform_buffer_info = vk::DescriptorBufferInfo {
-                    buffer: &self.data_buffer,
-                    offset: ubo_offset as _,
-                    range: mem::size_of::<UniformBufferObject>(),
-                };
-
-                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::UniformBuffer,
-                    buffer_infos: &[uniform_buffer_info],
-                    image_infos: &[],
-                };
-
-                let color_info = vk::DescriptorImageInfo {
-                    sampler: &render_data.graphics_color_samplers[image_index as usize],
-                    image_view: &render_data.graphics_color_views[image_index as usize],
-                    image_layout: vk::ImageLayout::General,
-                };
-
-                let color_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                    dst_binding: 1,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::StorageImage,
-                    buffer_infos: &[],
-                    image_infos: &[color_info],
-                };
-
-                let occlusion_info = vk::DescriptorImageInfo {
-                    sampler: &render_data.graphics_occlusion_samplers[image_index as usize],
-                    image_view: &render_data.graphics_occlusion_views[image_index as usize],
-                    image_layout: vk::ImageLayout::General,
-                };
-
-                let occlusion_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::StorageImage,
-                    buffer_infos: &[],
-                    image_infos: &[occlusion_info],
-                };
-
-                let depth_info = vk::DescriptorImageInfo {
-                    sampler: &render_data.graphics_depth_sampler,
-                    image_view: &render_data.graphics_depth_view,
-                    image_layout: vk::ImageLayout::ShaderReadOnly,
-                };
-
-                let depth_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                    dst_binding: 3,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::CombinedImageSampler,
-                    buffer_infos: &[],
-                    image_infos: &[depth_info],
-                };
-
-                vk::DescriptorSet::update(
-                    &[
-                        uniform_buffer_descriptor_write,
-                        color_descriptor_write,
-                        occlusion_descriptor_write,
-                        depth_descriptor_write,
-                    ],
-                    &[],
-                );
-            }
-
-            self.command_buffer
-                .reset()
-                .expect("failed to reset command buffer");
-
-            self.command_buffer
-                .record(|commands| {
                     let render_pass_begin_info = vk::RenderPassBeginInfo {
                         render_pass: &render_data.postfx_render_pass,
                         framebuffer: &render_data.postfx_framebuffers[image_index as usize],
@@ -3124,95 +3337,6 @@ impl Renderer for Vulkan {
                         },
                     };
 
-                    commands.pipeline_barrier(
-                        vk::PIPELINE_STAGE_TOP_OF_PIPE,
-                        vk::PIPELINE_STAGE_FRAGMENT_SHADER,
-                        0,
-                        &[],
-                        &[],
-                        &[color_barrier],
-                    );
-                })
-                .expect("failed to record command buffer");
-
-            let submit_info = vk::SubmitInfo {
-                wait_semaphores: &[],
-                wait_stages: &[],
-                command_buffers: &[&self.command_buffer],
-                signal_semaphores: &[],
-            };
-
-            self.queue
-                .submit(&[submit_info], None)
-                .expect("failed to submit draw command buffer");
-
-            self.queue.wait_idle().expect("failed to wait on queue");
-
-            for i in 0..render_data.present_descriptor_sets.len() {
-                let uniform_buffer_info = vk::DescriptorBufferInfo {
-                    buffer: &self.data_buffer,
-                    offset: ubo_offset as _,
-                    range: mem::size_of::<UniformBufferObject>(),
-                };
-
-                let uniform_buffer_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::UniformBuffer,
-                    buffer_infos: &[uniform_buffer_info],
-                    image_infos: &[],
-                };
-
-                let color_info = vk::DescriptorImageInfo {
-                    sampler: &render_data.postfx_color_samplers[image_index as usize],
-                    image_view: &render_data.postfx_color_views[image_index as usize],
-                    image_layout: vk::ImageLayout::General,
-                };
-
-                let color_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                    dst_binding: 1,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::StorageImage,
-                    buffer_infos: &[],
-                    image_infos: &[color_info],
-                };
-
-                let look_up_table_info = vk::DescriptorImageInfo {
-                    sampler: &self.look_up_table_sampler,
-                    image_view: &self.look_up_table_view,
-                    image_layout: vk::ImageLayout::ShaderReadOnly,
-                };
-
-                let look_up_table_descriptor_write = vk::WriteDescriptorSet {
-                    dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::CombinedImageSampler,
-                    buffer_infos: &[],
-                    image_infos: &[look_up_table_info],
-                };
-
-                vk::DescriptorSet::update(
-                    &[
-                        uniform_buffer_descriptor_write,
-                        color_descriptor_write,
-                        look_up_table_descriptor_write,
-                    ],
-                    &[],
-                );
-            }
-
-            self.command_buffer
-                .reset()
-                .expect("failed to reset command buffer");
-
-            self.command_buffer
-                .record(|commands| {
                     let render_pass_begin_info = vk::RenderPassBeginInfo {
                         render_pass: &render_data.present_render_pass,
                         framebuffer: &render_data.present_framebuffers[image_index as usize],
@@ -3221,7 +3345,7 @@ impl Renderer for Vulkan {
                             extent: self.render_info.extent,
                         },
                         color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
-                        depth_stencil_clear_value: None,
+                        depth_stencil_clear_value: Some((1.0, 0)),
                     };
 
                     commands.begin_render_pass(render_pass_begin_info);
@@ -3314,7 +3438,7 @@ impl Renderer for Vulkan {
         ];
 
         self.render_info.extent = resolution;
-        self.ubo.resolution = Vector::<f32, 2>::new([resolution.0 as _, resolution.1 as _]);
+        self.settings.resolution = Vector::<f32, 2>::new([resolution.0 as _, resolution.1 as _]);
 
         let render_data = self.render_data.take().unwrap();
 

@@ -32,7 +32,7 @@ impl Octree {
     }
 
     pub fn place(&mut self, x: usize, y: usize, z: usize, cubelet: u16) {
-        self.size = 7;
+        self.size = 8;
 
         let mut hierarchy = self.get_position_hierarchy(x, y, z);
 
@@ -40,13 +40,41 @@ impl Octree {
 
         let node = self.add_node(&hierarchy[..]);
 
-        node.unwrap().blocks = cubelet as u32;
+        node.unwrap().block = cubelet as u32;
 
         //self.print_all();
     }
 
     pub fn data(&self) -> &'_ [Node] {
         &self.data[..]
+    }
+
+    pub fn get_node<'a>(&'a self, hierarchy: &[u8]) -> Option<(&'a Node, usize)> {
+        let mut index = 0;
+
+        for (level, &mask) in hierarchy.iter().enumerate() {
+            if mask.count_ones() != 1 {
+                panic!("invalid mask");
+            }
+
+            //dbg!(index);
+            //dbg!("traversing node", self.data[index]);
+
+            //println!("valid: {:#010b}", self.data[index].valid);
+            //println!("mask : {:#010b}", mask);
+
+            let p = (self.data[index].valid & (mask as u32 - 1)).count_ones();
+            //dbg!(p);
+            if self.data[index].valid & mask as u32 == mask as u32
+                && self.data[index].child != u32::MAX
+            {
+                index = self.data[index].child as usize + p as usize;
+            } else {
+                return None;
+            }
+        }
+
+        Some((&self.data[index], index))
     }
 
     fn add_node<'a>(&'a mut self, hierarchy: &[u8]) -> Option<&'a mut Node> {
@@ -107,17 +135,12 @@ impl Octree {
         let mut level = 0;
         let mut children = 0;
         for (i, node) in self.data.iter().enumerate() {
-            if index >= children {
-                println!("level {}", level);
-                level += 1;
-                index = 0;
-                children = 0;
-            }
-
             children += node.valid.count_ones() as usize;
             index += 1;
-            println!("index {}", i);
-            dbg!(node);
+            if (node.block != 42069 && node.block != 1 && node.block != 2 && node.block != 3) {
+                println!("index {}", i);
+                dbg!(node);
+            }
         }
     }
 
@@ -125,7 +148,7 @@ impl Octree {
         self.size
     }
 
-    fn get_position_hierarchy(&self, mut x: usize, mut y: usize, mut z: usize) -> Vec<u8> {
+    pub fn get_position_hierarchy(&self, mut x: usize, mut y: usize, mut z: usize) -> Vec<u8> {
         let mut hierarchy = vec![];
 
         let mut hsize = 2usize.pow(self.size as _);
@@ -157,7 +180,7 @@ impl Octree {
 pub struct Node {
     child: u32,
     valid: u32,
-    blocks: u32,
+    block: u32,
 }
 
 impl Default for Node {
@@ -165,7 +188,7 @@ impl Default for Node {
         Node {
             child: u32::MAX,
             valid: 0,
-            blocks: 42069,
+            block: 42069,
         }
     }
 }
