@@ -1678,6 +1678,9 @@ impl Vulkan {
             println!("building: {}%", ((x as f32 / ct as f32) * 100.0) as usize);
         }
 
+        println!("optimizing octree");
+        octree.optimize();
+
         let application_info = vk::ApplicationInfo {
             application_name: "Octane",
             application_version: (0, 1, 0).into(),

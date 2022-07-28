@@ -1,8 +1,6 @@
-use std::alloc::{alloc, dealloc, handle_alloc_error, realloc, Layout};
-use std::cmp;
+use math::prelude::Vector;
+
 use std::ops::RangeInclusive;
-use std::ptr;
-use std::slice;
 
 pub const PAGE_SIZE: usize = 4000;
 
@@ -17,11 +15,16 @@ impl Octree {
     pub fn new() -> Self {
         let size = 0;
         let mut node_count = vec![];
-        let mut data = Vec::with_capacity(1000000000);
+        let mut data = vec![];
         let mut holes = vec![];
 
         node_count.push(0..=0);
-        data.push(Node::default());
+        data.push(Node {
+            morton: 0,
+            child: u32::MAX,
+            valid: 0,
+            block: 42069,
+        });
 
         Octree {
             size,
@@ -32,7 +35,7 @@ impl Octree {
     }
 
     pub fn place(&mut self, x: usize, y: usize, z: usize, cubelet: u16) {
-        self.size = 8;
+        self.size = 5;
 
         let mut hierarchy = self.get_position_hierarchy(x, y, z);
 
@@ -113,18 +116,56 @@ impl Octree {
                     let x = self.data[index].child as usize + i as usize;
                     let y = node.child as usize + i as usize;
                     let n = self.data[y];
+                    self.data[y] = Node::default();
                     self.data.insert(x, n);
                 }
 
                 let child = self.data[index].child as usize + p as usize;
 
                 self.data.insert(child as _, Node::default());
+                self.data[child].morton = Self::get_morton_code(&hierarchy[..=level]);
 
                 index = child as _;
             }
         }
 
         Some(&mut self.data[index])
+    }
+
+    pub fn get_morton_code(hierarchy: &[u8]) -> u64 {
+        let mut morton = 0x7;
+
+        for &mask in hierarchy {
+            morton <<= 3;
+
+            let index = mask.trailing_zeros() as u64;
+
+            morton |= index & 0x7;
+        }
+
+        morton
+    }
+
+    pub fn optimize(&mut self) {
+        let mut data = self.data.clone();
+
+        data.retain(|node| node.morton != u64::MAX);
+
+        data.sort_by(|a, b| a.morton.cmp(&b.morton));
+
+        for i in 0..data.len() {
+            if data[i].child == u32::MAX {
+                continue;
+            }
+
+            let child: Node = self.data[data[i].child as usize];
+
+            data[i].child = data
+                .binary_search_by(|probe| probe.morton.cmp(&child.morton))
+                .expect("failed to find node") as _;
+        }
+
+        self.data = data;
     }
 
     pub fn print_all(&self) {
@@ -181,11 +222,13 @@ pub struct Node {
     child: u32,
     valid: u32,
     block: u32,
+    morton: u64,
 }
 
 impl Default for Node {
     fn default() -> Self {
         Node {
+            morton: u64::MAX,
             child: u32::MAX,
             valid: 0,
             block: 42069,

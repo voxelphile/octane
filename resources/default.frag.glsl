@@ -1,16 +1,16 @@
 #version 450
 
+#extension GL_ARB_gpu_shader_int64 : enable
+
 #define CHUNK_SIZE 8
 #define MAX_STEP_COUNT 512
 #define EPSILON 1e-2
-#define PI 3.14159265359
-
-#define SUN vec4(1000,1000,1000)
 
 struct Node {
 	uint child;
 	uint valid;
 	uint block;
+	uint64_t morton;
 };
 
 layout(binding = 0) uniform Camera {
@@ -407,25 +407,6 @@ bool ray_cast(Ray ray, out RayHit hit) {
 	}
 
 	return false;
-}
-
-vec3 hemisphere_point(vec3 normal)
-{
-	float theta = 2.0 * PI * frand();
-	float cosPhi = frand();
-	float sinPhi = sqrt(1.0-cosPhi*cosPhi);
-
-	vec3 zAxis = normal;
-	vec3 xAxis = normalize(cross(normal, vec3(1.0, 0.0, 0.0)));
-	vec3 yAxis = normalize(cross(normal, xAxis));
-
-	vec3 x = cos(theta) * xAxis;
-	vec3 y = sin(theta) * yAxis;
-	vec3 horizontal = normalize(x + y) * sinPhi;
-	vec3 z = cosPhi * zAxis;
-	vec3 p = horizontal + z;
-
-	return p;
 }
 
 float depth(mat4 true_model, vec3 position) {

@@ -89,7 +89,7 @@ fn main() {
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
 
-    let render_distance = 16;
+    let render_distance = 2;
 
     let hq4x = format!("{}/assets/hq4x.png", base_path_str);
 
