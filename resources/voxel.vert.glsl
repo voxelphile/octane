@@ -9,11 +9,6 @@ layout(binding = 0) uniform Camera {
 	mat4 camera;
 } camera;
 
-layout(binding = 1) uniform RenderSettings {
-	vec2 resolution;
-	uint render_distance;
-} settings;
-
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec3 in_uvw;

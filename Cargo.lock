@@ -92,6 +92,7 @@ dependencies = [
  "log",
  "math",
  "net",
+ "noise",
  "raw-window-handle",
  "vk",
  "x11",
@@ -117,13 +118,12 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "glsl-to-spirv",
+ "gpu",
  "image 0.24.2",
  "log",
  "math",
- "noise",
  "rand 0.8.5",
  "raw-window-handle",
- "vk",
 ]
 
 [[package]]
@@ -338,6 +338,17 @@ dependencies = [
  "cmake",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "gpu"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "log",
+ "raw-window-handle",
+ "shaderc",
+ "vk",
 ]
 
 [[package]]
@@ -813,6 +824,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "921904a62e410e37e215c40381b7117f830d9d89ba60ab5236170541dd25646b"
+dependencies = [
+ "xmlparser",
+]
+
+[[package]]
 name = "scoped_threadpool"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -841,6 +861,27 @@ dependencies = [
  "byte-tools",
  "digest",
  "fake-simd",
+]
+
+[[package]]
+name = "shaderc"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80e6fe602a861622769530a23bc40bfba31adbf186d0c8412e83f5519c5d6bee"
+dependencies = [
+ "libc",
+ "shaderc-sys",
+]
+
+[[package]]
+name = "shaderc-sys"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3794498651f8173d0afbc0bb8aca45ced111098227e755dde4c0ef2888c8d0bf"
+dependencies = [
+ "cmake",
+ "libc",
+ "roxmltree",
 ]
 
 [[package]]
@@ -1034,3 +1075,9 @@ version = "0.1.0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "xmlparser"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "114ba2b24d2167ef6d67d7d04c8cc86522b87f490025f39f0303b7db5bf5e3d8"

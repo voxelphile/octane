@@ -11,7 +11,9 @@ mod term {
 use crate::window::{Event as WindowEvent, Keycode, Window};
 
 use common::mesh::Mesh;
+use common::octree::{Octree, SparseOctree};
 use common::render::{self, Renderer};
+use common::voxel::{Id::*, Voxel};
 
 use math::prelude::{Matrix, Vector};
 
@@ -63,6 +65,43 @@ fn main() {
     window.rename("Octane");
     window.show();
 
+    let render_distance = 32;
+
+    let octree = {
+        let mut octree = SparseOctree::<Voxel>::new();
+
+        let ct = 2 * info.render_distance as usize * CHUNK_SIZE;
+
+        use noise::NoiseFn;
+        let perlin = noise::Perlin::new();
+
+        for x in 0..ct {
+            for z in 0..ct {
+                let mut max_y = 16.0 as isize;
+                for o in 1..=4 {
+                    max_y += ((5.0 as f64 / (o as f64).powf(0.5))
+                        * perlin.get([x as f64 / (o as f64 * 32.0), z as f64 / (o as f64 * 32.0)]))
+                        as isize;
+                }
+                for y in 0..ct {
+                    if y >= max_y as usize && y < 16 {
+                        octree.place(x, y, z, Voxel { id: Water });
+                    } else if y == max_y as usize - 1 {
+                        octree.place(x, y, z, Voxel { id: Grass });
+                    } else if y < max_y as usize {
+                        octree.place(x, y, z, Voxel { id: Dirt });
+                    }
+                }
+            }
+            println!("building: {}%", ((x as f32 / ct as f32) * 100.0) as usize);
+        }
+
+        println!("optimizing octree");
+        octree.optimize();
+
+        octree
+    };
+
     let mut projection = Matrix::<f32, 4, 4>::identity();
     let mut camera = Matrix::<f32, 4, 4>::identity();
     let mut model = Matrix::<f32, 4, 4>::identity();
@@ -89,8 +128,6 @@ fn main() {
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
 
-    let render_distance = 2;
-
     let hq4x = format!("{}/assets/hq4x.png", base_path_str);
 
     let render_info = render::RendererInfo {
@@ -110,8 +147,8 @@ fn main() {
     let present_fragment_shader = format!("{}/assets/present.frag.spirv", base_path_str);
     let postfx_vertex_shader = format!("{}/assets/fullscreen.vert.spirv", base_path_str);
     let postfx_fragment_shader = format!("{}/assets/postfx.frag.spirv", base_path_str);
-    let graphics_vertex_shader = format!("{}/assets/default.vert.spirv", base_path_str);
-    let graphics_fragment_shader = format!("{}/assets/default.frag.spirv", base_path_str);
+    let graphics_vertex_shader = ;
+    let graphics_fragment_shader = format!("{}/assets/voxel.frag.spirv", base_path_str);
     let jfa_shader = format!("{}/assets/jfa.comp.spirv", base_path_str);
 
     let cube = format!("{}/assets/cube.obj", base_path_str);
@@ -142,6 +179,8 @@ fn main() {
     let height = 32.0;
     let mut position = Vector::<f32, 4>::new([middle, height, middle, 1.0]);
     let mut should_capture = false;
+    let mut prev_should_capture = false;
+    let mut focus_lost = true;
 
     let mut fps_instant = startup;
     let mut fps = 0;
@@ -184,6 +223,19 @@ fn main() {
                         y_rot -= ((y as f64 - window.resolution().1 as f64 / 2.0) * delta_time)
                             as f32
                             / sens;
+                    }
+                }
+                WindowEvent::FocusIn => {
+                    if focus_lost {
+                        should_capture = prev_should_capture;
+                        focus_lost = false;
+                    }
+                }
+                WindowEvent::FocusOut => {
+                    if !focus_lost {
+                        prev_should_capture = should_capture;
+                        should_capture = false;
+                        focus_lost = true;
                     }
                 }
                 WindowEvent::CloseRequested => {

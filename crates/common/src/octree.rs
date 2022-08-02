@@ -1,55 +1,71 @@
+use crate::voxel::Voxel;
+
 use math::prelude::Vector;
 
+use std::marker;
 use std::ops::RangeInclusive;
 
 pub const PAGE_SIZE: usize = 4000;
+pub trait Octree<T> {
+    fn new() -> Self;
+    fn place(&mut self, x: usize, y: usize, z: usize, nodes: T);
+}
+/*
+pub struct BOctree {
 
-pub struct Octree {
+}
+*/
+
+pub struct SparseOctree<T> {
     size: usize,
     node_count: Vec<RangeInclusive<usize>>,
-    data: Vec<Node>,
+    nodes: Vec<Node>,
     holes: Vec<(usize, usize)>,
+    data: marker::PhantomData<[T]>,
 }
 
-impl Octree {
-    pub fn new() -> Self {
+impl Octree<Voxel> for SparseOctree<Voxel> {
+    fn new() -> Self {
         let size = 0;
         let mut node_count = vec![];
-        let mut data = vec![];
+        let mut nodes = vec![];
         let mut holes = vec![];
 
         node_count.push(0..=0);
-        data.push(Node {
+        nodes.push(Node {
             morton: 0,
             child: u32::MAX,
             valid: 0,
-            block: 42069,
+            voxel: Voxel::air(),
         });
 
-        Octree {
+        Self {
             size,
             node_count,
-            data,
+            nodes,
             holes,
+            data: marker::PhantomData,
         }
     }
 
-    pub fn place(&mut self, x: usize, y: usize, z: usize, cubelet: u16) {
-        self.size = 5;
+    fn place(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
+        self.size = 9;
 
         let mut hierarchy = self.get_position_hierarchy(x, y, z);
 
         //dbg!(&hierarchy);
 
-        let node = self.add_node(&hierarchy[..]);
+        let node = self.push_back(&hierarchy[..]);
 
-        node.unwrap().block = cubelet as u32;
+        node.unwrap().voxel = voxel;
 
         //self.print_all();
     }
+}
 
-    pub fn data(&self) -> &'_ [Node] {
-        &self.data[..]
+impl SparseOctree<Voxel> {
+    pub fn nodes(&self) -> &'_ [Node] {
+        &self.nodes[..]
     }
 
     pub fn get_node<'a>(&'a self, hierarchy: &[u8]) -> Option<(&'a Node, usize)> {
@@ -61,26 +77,26 @@ impl Octree {
             }
 
             //dbg!(index);
-            //dbg!("traversing node", self.data[index]);
+            //dbg!("traversing node", self.nodes[index]);
 
-            //println!("valid: {:#010b}", self.data[index].valid);
+            //println!("valid: {:#010b}", self.nodes[index].valid);
             //println!("mask : {:#010b}", mask);
 
-            let p = (self.data[index].valid & (mask as u32 - 1)).count_ones();
+            let p = (self.nodes[index].valid & (mask as u32 - 1)).count_ones();
             //dbg!(p);
-            if self.data[index].valid & mask as u32 == mask as u32
-                && self.data[index].child != u32::MAX
+            if self.nodes[index].valid & mask as u32 == mask as u32
+                && self.nodes[index].child != u32::MAX
             {
-                index = self.data[index].child as usize + p as usize;
+                index = self.nodes[index].child as usize + p as usize;
             } else {
                 return None;
             }
         }
 
-        Some((&self.data[index], index))
+        Some((&self.nodes[index], index))
     }
 
-    fn add_node<'a>(&'a mut self, hierarchy: &[u8]) -> Option<&'a mut Node> {
+    fn push_back<'a>(&'a mut self, hierarchy: &[u8]) -> Option<&'a mut Node> {
         //println!("ADD NODE");
 
         let mut index = 0;
@@ -91,45 +107,51 @@ impl Octree {
             }
 
             //dbg!(index);
-            //dbg!("traversing node", self.data[index]);
+            //dbg!("traversing node", self.nodes[index]);
 
-            //println!("valid: {:#010b}", self.data[index].valid);
+            //println!("valid: {:#010b}", self.nodes[index].valid);
             //println!("mask : {:#010b}", mask);
 
-            let p = (self.data[index].valid & (mask as u32 - 1)).count_ones();
+            let p = (self.nodes[index].valid & (mask as u32 - 1)).count_ones();
             //dbg!(p);
-            if self.data[index].valid & mask as u32 == mask as u32
-                && self.data[index].child != u32::MAX
+            if self.nodes[index].valid & mask as u32 == mask as u32
+                && self.nodes[index].child != u32::MAX
             {
-                index = self.data[index].child as usize + p as usize;
+                index = self.nodes[index].child as usize + p as usize;
             } else {
-                let node = self.data[index];
+                let node = self.nodes[index];
 
-                self.data[index].valid |= mask as u32;
+                self.nodes[index].valid |= mask as u32;
 
-                let p = (self.data[index].valid & (mask as u32 - 1)).count_ones();
-                let q = self.data[index].valid.count_ones() - 1;
+                let p = (self.nodes[index].valid & (mask as u32 - 1)).count_ones();
+                let q = self.nodes[index].valid.count_ones() - 1;
 
-                self.data[index].child = self.data.len() as _;
+                self.nodes[index].child = self.nodes.len() as _;
 
                 for i in 0..q {
-                    let x = self.data[index].child as usize + i as usize;
+                    let x = self.nodes[index].child as usize + i as usize;
                     let y = node.child as usize + i as usize;
-                    let n = self.data[y];
-                    self.data[y] = Node::default();
-                    self.data.insert(x, n);
+                    let n = self.nodes[y];
+                    self.nodes[y] = Node::default();
+                    self.nodes.insert(x, n);
                 }
 
-                let child = self.data[index].child as usize + p as usize;
+                let child = self.nodes[index].child as usize + p as usize;
 
-                self.data.insert(child as _, Node::default());
-                self.data[child].morton = Self::get_morton_code(&hierarchy[..=level]);
+                self.nodes.insert(
+                    child as _,
+                    Node {
+                        voxel: self.nodes[index].voxel,
+                        ..Node::default()
+                    },
+                );
+                self.nodes[child].morton = Self::get_morton_code(&hierarchy[..=level]);
 
                 index = child as _;
             }
         }
 
-        Some(&mut self.data[index])
+        Some(&mut self.nodes[index])
     }
 
     pub fn get_morton_code(hierarchy: &[u8]) -> u64 {
@@ -147,42 +169,62 @@ impl Octree {
     }
 
     pub fn optimize(&mut self) {
-        let mut data = self.data.clone();
+        let mut nodes = self.nodes.clone();
 
-        data.retain(|node| node.morton != u64::MAX);
-
-        data.sort_by(|a, b| a.morton.cmp(&b.morton));
-
-        for i in 0..data.len() {
-            if data[i].child == u32::MAX {
+        for i in (0..nodes.len()).rev() {
+            if nodes[i].child == u32::MAX {
                 continue;
             }
 
-            let child: Node = self.data[data[i].child as usize];
+            if nodes[i].valid != u8::MAX as _ {
+                continue;
+            }
 
-            data[i].child = data
+            let child = nodes[i].child as usize;
+
+            let children = child..child + 8;
+
+            let first_child = nodes[child];
+
+            if first_child.voxel.is_translucent() {
+                continue;
+            }
+
+            let all_children_same = nodes[children.clone()]
+                .iter()
+                .all(|node| node.voxel.id == first_child.voxel.id);
+
+            if all_children_same {
+                nodes[i] = Node {
+                    morton: nodes[i].morton,
+                    child: u32::MAX,
+                    valid: 0,
+                    voxel: first_child.voxel,
+                };
+                //dbg!(nodes[i]);
+                for j in children.clone() {
+                    nodes[j] = Node::default();
+                }
+            }
+        }
+
+        nodes.retain(|node| node.morton != u64::MAX);
+
+        nodes.sort_by(|a, b| a.morton.cmp(&b.morton));
+
+        for i in 0..nodes.len() {
+            if nodes[i].child == u32::MAX {
+                continue;
+            }
+
+            let child: Node = self.nodes[nodes[i].child as usize];
+
+            nodes[i].child = nodes
                 .binary_search_by(|probe| probe.morton.cmp(&child.morton))
                 .expect("failed to find node") as _;
         }
 
-        self.data = data;
-    }
-
-    pub fn print_all(&self) {
-        dbg!(&self.node_count);
-        dbg!(self.size);
-        dbg!(self.data.len());
-        let mut index = 0;
-        let mut level = 0;
-        let mut children = 0;
-        for (i, node) in self.data.iter().enumerate() {
-            children += node.valid.count_ones() as usize;
-            index += 1;
-            if (node.block != 42069 && node.block != 1 && node.block != 2 && node.block != 3) {
-                println!("index {}", i);
-                dbg!(node);
-            }
-        }
+        self.nodes = nodes;
     }
 
     pub fn size(&self) -> usize {
@@ -221,8 +263,8 @@ impl Octree {
 pub struct Node {
     child: u32,
     valid: u32,
-    block: u32,
     morton: u64,
+    voxel: Voxel,
 }
 
 impl Default for Node {
@@ -231,7 +273,7 @@ impl Default for Node {
             morton: u64::MAX,
             child: u32::MAX,
             valid: 0,
-            block: 42069,
+            ..Self::default()
         }
     }
 }

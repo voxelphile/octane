@@ -13,6 +13,8 @@ mod ffi {
     pub const KEY_PRESS: c_int = 2;
     pub const KEY_RELEASE: c_int = 3;
     pub const MOTION_NOTIFY: c_int = 6;
+    pub const FOCUS_IN: c_int = 9;
+    pub const FOCUS_OUT: c_int = 10;
     pub const EXPOSE: c_int = 12;
     pub const MAP_NOTIFY: c_int = 19;
     pub const REPARENT_NOTIFY: c_int = 21;
@@ -21,21 +23,6 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     pub enum Display {}
-
-    #[derive(Clone, Copy)]
-    #[repr(C)]
-    pub struct ExposeEvent {
-        pub ty: c_int,
-        pub serial: c_ulong,
-        pub send_event: Bool,
-        pub display: *mut Display,
-        pub window: Window,
-        pub x: c_int,
-        pub y: c_int,
-        pub width: c_int,
-        pub height: c_int,
-        pub count: c_int,
-    }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -79,6 +66,33 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct FocusEvent {
+        pub ty: c_int,
+        pub serial: c_ulong,
+        pub send_event: Bool,
+        pub display: *mut Display,
+        pub window: Window,
+        pub mode: c_int,
+        pub detail: c_int,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct ExposeEvent {
+        pub ty: c_int,
+        pub serial: c_ulong,
+        pub send_event: Bool,
+        pub display: *mut Display,
+        pub window: Window,
+        pub x: c_int,
+        pub y: c_int,
+        pub width: c_int,
+        pub height: c_int,
+        pub count: c_int,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub struct ClientMessageEvent {
         pub ty: c_int,
         pub serial: c_ulong,
@@ -111,9 +125,10 @@ mod ffi {
     #[repr(C)]
     pub union Event {
         pub ty: c_int,
-        pub expose: ExposeEvent,
         pub key: KeyEvent,
         pub motion: MotionEvent,
+        pub focus: FocusEvent,
+        pub expose: ExposeEvent,
         pub client_message: ClientMessageEvent,
         pub configure: ConfigureEvent,
         //this is a hack because event is not the right size...
@@ -186,12 +201,14 @@ pub const KEY_RELEASE_MASK: i64 = 0x0000_0002;
 pub const POINTER_MOTION_MASK: i64 = 0x0000_0040;
 pub const EXPOSURE_MASK: i64 = 0x0000_8000;
 pub const STRUCTURE_NOTIFY_MASK: i64 = 0x0002_0000;
+pub const FOCUS_CHANGE_MASK: i64 = 0x0020_0000;
 
 pub type Display = *mut ffi::Display;
 pub type Screen = i32;
 pub type Window = u64;
 pub type Atom = u64;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Event {
     Expose {},
     KeyPress {
@@ -206,6 +223,8 @@ pub enum Event {
         x: i32,
         y: i32,
     },
+    FocusIn {},
+    FocusOut {},
     ClientMessage {
         serial: u64,
         send_event: bool,
@@ -225,7 +244,7 @@ pub enum Event {
     MapNotify {},
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keycode {
     W,
     A,
@@ -347,6 +366,8 @@ pub fn next_event(display: Display) -> Result<Event, Error> {
                 serial: event.key.serial,
                 keycode: event.key.keycode.try_into().map_err(|_| Error::Invalid)?,
             },
+            ffi::FOCUS_IN => Event::FocusIn {},
+            ffi::FOCUS_OUT => Event::FocusOut {},
             ffi::CLIENT_MESSAGE => Event::ClientMessage {
                 serial: event.client_message.serial,
                 send_event: event.client_message.send_event != 0,

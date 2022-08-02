@@ -10,14 +10,14 @@ pub struct Matrix<T, const N: usize, const M: usize>
 where
     T: Numeric,
 {
-    data: [[T; N]; M],
+    data: [Vector<T, N>; M],
 }
 
 impl<T, const N: usize, const M: usize> Matrix<T, N, M>
 where
     T: Numeric,
 {
-    pub fn new(data: [[T; N]; M]) -> Self {
+    pub fn new(data: [Vector<T, N>; M]) -> Self {
         Self { data }
     }
 }
@@ -28,7 +28,7 @@ where
     T: From<u8>,
 {
     pub fn identity() -> Self {
-        let mut data = [[T::default(); N]; N];
+        let mut data = [Vector::default(); N];
 
         for i in (0..N * N).step_by(N + 1) {
             data[i % N][i / N] = 1_u8.into()
@@ -41,11 +41,11 @@ where
 impl<T: Default, const N: usize, const M: usize> Default for Matrix<T, N, M>
 where
     T: Numeric,
-    [T; N]: Default,
-    [[T; N]; M]: Default,
+    Vector<T, N>: Default,
+    [Vector<T, N>; M]: Default,
 {
     fn default() -> Self {
-        let data = [[T::default(); N]; M];
+        let data = [Vector::default(); M];
         Self { data }
     }
 }
@@ -55,7 +55,7 @@ where
     T: Numeric,
 {
     pub fn transpose(self) -> Matrix<T, M, N> {
-        let mut data = [[T::default(); M]; N];
+        let mut data = [Vector::default(); N];
 
         for i in 0..N {
             for j in 0..M {
@@ -88,10 +88,12 @@ where
                 if i != j {
                     let ratio = self.data[j][i] / self.data[i][i];
                     for k in 0..N {
-                        self.data[j][k] -= ratio * self.data[i][k];
+                        let value = self.data[i][k];
+                        self.data[j][k] -= ratio * value;
                     }
                     for k in 0..N {
-                        data[j][k] -= ratio * data[i][k];
+                        let value = data[i][k];
+                        data[j][k] -= ratio * value;
                     }
                 }
             }
@@ -112,11 +114,11 @@ where
     }
 }
 
-impl<T, const N: usize, const M: usize> From<[[T; N]; M]> for Matrix<T, N, M>
+impl<T, const N: usize, const M: usize> From<[Vector<T, N>; M]> for Matrix<T, N, M>
 where
     T: Numeric,
 {
-    fn from(data: [[T; N]; M]) -> Self {
+    fn from(data: [Vector<T, N>; M]) -> Self {
         Self::new(data)
     }
 }
@@ -125,7 +127,7 @@ impl<T, const N: usize, const M: usize> Deref for Matrix<T, N, M>
 where
     T: Numeric,
 {
-    type Target = [[T; N]; M];
+    type Target = [Vector<T, N>; M];
 
     fn deref(&self) -> &Self::Target {
         &self.data
@@ -202,7 +204,7 @@ where
     type Output = Matrix<T, C, B>;
 
     fn mul(self, rhs: Matrix<T, C, A>) -> Self::Output {
-        let mut data = [[T::default(); C]; B];
+        let mut data = [Vector::default(); B];
         for row in 0..B {
             for col in 0..C {
                 let mut cell = T::default();

@@ -1,5 +1,6 @@
 #![allow(clippy::needless_range_loop)]
 
+use std::convert::FloatToInt;
 use std::ops::{Add, AddAssign, Deref, DerefMut, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use crate::Numeric;
@@ -19,6 +20,38 @@ where
 {
     pub fn new(data: [T; N]) -> Self {
         Self { data }
+    }
+}
+
+impl<T, const N: usize> Vector<T, N>
+where
+    T: Numeric,
+{
+    pub fn resize<const M: usize>(self) -> Vector<T, M> {
+        let mut data = [T::default(); M];
+
+        for i in 0..M {
+            if i > N {
+                break;
+            }
+
+            data[i] = self[i];
+        }
+
+        Vector::<T, M> { data }
+    }
+
+    pub fn cast<U>(self) -> Vector<U, N>
+    where
+        U: Numeric + Default + From<T>,
+    {
+        let mut data = [U::default(); N];
+
+        for i in 0..N {
+            data[i] = self[i].into();
+        }
+
+        Vector::<U, N> { data }
     }
 }
 
@@ -100,6 +133,61 @@ impl<const N: usize> Vector<f32, N> {
     pub fn normalize(self) -> Self {
         let magnitude = self.magnitude();
         self / magnitude
+    }
+
+    pub fn castf<U>(self) -> Vector<U, N>
+    where
+        f32: FloatToInt<U>,
+        U: Numeric + Default,
+    {
+        let mut data = [U::default(); N];
+
+        for i in 0..N {
+            data[i] = unsafe { self[i].to_int_unchecked() };
+        }
+
+        Vector::<U, N> { data }
+    }
+}
+
+impl<const N: usize> Vector<f64, N> {
+    pub fn distance(&self, other: &Self) -> f64 {
+        self.distance_squared(other).sqrt()
+    }
+
+    pub fn distance_squared(&self, other: &Self) -> f64 {
+        let mut accum = 0.0;
+        for i in 0..N {
+            accum += (self.data[i] - other.data[i]) * (self.data[i] - other.data[i])
+        }
+        accum
+    }
+
+    pub fn magnitude(&self) -> f64 {
+        let mut accum = 0.0;
+        for i in 0..N {
+            accum += self.data[i] * self.data[i];
+        }
+        accum.sqrt()
+    }
+
+    pub fn normalize(self) -> Self {
+        let magnitude = self.magnitude();
+        self / magnitude
+    }
+
+    pub fn castf<U>(self) -> Vector<U, N>
+    where
+        f64: FloatToInt<U>,
+        U: Numeric + Default,
+    {
+        let mut data = [U::default(); N];
+
+        for i in 0..N {
+            data[i] = unsafe { self[i].to_int_unchecked() };
+        }
+
+        Vector::<U, N> { data }
     }
 }
 

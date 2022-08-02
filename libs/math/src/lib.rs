@@ -1,3 +1,5 @@
+#![feature(convert_float_to_int)]
+
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, Sub, SubAssign};
 
 pub mod matrix;

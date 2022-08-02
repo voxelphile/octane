@@ -12,4 +12,5 @@ vk 	= { path = "../../libs/vk" }
 net 	= { path = "../../libs/net" }
 
 log = "*"
+noise = "*"
 raw-window-handle = "*"

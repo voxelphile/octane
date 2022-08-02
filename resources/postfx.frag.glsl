@@ -9,7 +9,7 @@ layout(binding = 0) uniform RenderSettings {
 
 layout(binding = 1, rgba32f) uniform image2D source_color;
 layout(binding = 2, rgba32f) uniform image2D source_occlusion;
-layout(binding = 3, rgba32f) uniform image2D source_depth;
+layout(binding = 3) uniform sampler2D source_depth;
 
 layout(location = 0) out vec4 out_color;
 
@@ -21,7 +21,7 @@ void main() {
 
 	float occlusion = clamp(imageLoad(source_occlusion, pixel).x, 0, 1); 
 
-	float depth = clamp(imageLoad(source_depth, pixel).x, 0.1, 1);
+	float depth = 1.0; //clamp(texture(source_depth, uv_coords).x, 0.1, 1);
 
 	//SHADOWS
 	int sample_size = int(((1 - occlusion) * 5) / depth);
@@ -41,7 +41,7 @@ void main() {
 			if (pos_occ == 1 && (nearest_lit == vec2(sample_size * sample_size) || ijdist < middledist)){ 
 				nearest_lit = vec2(i, j);
 
-				nearest_lit_depth = clamp(imageLoad(source_depth, pos), 0.1, 1).x;
+				nearest_lit_depth = 1.0; //texture(source_depth, vec2(pos)).x;
 			}
 		}
 	}
@@ -52,7 +52,7 @@ void main() {
 	float sample_max = (sample_size * sample_size) + (sample_size * sample_size) + depth_offset;
 	float sample_value = (nearest_lit.x * nearest_lit.x) + (nearest_lit.y * nearest_lit.y) + depth_offset;
 
-	
+
 	float shadow = sqrt(sample_value) / sqrt(sample_max);
 
 	if (occlusion == 1) {
@@ -61,4 +61,5 @@ void main() {
 
 	color.xyz *= max(1 - shadow, 0) * 0.5 + 0.5;
 	out_color = color;
+
 }

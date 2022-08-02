@@ -15,7 +15,7 @@ mod ffi {
 
     use libc::{c_char, c_float, c_int, c_uint, c_ulong, c_void, size_t};
 
-    macro_rules! impl_from {
+    macro_rules! impl_from_enum {
     ($ obj : expr, $($ name : ident => $ case : ident),*) => {
         match $obj {
             $(super::$name::$case => Self::$case),*
@@ -24,11 +24,24 @@ mod ffi {
     ($ name : ident, $($cases : ident),*) => {
         impl From<super::$name> for $name {
             fn from(x: super::$name) -> Self {
-                impl_from!(x, $($name => $cases),*)
+                impl_from_enum!(x, $($name => $cases),*)
             }
         }
+    };}
+
+    macro_rules! impl_from_struct {
+    ($ obj : expr, $($ case : ident),* { $($Self:tt)* }) => {
+        $($Self)* {
+            $($case: $obj.$case as _),*
+        }
     };
-}
+    ($ name : ident, $($cases : ident),*) => {
+        impl From<super::$name> for $name {
+            fn from(x: super::$name) -> Self {
+                impl_from_struct!(x, $($cases),* { Self })
+            }
+        }
+    };}
 
     macro_rules! handle {
         ($ name : ident) => {
@@ -258,7 +271,7 @@ mod ffi {
         D32Sfloat = 126,
     }
 
-    impl_from!(
+    impl_from_enum!(
         Format,
         Rgba8Srgb,
         Bgra8Srgb,
@@ -603,6 +616,125 @@ mod ffi {
 
     #[derive(Clone, Copy)]
     #[repr(C)]
+    pub struct PhysicalDeviceFeatures {
+        pub robust_buffer_access: Bool,
+        pub full_draw_index_uint_32: Bool,
+        pub image_cube_array: Bool,
+        pub independent_blend: Bool,
+        pub geometry_shader: Bool,
+        pub tessellation_shader: Bool,
+        pub sample_rate_shading: Bool,
+        pub dual_src_blend: Bool,
+        pub logic_op: Bool,
+        pub multi_draw_indirect: Bool,
+        pub draw_indirect_first_instance: Bool,
+        pub depth_clamp: Bool,
+        pub depth_bias_clamp: Bool,
+        pub fill_mode_non_solid: Bool,
+        pub depth_bounds: Bool,
+        pub wide_lines: Bool,
+        pub large_points: Bool,
+        pub alpha_to_one: Bool,
+        pub multi_viewport: Bool,
+        pub sampler_anisotropy: Bool,
+        pub texture_compression_etc_2: Bool,
+        pub texture_compression_astc_ldr: Bool,
+        pub texture_compression_bc: Bool,
+        pub occlusion_query_precise: Bool,
+        pub pipeline_statistics_query: Bool,
+        pub vertex_pipeline_stores_and_atomics: Bool,
+        pub fragment_stores_and_atomics: Bool,
+        pub shader_tessellation_and_geometry_point_size: Bool,
+        pub shader_image_gather_extended: Bool,
+        pub shader_storage_image_extended_formats: Bool,
+        pub shader_storage_image_multisample: Bool,
+        pub shader_storage_image_read_without_format: Bool,
+        pub shader_storage_image_write_without_format: Bool,
+        pub shader_uniform_buffer_array_dynamic_indexing: Bool,
+        pub shader_sampled_image_array_dynamic_indexing: Bool,
+        pub shader_storage_buffer_array_dynamic_indexing: Bool,
+        pub shader_storage_image_array_dynamic_indexing: Bool,
+        pub shader_clip_distance: Bool,
+        pub shader_cull_distance: Bool,
+        pub shader_float_64: Bool,
+        pub shader_int_64: Bool,
+        pub shader_int_16: Bool,
+        pub shader_resource_residency: Bool,
+        pub shader_resource_min_lod: Bool,
+        pub sparse_binding: Bool,
+        pub sparse_residency_buffer: Bool,
+        pub sparse_residency_image_2_d: Bool,
+        pub sparse_residency_image_3_d: Bool,
+        pub sparse_residency_2_samples: Bool,
+        pub sparse_residency_4_samples: Bool,
+        pub sparse_residency_8_samples: Bool,
+        pub sparse_residency_16_samples: Bool,
+        pub sparse_residency_aliased: Bool,
+        pub variable_multisample_rate: Bool,
+        pub inherited_queries: Bool,
+    }
+
+    impl_from_struct!(
+        PhysicalDeviceFeatures,
+        robust_buffer_access,
+        full_draw_index_uint_32,
+        image_cube_array,
+        independent_blend,
+        geometry_shader,
+        tessellation_shader,
+        sample_rate_shading,
+        dual_src_blend,
+        logic_op,
+        multi_draw_indirect,
+        draw_indirect_first_instance,
+        depth_clamp,
+        depth_bias_clamp,
+        fill_mode_non_solid,
+        depth_bounds,
+        wide_lines,
+        large_points,
+        alpha_to_one,
+        multi_viewport,
+        sampler_anisotropy,
+        texture_compression_etc_2,
+        texture_compression_astc_ldr,
+        texture_compression_bc,
+        occlusion_query_precise,
+        pipeline_statistics_query,
+        vertex_pipeline_stores_and_atomics,
+        fragment_stores_and_atomics,
+        shader_tessellation_and_geometry_point_size,
+        shader_image_gather_extended,
+        shader_storage_image_extended_formats,
+        shader_storage_image_multisample,
+        shader_storage_image_read_without_format,
+        shader_storage_image_write_without_format,
+        shader_uniform_buffer_array_dynamic_indexing,
+        shader_sampled_image_array_dynamic_indexing,
+        shader_storage_buffer_array_dynamic_indexing,
+        shader_storage_image_array_dynamic_indexing,
+        shader_clip_distance,
+        shader_cull_distance,
+        shader_float_64,
+        shader_int_64,
+        shader_int_16,
+        shader_resource_residency,
+        shader_resource_min_lod,
+        sparse_binding,
+        sparse_residency_buffer,
+        sparse_residency_image_2_d,
+        sparse_residency_image_3_d,
+        sparse_residency_2_samples,
+        sparse_residency_4_samples,
+        sparse_residency_8_samples,
+        sparse_residency_16_samples,
+        sparse_residency_aliased,
+        variable_multisample_rate,
+        inherited_queries
+    );
+
+    #[derive(Clone, Copy)]
+    #[repr(C)]
     pub struct QueueFamilyProperties {
         pub queue_flags: c_uint,
         pub queue_count: c_uint,
@@ -633,7 +765,7 @@ mod ffi {
         pub enabled_layer_names: *const *const c_char,
         pub enabled_extension_count: c_uint,
         pub enabled_extension_names: *const *const c_char,
-        pub enabled_features: *const c_void,
+        pub enabled_features: *const PhysicalDeviceFeatures,
     }
 
     #[cfg(target_os = "linux")]
@@ -1132,7 +1264,7 @@ mod ffi {
         Always = 7,
     }
 
-    impl_from!(
+    impl_from_enum!(
         CompareOp,
         Never,
         Less,
@@ -1157,7 +1289,7 @@ mod ffi {
         DecrementAndWrap = 7,
     }
 
-    impl_from!(
+    impl_from_enum!(
         StencilOp,
         Keep,
         Zero,
@@ -1410,7 +1542,7 @@ mod ffi {
         Secondary = 1,
     }
 
-    impl_from!(CommandBufferLevel, Primary, Secondary);
+    impl_from_enum!(CommandBufferLevel, Primary, Secondary);
 
     #[derive(Clone, Copy)]
     #[repr(C)]
@@ -1527,7 +1659,7 @@ mod ffi {
         StorageBuffer = 7,
     }
 
-    impl_from!(
+    impl_from_enum!(
         DescriptorType,
         CombinedImageSampler,
         StorageImage,
@@ -2047,6 +2179,7 @@ mod ffi {
             contents: SubpassContents,
         );
         pub fn vkCmdEndRenderPass(command_buffer: CommandBuffer);
+        pub fn vkCmdNextSubpass(command_buffer: CommandBuffer, contents: SubpassContents);
         pub fn vkCmdBindPipeline(
             command_buffer: CommandBuffer,
             bind_point: PipelineBindPoint,
@@ -2276,11 +2409,16 @@ pub const SUBPASS_EXTERNAL: u32 = u32::MAX;
 pub const PIPELINE_STAGE_TOP_OF_PIPE: u32 = 0x00000001;
 pub const PIPELINE_STAGE_FRAGMENT_SHADER: u32 = 0x00000080;
 pub const PIPELINE_STAGE_EARLY_FRAGMENT_TESTS: u32 = 0x00000100;
+pub const PIPELINE_STAGE_LATE_FRAGMENT_TESTS: u32 = 0x00000200;
 pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 0x00000400;
 pub const PIPELINE_STAGE_COMPUTE_SHADER: u32 = 0x00000800;
 pub const PIPELINE_STAGE_TRANSFER: u32 = 0x00001000;
+pub const PIPELINE_STAGE_BOTTOM_OF_PIPE: u32 = 0x00002000;
 
+pub const ACCESS_SHADER_READ: u32 = 0x00000020;
+pub const ACCESS_COLOR_ATTACHMENT_READ: u32 = 0x00000080;
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 0x00000100;
+pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_READ: u32 = 0x00000200;
 pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE: u32 = 0x00000400;
 
 pub const BUFFER_USAGE_TRANSFER_SRC: u32 = 0x00000001;
@@ -2296,6 +2434,8 @@ pub const IMAGE_USAGE_SAMPLED: u32 = 0x00000004;
 pub const IMAGE_USAGE_STORAGE: u32 = 0x00000008;
 pub const IMAGE_USAGE_COLOR_ATTACHMENT: u32 = 0x00000010;
 pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 0x00000020;
+pub const IMAGE_USAGE_TRANSIENT_ATTACHMENT: u32 = 0x00000040;
+pub const IMAGE_USAGE_INPUT_ATTACHMENT: u32 = 0x00000080;
 
 pub const MEMORY_PROPERTY_DEVICE_LOCAL: u32 = 0x00000001;
 pub const MEMORY_PROPERTY_HOST_VISIBLE: u32 = 0x00000002;
@@ -2680,8 +2820,64 @@ pub struct PhysicalDeviceProperties {
     pub limits: PhysicalDeviceLimits,
 }
 
-//TODO add info
-pub struct PhysicalDeviceFeatures {}
+#[derive(Clone, Copy, Default)]
+pub struct PhysicalDeviceFeatures {
+    pub robust_buffer_access: bool,
+    pub full_draw_index_uint_32: bool,
+    pub image_cube_array: bool,
+    pub independent_blend: bool,
+    pub geometry_shader: bool,
+    pub tessellation_shader: bool,
+    pub sample_rate_shading: bool,
+    pub dual_src_blend: bool,
+    pub logic_op: bool,
+    pub multi_draw_indirect: bool,
+    pub draw_indirect_first_instance: bool,
+    pub depth_clamp: bool,
+    pub depth_bias_clamp: bool,
+    pub fill_mode_non_solid: bool,
+    pub depth_bounds: bool,
+    pub wide_lines: bool,
+    pub large_points: bool,
+    pub alpha_to_one: bool,
+    pub multi_viewport: bool,
+    pub sampler_anisotropy: bool,
+    pub texture_compression_etc_2: bool,
+    pub texture_compression_astc_ldr: bool,
+    pub texture_compression_bc: bool,
+    pub occlusion_query_precise: bool,
+    pub pipeline_statistics_query: bool,
+    pub vertex_pipeline_stores_and_atomics: bool,
+    pub fragment_stores_and_atomics: bool,
+    pub shader_tessellation_and_geometry_point_size: bool,
+    pub shader_image_gather_extended: bool,
+    pub shader_storage_image_extended_formats: bool,
+    pub shader_storage_image_multisample: bool,
+    pub shader_storage_image_read_without_format: bool,
+    pub shader_storage_image_write_without_format: bool,
+    pub shader_uniform_buffer_array_dynamic_indexing: bool,
+    pub shader_sampled_image_array_dynamic_indexing: bool,
+    pub shader_storage_buffer_array_dynamic_indexing: bool,
+    pub shader_storage_image_array_dynamic_indexing: bool,
+    pub shader_clip_distance: bool,
+    pub shader_cull_distance: bool,
+    pub shader_float_64: bool,
+    pub shader_int_64: bool,
+    pub shader_int_16: bool,
+    pub shader_resource_residency: bool,
+    pub shader_resource_min_lod: bool,
+    pub sparse_binding: bool,
+    pub sparse_residency_buffer: bool,
+    pub sparse_residency_image_2_d: bool,
+    pub sparse_residency_image_3_d: bool,
+    pub sparse_residency_2_samples: bool,
+    pub sparse_residency_4_samples: bool,
+    pub sparse_residency_8_samples: bool,
+    pub sparse_residency_16_samples: bool,
+    pub sparse_residency_aliased: bool,
+    pub variable_multisample_rate: bool,
+    pub inherited_queries: bool,
+}
 
 pub struct PhysicalDevice {
     handle: ffi::PhysicalDevice,
@@ -2748,7 +2944,7 @@ impl PhysicalDevice {
 
     //TODO
     pub fn features(&self) -> PhysicalDeviceFeatures {
-        PhysicalDeviceFeatures {}
+        unimplemented!();
     }
 
     pub fn queue_families(&self) -> Vec<QueueFamilyProperties> {
@@ -2965,6 +3161,8 @@ impl Device {
             .map(|string| string.as_ptr())
             .collect::<Vec<_>>();
 
+        let enabled_features = create_info.enabled_features.clone().into();
+
         let create_info = ffi::DeviceCreateInfo {
             structure_type: ffi::StructureType::DeviceCreateInfo,
             p_next: ptr::null(),
@@ -2975,7 +3173,7 @@ impl Device {
             enabled_layer_names: enabled_layer_names.as_ptr(),
             enabled_extension_count: create_info.extensions.len() as _,
             enabled_extension_names: enabled_extension_names.as_ptr(),
-            enabled_features: ptr::null(),
+            enabled_features: &enabled_features,
         };
 
         let mut handle = MaybeUninit::<ffi::Device>::uninit();
@@ -4979,6 +5177,10 @@ impl Commands<'_> {
 
     pub fn end_render_pass(&mut self) {
         unsafe { ffi::vkCmdEndRenderPass(self.command_buffer.handle) };
+    }
+
+    pub fn next_subpass(&mut self) {
+        unsafe { ffi::vkCmdNextSubpass(self.command_buffer.handle, ffi::SubpassContents::Inline) };
     }
 
     pub fn bind_pipeline(&mut self, bind_point: PipelineBindPoint, pipeline: &Pipeline) {

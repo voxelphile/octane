@@ -1,12 +1,15 @@
+#[derive(Debug)]
 pub enum Event {
     CloseRequested,
     KeyPress { keycode: Keycode },
     KeyRelease { keycode: Keycode },
     PointerMotion { x: i32, y: i32 },
+    FocusIn,
+    FocusOut,
     Resized { resolution: (u32, u32) },
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Keycode {
     W,
     A,
@@ -79,7 +82,8 @@ mod linux {
                 x11::KEY_PRESS_MASK
                     | x11::KEY_RELEASE_MASK
                     | x11::POINTER_MOTION_MASK
-                    | x11::STRUCTURE_NOTIFY_MASK,
+                    | x11::STRUCTURE_NOTIFY_MASK
+                    | x11::FOCUS_CHANGE_MASK,
             );
 
             let wm_protocols = x11::intern_atom(display, "WM_PROTOCOLS", false);
@@ -184,6 +188,8 @@ mod linux {
                     keycode: keycode.into(),
                 }),
                 x11::Event::MotionNotify { x, y } => Some(Event::PointerMotion { x, y }),
+                x11::Event::FocusIn {} => Some(Event::FocusIn),
+                x11::Event::FocusOut {} => Some(Event::FocusOut),
                 x11::Event::ClientMessage {
                     message_type,
                     format,
