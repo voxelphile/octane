@@ -8,6 +8,7 @@ mod image;
 mod memory;
 mod shader;
 mod surface;
+mod swapchain;
 
 pub mod prelude {
     pub use crate::buffer::*;
@@ -18,4 +19,5 @@ pub mod prelude {
     pub use crate::memory::*;
     pub use crate::shader::*;
     pub use crate::surface::*;
+    pub use crate::swapchain::*;
 }
