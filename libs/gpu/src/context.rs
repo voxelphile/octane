@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use log::{error, info, trace, warn};
 
+#[non_exhaustive]
 pub enum Context {
     Vulkan {
         instance: Rc<vk::Instance>,

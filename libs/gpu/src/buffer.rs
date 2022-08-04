@@ -76,6 +76,7 @@ pub struct BufferInfo<'a> {
     pub properties: MemoryProperties,
 }
 
+#[non_exhaustive]
 pub enum Buffer<T> {
     Vulkan {
         buffer: vk::Buffer,

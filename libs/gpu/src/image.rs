@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+use std::rc::Rc;
+
 use bitflags::bitflags;
 
 bitflags! {
@@ -56,6 +58,37 @@ impl ImageUsage {
 }
 
 #[derive(Clone, Copy)]
+pub enum ImageLayout {
+    Undefined,
+    General,
+    ColorAttachment,
+    DepthStencilAttachment,
+    DepthStencilReadOnly,
+    ShaderReadOnly,
+    TransferSrc,
+    TransferDst,
+    Preinitialized,
+    PresentSrc,
+}
+
+impl From<ImageLayout> for vk::ImageLayout {
+    fn from(layout: ImageLayout) -> Self {
+        match layout {
+            ImageLayout::Undefined => Self::Undefined,
+            ImageLayout::General => Self::General,
+            ImageLayout::ColorAttachment => Self::ColorAttachment,
+            ImageLayout::DepthStencilAttachment => Self::DepthStencilAttachment,
+            ImageLayout::DepthStencilReadOnly => Self::DepthStencilReadOnly,
+            ImageLayout::ShaderReadOnly => Self::ShaderReadOnly,
+            ImageLayout::TransferSrc => Self::TransferSrc,
+            ImageLayout::TransferDst => Self::TransferDst,
+            ImageLayout::Preinitialized => Self::Preinitialized,
+            ImageLayout::PresentSrc => Self::PresentSrc,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub enum ImageType {
     OneDim,
     TwoDim,
@@ -88,10 +121,12 @@ pub struct ImageInfo<'a> {
     pub extent: (u32, u32, u32),
 }
 
+#[non_exhaustive]
 pub enum Image {
     Vulkan {
         image: vk::Image,
-        memory: vk::Memory,
+        format: vk::Format,
+        memory: Option<vk::Memory>,
         view: vk::ImageView,
         sampler: vk::Sampler,
     },
@@ -105,88 +140,125 @@ impl Image {
                 device,
                 ..
             } => {
-                let image_create_info = vk::ImageCreateInfo {
-                    image_type: info.ty.to_vk_image(),
-                    format: info.format.to_vk(),
-                    extent: info.extent,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    samples: vk::SAMPLE_COUNT_1,
-                    tiling: vk::ImageTiling::Optimal,
-                    image_usage: info.usage.to_vk(),
-                    initial_layout: vk::ImageLayout::Undefined,
-                };
-
-                let mut image = vk::Image::new(device.clone(), image_create_info)
-                    .expect("failed to allocate image");
-
-                let memory_allocate_info = vk::MemoryAllocateInfo {
-                    property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
-                };
-
-                let memory = vk::Memory::allocate(
+                let (image, memory) = Self::new_managed_vk_image(
+                    &physical_device,
                     device.clone(),
-                    memory_allocate_info,
-                    image.memory_requirements(),
-                    physical_device.memory_properties(),
-                    false,
-                )
-                .expect("failed to allocate memory");
+                    info.format.into(),
+                    info.usage.to_vk(),
+                    info.ty.to_vk_image(),
+                    info.extent,
+                );
 
-                image
-                    .bind_memory(&memory)
-                    .expect("failed to bind memory to image");
-
-                let view_create_info = vk::ImageViewCreateInfo {
-                    image: &image,
-                    view_type: info.ty.to_vk_image_view(),
-                    format: info.format.to_vk(),
-                    components: vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::Identity,
-                        g: vk::ComponentSwizzle::Identity,
-                        b: vk::ComponentSwizzle::Identity,
-                        a: vk::ComponentSwizzle::Identity,
-                    },
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                let view = vk::ImageView::new(device.clone(), view_create_info)
-                    .expect("failed to create image view");
-
-                let sampler_create_info = vk::SamplerCreateInfo {
-                    mag_filter: vk::Filter::Nearest,
-                    min_filter: vk::Filter::Nearest,
-                    mipmap_mode: vk::SamplerMipmapMode::Nearest,
-                    address_mode_u: vk::SamplerAddressMode::ClampToBorder,
-                    address_mode_v: vk::SamplerAddressMode::ClampToBorder,
-                    address_mode_w: vk::SamplerAddressMode::ClampToBorder,
-                    mip_lod_bias: 0.0,
-                    anisotropy_enable: false,
-                    max_anisotropy: 0.0,
-                    compare_enable: false,
-                    compare_op: vk::CompareOp::Always,
-                    min_lod: 0.0,
-                    max_lod: 0.0,
-                    border_color: vk::BorderColor::IntTransparentBlack,
-                    unnormalized_coordinates: false,
-                };
-
-                let sampler = vk::Sampler::new(device.clone(), sampler_create_info)
-                    .expect("failed to create sampler");
+                let (view, sampler) = Self::new_vk_image_view(
+                    device.clone(),
+                    &image,
+                    info.format.into(),
+                    info.ty.to_vk_image_view(),
+                );
 
                 Self::Vulkan {
                     image,
-                    memory,
+                    format: info.format.into(),
+                    memory: Some(memory),
                     view,
                     sampler,
                 }
             }
         }
+    }
+
+    pub(crate) fn new_managed_vk_image(
+        physical_device: &vk::PhysicalDevice,
+        device: Rc<vk::Device>,
+        format: vk::Format,
+        image_usage: u32,
+        image_type: vk::ImageType,
+        extent: (u32, u32, u32),
+    ) -> (vk::Image, vk::Memory) {
+        let image_create_info = vk::ImageCreateInfo {
+            image_type,
+            format,
+            extent,
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SAMPLE_COUNT_1,
+            tiling: vk::ImageTiling::Optimal,
+            image_usage,
+            initial_layout: vk::ImageLayout::Undefined,
+        };
+
+        let mut image =
+            vk::Image::new(device.clone(), image_create_info).expect("failed to allocate image");
+
+        let memory_allocate_info = vk::MemoryAllocateInfo {
+            property_flags: vk::MEMORY_PROPERTY_DEVICE_LOCAL,
+        };
+
+        let memory = vk::Memory::allocate(
+            device.clone(),
+            memory_allocate_info,
+            image.memory_requirements(),
+            physical_device.memory_properties(),
+            false,
+        )
+        .expect("failed to allocate memory");
+
+        image
+            .bind_memory(&memory)
+            .expect("failed to bind memory to image");
+
+        (image, memory)
+    }
+
+    pub(crate) fn new_vk_image_view(
+        device: Rc<vk::Device>,
+        image: &vk::Image,
+        format: vk::Format,
+        view_type: vk::ImageViewType,
+    ) -> (vk::ImageView, vk::Sampler) {
+        let view_create_info = vk::ImageViewCreateInfo {
+            image,
+            view_type,
+            format,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::Identity,
+                g: vk::ComponentSwizzle::Identity,
+                b: vk::ComponentSwizzle::Identity,
+                a: vk::ComponentSwizzle::Identity,
+            },
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        };
+
+        let view = vk::ImageView::new(device.clone(), view_create_info)
+            .expect("failed to create image view");
+
+        let sampler_create_info = vk::SamplerCreateInfo {
+            mag_filter: vk::Filter::Nearest,
+            min_filter: vk::Filter::Nearest,
+            mipmap_mode: vk::SamplerMipmapMode::Nearest,
+            address_mode_u: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_v: vk::SamplerAddressMode::ClampToBorder,
+            address_mode_w: vk::SamplerAddressMode::ClampToBorder,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: false,
+            max_anisotropy: 0.0,
+            compare_enable: false,
+            compare_op: vk::CompareOp::Always,
+            min_lod: 0.0,
+            max_lod: 0.0,
+            border_color: vk::BorderColor::IntTransparentBlack,
+            unnormalized_coordinates: false,
+        };
+
+        let sampler = vk::Sampler::new(device.clone(), sampler_create_info)
+            .expect("failed to create sampler");
+
+        (view, sampler)
     }
 }

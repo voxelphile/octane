@@ -1,13 +1,26 @@
 use crate::prelude::*;
 
+use std::rc::Rc;
+
 pub struct SwapchainInfo<'a> {
-    device: &'a Device,
-    surface: &'a Surface,
-    old: Option<Swapchain>,
+    pub device: &'a Device,
+    pub surface: &'a Surface,
+    pub old: Option<Swapchain>,
 }
 
+pub struct SwapchainImageFetch<'a> {
+    pub device: &'a Device,
+    pub surface: &'a Surface,
+}
+
+#[non_exhaustive]
 pub enum Swapchain {
-    Vulkan { swapchain: vk::Swapchain },
+    Vulkan {
+        physical_device: Rc<vk::PhysicalDevice>,
+        device: Rc<vk::Device>,
+        surface: Rc<vk::Surface>,
+        swapchain: vk::Swapchain,
+    },
 }
 
 impl Swapchain {
@@ -18,27 +31,31 @@ impl Swapchain {
                 device,
                 ..
             } => {
-                let (surface, surface_format) =
-                    if let Surface::Vulkan { surface, format } = info.surface {
-                        (surface, format)
-                    } else {
-                        panic!("surface must be vulkan if context is vulkan");
-                    };
+                let surface = if let Surface::Vulkan { surface } = info.surface {
+                    surface
+                } else {
+                    panic!("not a vulkan surface");
+                };
 
-                let surface_capabilities = physical_device.surface_capabilities(&surface);
+                let vk::SurfaceCapabilities {
+                    mut min_image_count,
+                    current_transform: pre_transform,
+                    current_extent: image_extent,
+                    ..
+                } = physical_device.surface_capabilities(&surface);
 
-                let min_image_count = surface_capabilities.min_image_count + 1;
+                min_image_count += 1;
 
-                let image_format = surface_format.format;
-
-                let image_color_space = surface_format.color_space;
-
-                let pre_transform = surface_capabilities.current_transform;
+                let vk::SurfaceFormat {
+                    format: image_format,
+                    color_space: image_color_space,
+                } = physical_device.surface_format(&surface);
 
                 let present_mode = vk::PresentMode::Immediate;
 
                 let old_swapchain = info.old.map(|old| match old {
-                    Self::Vulkan { swapchain } => swapchain,
+                    Self::Vulkan { swapchain, .. } => swapchain,
+                    _ => panic!("not a vulkan swapchain"),
                 });
 
                 let swapchain_create_info = vk::SwapchainCreateInfo {
@@ -62,9 +79,46 @@ impl Swapchain {
                 let mut swapchain = vk::Swapchain::new(device.clone(), swapchain_create_info)
                     .expect("failed to create swapchain");
 
-                let swapchain_images = swapchain.images();
+                Self::Vulkan {
+                    physical_device: physical_device.clone(),
+                    device: device.clone(),
+                    surface: surface.clone(),
+                    swapchain,
+                }
+            }
+        }
+    }
 
-                Self::Vulkan { swapchain }
+    pub fn images(&self) -> Vec<Image> {
+        match self {
+            Self::Vulkan {
+                physical_device,
+                device,
+                surface,
+                swapchain,
+            } => {
+                let vk::SurfaceFormat { format, .. } = physical_device.surface_format(&surface);
+
+                swapchain
+                    .images()
+                    .into_iter()
+                    .map(|image| {
+                        let (view, sampler) = Image::new_vk_image_view(
+                            device.clone(),
+                            &image,
+                            format,
+                            vk::ImageViewType::TwoDim,
+                        );
+
+                        Image::Vulkan {
+                            image,
+                            format,
+                            memory: None,
+                            view,
+                            sampler,
+                        }
+                    })
+                    .collect::<Vec<_>>()
             }
         }
     }

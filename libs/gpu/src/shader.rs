@@ -7,6 +7,23 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
 
+use bitflags::bitflags;
+
+bitflags! {
+    #[repr(transparent)]
+    pub struct ShaderStage: u32 {
+        const VERTEX = 0x00000001;
+        const FRAGMENT = 0x00000010;
+        const COMPUTE = 0x00000020;
+    }
+}
+
+impl ShaderStage {
+    pub(crate) fn to_vk(self) -> u32 {
+        self.bits()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ShaderError {
     Compilation(u32, String),
@@ -70,6 +87,7 @@ pub struct ShaderInfo<'a> {
     pub input: ShaderInput,
 }
 
+#[non_exhaustive]
 pub enum Shader {
     Vulkan {
         device: Rc<vk::Device>,

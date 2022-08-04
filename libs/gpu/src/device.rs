@@ -11,10 +11,11 @@ pub struct DeviceInfo<'a> {
     pub surface: &'a Surface,
 }
 
+#[non_exhaustive]
 pub enum Device {
     Vulkan {
         instance: Rc<vk::Instance>,
-        physical_device: vk::PhysicalDevice,
+        physical_device: Rc<vk::PhysicalDevice>,
         device: Rc<vk::Device>,
         queues: Vec<vk::Queue>,
         command_pool: vk::CommandPool,
@@ -80,7 +81,7 @@ impl Device {
                             continue;
                         }
                     } else {
-                        panic!("surface must be vulkan if context is vulkan");
+                        panic!("not a vulkan surface");
                     }
                     queue_family_index = Some(i as u32);
                     break;

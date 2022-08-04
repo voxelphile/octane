@@ -12,20 +12,38 @@ pub enum Format {
     D32Sfloat,
 }
 
-impl Format {
-    pub(crate) fn to_vk(self) -> vk::Format {
-        match self {
-            Self::Rgba8Srgb => vk::Format::Rgba8Srgb,
-            Self::Bgra8Srgb => vk::Format::Bgra8Srgb,
-            Self::R16Uint => vk::Format::R16Uint,
-            Self::R32Uint => vk::Format::R32Uint,
-            Self::R32Sfloat => vk::Format::R32Sfloat,
-            Self::Rg32Sfloat => vk::Format::Rg32Sfloat,
-            Self::Rg32Sfloat => vk::Format::Rg32Sfloat,
-            Self::Rgb32Uint => vk::Format::Rgb32Uint,
-            Self::Rgb32Sfloat => vk::Format::Rgb32Sfloat,
-            Self::Rgba32Sfloat => vk::Format::Rgba32Sfloat,
-            Self::D32Sfloat => vk::Format::D32Sfloat,
+impl From<Format> for vk::Format {
+    fn from(format: Format) -> Self {
+        match format {
+            Format::Rgba8Srgb => Self::Rgba8Srgb,
+            Format::Bgra8Srgb => Self::Bgra8Srgb,
+            Format::R16Uint => Self::R16Uint,
+            Format::R32Uint => Self::R32Uint,
+            Format::R32Sfloat => Self::R32Sfloat,
+            Format::Rg32Sfloat => Self::Rg32Sfloat,
+            Format::Rg32Sfloat => Self::Rg32Sfloat,
+            Format::Rgb32Uint => Self::Rgb32Uint,
+            Format::Rgb32Sfloat => Self::Rgb32Sfloat,
+            Format::Rgba32Sfloat => Self::Rgba32Sfloat,
+            Format::D32Sfloat => Self::D32Sfloat,
+        }
+    }
+}
+
+impl From<vk::Format> for Format {
+    fn from(format: vk::Format) -> Self {
+        match format {
+            vk::Format::Rgba8Srgb => Self::Rgba8Srgb,
+            vk::Format::Bgra8Srgb => Self::Bgra8Srgb,
+            vk::Format::R16Uint => Self::R16Uint,
+            vk::Format::R32Uint => Self::R32Uint,
+            vk::Format::R32Sfloat => Self::R32Sfloat,
+            vk::Format::Rg32Sfloat => Self::Rg32Sfloat,
+            vk::Format::Rg32Sfloat => Self::Rg32Sfloat,
+            vk::Format::Rgb32Uint => Self::Rgb32Uint,
+            vk::Format::Rgb32Sfloat => Self::Rgb32Sfloat,
+            vk::Format::Rgba32Sfloat => Self::Rgba32Sfloat,
+            vk::Format::D32Sfloat => Self::D32Sfloat,
         }
     }
 }

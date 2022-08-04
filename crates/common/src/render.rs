@@ -81,6 +81,7 @@ pub struct Vulkan {
     data_buffer: Buffer<[u8; SMALL_BUFFER]>,
     staging_buffer: Buffer<[u8; BIG_BUFFER]>,
     device: Device,
+    surface: Surface,
     context: Context,
 }
 
@@ -268,6 +269,7 @@ impl Vulkan {
 
         Self {
             context,
+            surface,
             device,
             staging_buffer,
             data_buffer,
@@ -283,60 +285,6 @@ impl Vulkan {
             settings,
             last_camera,
         }
-    }
-
-    pub fn reload_graphics(&mut self) {
-        let swapchain = Swapchain::new(SwapchainInfo {
-            device: &self.device,
-        });
-
-        let image_count = swapchain.image_count();
-
-        let extent = (
-            self.settings.resolution[0] / 4,
-            self.settings.resolution[1] / 4,
-            1,
-        );
-        /*
-
-        graphics_color: Vec<Image>,
-        graphics_occlusion: Vec<Image>,
-        graphics_framebuffers: Vec<Framebuffer>,
-        graphics_pipeline: Pipeline,
-        graphics_render_pass: RenderPass,
-        postfx_color: Vec<Image>,
-        postfx_framebuffers: Vec<Framebuffer>,
-        postfx_pipeline: Pipeline,
-        postfx_render_pass: RenderPass,
-        present_framebuffers: Vec<Framebuffer>,
-        present_pipeline: Pipeline,
-        present_render_pass: RenderPass,
-        depth: Image,
-        swapchain: Swapchain,
-        */
-        let graphics_color = (0..image_count)
-            .map(|_| {
-                Image::new(ImageInfo {
-                    device: &self.device,
-                    ty: ImageType::TwoDim,
-                    usage: ImageUsage::COLOR | ImageUsage::STORAGE,
-                    format: Format::Rgba32Sfloat,
-                    extent,
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let graphics_occlusion = (0..image_count)
-            .map(|_| {
-                Image::new(ImageInfo {
-                    device: &self.device,
-                    ty: ImageType::TwoDim,
-                    usage: ImageUsage::COLOR | ImageUsage::STORAGE,
-                    format: Format::Rgba32Sfloat,
-                    extent,
-                })
-            })
-            .collect::<Vec<_>>();
     }
 }
 
@@ -447,7 +395,7 @@ impl Renderer for Vulkan {
         reload_shader(&mut self.present_fragment_shader);
 
         if reload_graphics {
-            self.reload_graphics();
+            self.render_data = Some(VulkanRenderData::load(&self, self.render_data.take()));
         }
     }
 
@@ -455,6 +403,216 @@ impl Renderer for Vulkan {
         todo!()
     }
 }
+
+impl VulkanRenderData {
+    pub fn load(vk: &Vulkan, old: Option<Self>) -> Self {
+        //SWAPCHAIN
+        let swapchain = Swapchain::new(SwapchainInfo {
+            device: &vk.device,
+            surface: &vk.surface,
+            old: old.map(|old| old.swapchain),
+        });
+
+        let swapchain_images = swapchain.images();
+
+        let present_extent = (vk.settings.resolution[0], vk.settings.resolution[1], 1);
+
+        let graphics_extent = (
+            vk.settings.resolution[0] / 4,
+            vk.settings.resolution[1] / 4,
+            1,
+        );
+
+        //ATTACHMENTS
+        let depth = Image::new(ImageInfo {
+            device: &vk.device,
+            ty: ImageType::TwoDim,
+            usage: ImageUsage::DEPTH_STENCIL | ImageUsage::SAMPLED,
+            format: Format::D32Sfloat,
+            extent: graphics_extent,
+        });
+
+        let graphics_color = (0..swapchain_images.len())
+            .map(|_| {
+                Image::new(ImageInfo {
+                    device: &vk.device,
+                    ty: ImageType::TwoDim,
+                    usage: ImageUsage::COLOR | ImageUsage::STORAGE,
+                    format: Format::Rgba32Sfloat,
+                    extent: graphics_extent,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let graphics_occlusion = (0..swapchain_images.len())
+            .map(|_| {
+                Image::new(ImageInfo {
+                    device: &vk.device,
+                    ty: ImageType::TwoDim,
+                    usage: ImageUsage::COLOR | ImageUsage::STORAGE,
+                    format: Format::Rgba32Sfloat,
+                    extent: graphics_extent,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let postfx_color = (0..swapchain_images.len())
+            .map(|_| {
+                Image::new(ImageInfo {
+                    device: &vk.device,
+                    ty: ImageType::TwoDim,
+                    usage: ImageUsage::COLOR | ImageUsage::STORAGE,
+                    format: Format::Rgba32Sfloat,
+                    extent: graphics_extent,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        //RENDERPASSES
+        let graphics_render_pass = RenderPass::new(RenderPassInfo {
+            device: &vk.device,
+            attachments: &[
+                Attachment {
+                    format: Format::Rgba32Sfloat,
+                    load_op: AttachmentLoadOp::Clear,
+                    store_op: AttachmentStoreOp::Store,
+                    layout: ImageLayout::ColorAttachment,
+                    ty: AttachmentType::Color,
+                },
+                Attachment {
+                    format: Format::Rgba32Sfloat,
+                    load_op: AttachmentLoadOp::Clear,
+                    store_op: AttachmentStoreOp::Store,
+                    layout: ImageLayout::ColorAttachment,
+                    ty: AttachmentType::Color,
+                },
+                Attachment {
+                    format: Format::D32Sfloat,
+                    load_op: AttachmentLoadOp::Clear,
+                    store_op: AttachmentStoreOp::Store,
+                    layout: ImageLayout::DepthStencilAttachment,
+                    ty: AttachmentType::DepthStencil,
+                },
+            ],
+            subpasses: &[
+                Subpass {
+                    src: None,
+                    src_access: Access::empty(),
+                    src_stage: PipelineStage::EARLY_FRAGMENT_TESTS,
+                    dst: Some(0),
+                    dst_access: Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    dst_stage: PipelineStage::LATE_FRAGMENT_TESTS,
+                    attachments: &[0, 1, 2],
+                },
+                Subpass {
+                    src: Some(0),
+                    src_access: Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    src_stage: PipelineStage::LATE_FRAGMENT_TESTS,
+                    dst: Some(1),
+                    dst_access: Access::COLOR_ATTACHMENT_WRITE
+                        | Access::DEPTH_STENCIL_ATTACHMENT_READ,
+                    dst_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT
+                        | PipelineStage::EARLY_FRAGMENT_TESTS,
+                    attachments: &[0, 1, 2],
+                },
+            ],
+        });
+
+        let postfx_render_pass = RenderPass::new(RenderPassInfo {
+            device: &vk.device,
+            attachments: &[Attachment {
+                format: Format::Rgba32Sfloat,
+                load_op: AttachmentLoadOp::Clear,
+                store_op: AttachmentStoreOp::Store,
+                layout: ImageLayout::ColorAttachment,
+                ty: AttachmentType::Color,
+            }],
+            subpasses: &[Subpass {
+                src: None,
+                src_access: Access::empty(),
+                src_stage: PipelineStage::empty(),
+                dst: Some(0),
+                dst_access: Access::COLOR_ATTACHMENT_WRITE,
+                dst_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+                attachments: &[0],
+            }],
+        });
+
+        let present_render_pass = RenderPass::new(RenderPassInfo {
+            device: &vk.device,
+            attachments: &[Attachment {
+                format: Format::Bgra8Srgb,
+                load_op: AttachmentLoadOp::Clear,
+                store_op: AttachmentStoreOp::Store,
+                layout: ImageLayout::ColorAttachment,
+                ty: AttachmentType::Color,
+            }],
+            subpasses: &[Subpass {
+                src: None,
+                src_access: Access::empty(),
+                src_stage: PipelineStage::empty(),
+                dst: Some(0),
+                dst_access: Access::COLOR_ATTACHMENT_WRITE,
+                dst_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+                attachments: &[0],
+            }],
+        });
+
+        //FRAMEBUFFERS
+        let graphics_framebuffers = (0..swapchain_images.len())
+            .map(|i| {
+                Framebuffer::new(FramebufferInfo {
+                    device: &vk.device,
+                    render_pass: &graphics_render_pass,
+                    extent: graphics_extent,
+                    attachments: &[graphics_color[i], graphics_occlusion[i], depth],
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let postfx_framebuffers = (0..swapchain_images.len())
+            .map(|i| {
+                Framebuffer::new(FramebufferInfo {
+                    device: &vk.device,
+                    render_pass: &postfx_render_pass,
+                    extent: graphics_extent,
+                    attachments: &[postfx_color[i]],
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let present_framebuffers = (0..swapchain_images.len())
+            .map(|i| {
+                Framebuffer::new(FramebufferInfo {
+                    device: &vk.device,
+                    render_pass: &present_render_pass,
+                    extent: present_extent,
+                    attachments: &[swapchain_images[i]],
+                })
+            })
+            .collect::<Vec<_>>();
+
+        //PIPELINES
+
+        Self {
+            graphics_color,
+            graphics_occlusion,
+            graphics_framebuffers,
+            graphics_render_pass,
+            graphics_pipeline,
+            postfx_color,
+            postfx_framebuffers,
+            postfx_render_pass,
+            postfx_pipeline,
+            present_framebuffers,
+            present_render_pass,
+            present_pipeline,
+            swapchain,
+            depth,
+        }
+    }
+}
+
 /*
 fn create_compute_pipeline(
     device: Rc<vk::Device>,
@@ -585,7 +743,7 @@ fn create_graphics_pipeline(
 */
 /*
 pub struct VulkanRenderInfo {
-    image_count: u32,
+    swapchain_images.len(): u32,
     surface_format: vk::SurfaceFormat,
     surface_capabilities: vk::SurfaceCapabilities,
     present_mode: vk::PresentMode,
@@ -846,7 +1004,7 @@ impl VulkanRenderData {
         //SWAPCHAIN
         let swapchain_create_info = vk::SwapchainCreateInfo {
             surface,
-            min_image_count: render_info.image_count,
+            min_swapchain_images.len(): render_info.image_count,
             image_format: render_info.surface_format.format,
             image_color_space: render_info.surface_format.color_space,
             image_extent: render_info.extent,
@@ -1207,7 +1365,7 @@ impl VulkanRenderData {
             stage: vk::SHADER_STAGE_VERTEX | vk::SHADER_STAGE_FRAGMENT,
         };
 
-        let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
+        letoctree_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 2,
             descriptor_type: vk::DescriptorType::StorageBuffer,
             descriptor_count: 1,

@@ -934,7 +934,7 @@ mod ffi {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     #[repr(C)]
     pub enum ImageLayout {
         Undefined = 0,
@@ -2884,7 +2884,7 @@ pub struct PhysicalDevice {
 }
 
 impl PhysicalDevice {
-    pub fn enumerate(instance: Rc<Instance>) -> Vec<Self> {
+    pub fn enumerate(instance: Rc<Instance>) -> Vec<Rc<Self>> {
         let mut handle_count: u32 = 0;
 
         unsafe {
@@ -2906,6 +2906,7 @@ impl PhysicalDevice {
         let physical_devices = handles
             .into_iter()
             .map(|handle| Self { handle })
+            .map(|physical_device| Rc::new(physical_device))
             .collect::<Vec<_>>();
 
         physical_devices
@@ -2980,6 +2981,13 @@ impl PhysicalDevice {
             .collect::<Vec<_>>();
 
         queue_families
+    }
+
+    pub fn surface_format(&self, surface: &Surface) -> SurfaceFormat {
+        SurfaceFormat {
+            format: Format::Bgra8Srgb,
+            color_space: ColorSpace::SrgbNonlinear,
+        }
     }
 
     //TODO
@@ -3378,7 +3386,7 @@ pub struct Surface {
 
 #[cfg(target_os = "linux")]
 impl Surface {
-    pub fn new(instance: Rc<Instance>, window: &impl HasRawWindowHandle) -> Self {
+    pub fn new(instance: Rc<Instance>, window: &impl HasRawWindowHandle) -> Rc<Self> {
         match window.raw_window_handle() {
             RawWindowHandle::Xlib(xlib_handle) => {
                 let create_info = ffi::XlibSurfaceCreateInfo {
@@ -3402,7 +3410,7 @@ impl Surface {
 
                 let handle = unsafe { handle.assume_init() };
 
-                Self { instance, handle }
+                Rc::new(Self { instance, handle })
             }
             RawWindowHandle::Xcb(_) => unimplemented!("xcb unimplemented"),
             RawWindowHandle::Wayland(_) => unimplemented!("wayland unimplemented"),
