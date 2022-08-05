@@ -12,6 +12,22 @@ pub enum Format {
     D32Sfloat,
 }
 
+impl Format {
+    pub fn to_bytes(self) -> usize {
+        match self {
+            Self::R16Uint => 2,
+            Self::Rgba8Srgb
+            | Self::Bgra8Srgb
+            | Self::R32Uint
+            | Self::R32Sfloat
+            | Self::D32Sfloat => 4,
+            Self::Rg32Sfloat => 8,
+            Self::Rgb32Uint | Self::Rgb32Sfloat => 12,
+            Self::Rgba32Sfloat => 16,
+        }
+    }
+}
+
 impl From<Format> for vk::Format {
     fn from(format: Format) -> Self {
         match format {

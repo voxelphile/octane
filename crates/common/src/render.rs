@@ -89,7 +89,8 @@ pub struct VulkanRenderData {
     graphics_color: Vec<Image>,
     graphics_occlusion: Vec<Image>,
     graphics_framebuffers: Vec<Framebuffer>,
-    graphics_pipeline: Pipeline,
+    graphics_prepass_pipeline: Pipeline,
+    graphics_raycast_pipeline: Pipeline,
     graphics_render_pass: RenderPass,
     postfx_color: Vec<Image>,
     postfx_framebuffers: Vec<Framebuffer>,
@@ -397,10 +398,521 @@ impl Renderer for Vulkan {
         if reload_graphics {
             self.render_data = Some(VulkanRenderData::load(&self, self.render_data.take()));
         }
+
+        /*vk::Fence::wait(&[&mut self.in_flight_fence], true, u64::MAX)
+                .expect("failed to wait for fence");
+
+            vk::Fence::reset(&[&mut self.in_flight_fence]).expect("failed to reset fence");
+        */
+        self.device.synchronize_frame();
+
+        /*
+        let image_index_result = render_data.swapchain.acquire_next_image(
+            u64::MAX,
+            Some(&mut self.image_available_semaphore),
+            None,
+        );
+
+        let image_index = match image_index_result {
+            Ok(i) => i,
+            Err(e) => {
+                warn!("failed to acquire next image: {:?}", e);
+                return;
+            }
+        };*/
+
+        let image_index = match self.swapchain.acquire_next_image() {
+            Ok(i) => i,
+            Err(e) => {
+                warn!("failed to acquire next image: {:?}", e);
+                return;
+            }
+        };
+
+        /*
+            {
+                for i in 0..render_data.graphics_descriptor_sets.len() {
+                    let camera_buffer_info = vk::DescriptorBufferInfo {
+                        buffer: &self.data_buffer,
+                        offset: camera_offset as _,
+                        range: mem::size_of::<Camera>(),
+                    };
+
+                    let camera_buffer_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
+                        dst_binding: 0,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::UniformBuffer,
+                        buffer_infos: &[camera_buffer_info],
+                        image_infos: &[],
+                    };
+
+                    let settings_buffer_info = vk::DescriptorBufferInfo {
+                        buffer: &self.data_buffer,
+                        offset: settings_offset as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    };
+
+                    let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
+                        dst_binding: 1,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::UniformBuffer,
+                        buffer_infos: &[settings_buffer_info],
+                        image_infos: &[],
+                    };
+
+                    //initial padding for octree data then octree size.
+                    let octree_bytes = 2 * mem::size_of::<u32>()
+                        + self.octree.nodes().len() * mem::size_of::<crate::octree::Node>();
+
+                    let octree_buffer_info = vk::DescriptorBufferInfo {
+                        buffer: &self.octree_buffer,
+                        offset: 0,
+                        range: octree_bytes,
+                    };
+
+                    let octree_buffer_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
+                        dst_binding: 2,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::StorageBuffer,
+                        buffer_infos: &[octree_buffer_info],
+                        image_infos: &[],
+                    };
+
+                    /*
+                    let cubelet_sdf_info = vk::DescriptorImageInfo {
+                    sampler: &self.cubelet_sdf_result_sampler,
+                    image_view: &self.cubelet_sdf_result_view,
+                    image_layout: vk::ImageLayout::General,
+                    };
+
+                    let cubelet_sdf_descriptor_write = vk::WriteDescriptorSet {
+                    dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::StorageImage,
+                    buffer_infos: &[],
+                    image_infos: &[cubelet_sdf_info],
+                    };*/
+
+                    vk::DescriptorSet::update(
+                        &[
+                            camera_buffer_descriptor_write,
+                            settings_buffer_descriptor_write,
+                            octree_buffer_descriptor_write,
+                            //cubelet_sdf_descriptor_write,
+                        ],
+                        &[],
+                    );
+                }
+
+                for i in 0..render_data.postfx_descriptor_sets.len() {
+                    let settings_buffer_info = vk::DescriptorBufferInfo {
+                        buffer: &self.data_buffer,
+                        offset: settings_offset as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    };
+
+                    let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                        dst_binding: 0,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::UniformBuffer,
+                        buffer_infos: &[settings_buffer_info],
+                        image_infos: &[],
+                    };
+
+                    let color_info = vk::DescriptorImageInfo {
+                        sampler: &render_data.graphics_color_samplers[image_index as usize],
+                        image_view: &render_data.graphics_color_views[image_index as usize],
+                        image_layout: vk::ImageLayout::General,
+                    };
+
+                    let color_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                        dst_binding: 1,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::StorageImage,
+                        buffer_infos: &[],
+                        image_infos: &[color_info],
+                    };
+
+                    let occlusion_info = vk::DescriptorImageInfo {
+                        sampler: &render_data.graphics_occlusion_samplers[image_index as usize],
+                        image_view: &render_data.graphics_occlusion_views[image_index as usize],
+                        image_layout: vk::ImageLayout::General,
+                    };
+
+                    let occlusion_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                        dst_binding: 2,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::StorageImage,
+                        buffer_infos: &[],
+                        image_infos: &[occlusion_info],
+                    };
+
+                    let distance_info = vk::DescriptorImageInfo {
+                        sampler: &render_data.distance_samplers[image_index as usize],
+                        image_view: &render_data.distance_views[image_index as usize],
+                        image_layout: vk::ImageLayout::General,
+                    };
+
+                    let distance_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
+                        dst_binding: 3,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::StorageImage,
+                        buffer_infos: &[],
+                        image_infos: &[distance_info],
+                    };
+
+                    vk::DescriptorSet::update(
+                        &[
+                            settings_buffer_descriptor_write,
+                            color_descriptor_write,
+                            occlusion_descriptor_write,
+                            distance_descriptor_write,
+                        ],
+                        &[],
+                    );
+                }
+
+                for i in 0..render_data.present_descriptor_sets.len() {
+                    let settings_buffer_info = vk::DescriptorBufferInfo {
+                        buffer: &self.data_buffer,
+                        offset: settings_offset as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    };
+
+                    let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                        dst_binding: 0,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::UniformBuffer,
+                        buffer_infos: &[settings_buffer_info],
+                        image_infos: &[],
+                    };
+
+                    let color_info = vk::DescriptorImageInfo {
+                        sampler: &render_data.postfx_color_samplers[image_index as usize],
+                        image_view: &render_data.postfx_color_views[image_index as usize],
+                        image_layout: vk::ImageLayout::General,
+                    };
+
+                    let color_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                        dst_binding: 1,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::StorageImage,
+                        buffer_infos: &[],
+                        image_infos: &[color_info],
+                    };
+
+                    let look_up_table_info = vk::DescriptorImageInfo {
+                        sampler: &self.look_up_table_sampler,
+                        image_view: &self.look_up_table_view,
+                        image_layout: vk::ImageLayout::ShaderReadOnly,
+                    };
+
+                    let look_up_table_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                        dst_binding: 2,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::CombinedImageSampler,
+                        buffer_infos: &[],
+                        image_infos: &[look_up_table_info],
+                    };
+
+                    let distance_info = vk::DescriptorImageInfo {
+                        sampler: &render_data.distance_samplers[image_index as usize],
+                        image_view: &render_data.distance_views[image_index as usize],
+                        image_layout: vk::ImageLayout::General,
+                    };
+
+                    let distance_descriptor_write = vk::WriteDescriptorSet {
+                        dst_set: &render_data.present_descriptor_sets[image_index as usize],
+                        dst_binding: 3,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::StorageImage,
+                        buffer_infos: &[],
+                        image_infos: &[distance_info],
+                    };
+
+                    vk::DescriptorSet::update(
+                        &[
+                            settings_buffer_descriptor_write,
+                            color_descriptor_write,
+                            look_up_table_descriptor_write,
+                            distance_descriptor_write,
+                        ],
+                        &[],
+                    );
+                }
+        */
+        let octree_bytes = 2 * mem::size_of::<u32>()
+            + self.octree.nodes().len() * mem::size_of::<crate::octree::Node>();
+
+        self.render_data.graphics_prepass_pipeline.bind(
+            image_index,
+            &[
+                Bind {
+                    binding: 0,
+                    count: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    bind: BufferBind {
+                        buffer: &self.data_buffer,
+                        offset: CAMERA_OFFSET as _,
+                        range: mem::size_of::<Camera>(),
+                    },
+                },
+                Bind {
+                    binding: 0,
+                    count: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    bind: BufferBind {
+                        buffer: &self.data_buffer,
+                        offset: SETTINGS_OFFSET as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    },
+                },
+                Bind {
+                    binding: 2,
+                    count: 1,
+                    ty: DescriptorType::StorageBuffer,
+                    bind: BufferBind {
+                        buffer: &self.octree_buffer,
+                        offset: 0,
+                        range: octree_bytes as _,
+                    },
+                },
+            ],
+        );
+
+        self.render_data.graphics_raycast_pipeline.bind(
+            image_index,
+            &[
+                Bind {
+                    binding: 0,
+                    count: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    bind: BufferBind {
+                        buffer: &self.data_buffer,
+                        offset: CAMERA_OFFSET as _,
+                        range: mem::size_of::<Camera>(),
+                    },
+                },
+                Bind {
+                    binding: 0,
+                    count: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    bind: BufferBind {
+                        buffer: &self.data_buffer,
+                        offset: SETTINGS_OFFSET as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    },
+                },
+                Bind {
+                    binding: 2,
+                    count: 1,
+                    ty: DescriptorType::StorageBuffer,
+                    bind: BufferBind {
+                        buffer: &self.octree_buffer,
+                        offset: 0,
+                        range: octree_bytes as _,
+                    },
+                },
+            ],
+        );
+
+        self.render_data.postfx_pipeline.bind(
+            image_index,
+            &[
+                Bind {
+                    binding: 0,
+                    count: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    bind: BufferBind {
+                        buffer: &self.data_buffer,
+                        offset: SETTINGS_OFFSET as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    },
+                },
+                Bind {
+                    binding: 1,
+                    count: 1,
+                    ty: DescriptorType::StorageImage,
+                    bind: ImageBind {
+                        image: &self.render_data.graphics_color[image_index],
+                    },
+                },
+                Bind {
+                    binding: 2,
+                    count: 1,
+                    ty: DescriptorType::StorageImage,
+                    bind: ImageBind {
+                        image: &self.render_data.graphics_occlusion[image_index],
+                    },
+                },
+                Bind {
+                    binding: 3,
+                    count: 1,
+                    ty: DescriptorType::CombinedImageSampler,
+                    bind: ImageBind {
+                        image: &self.render_data.depth[image_index],
+                    },
+                },
+            ],
+        );
+
+        self.render_data.present_pipeline.bind(
+            image_index,
+            &[
+                Bind {
+                    binding: 0,
+                    count: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    bind: BufferBind {
+                        buffer: &self.data_buffer,
+                        offset: SETTINGS_OFFSET as _,
+                        range: mem::size_of::<RenderSettings>(),
+                    },
+                },
+                Bind {
+                    binding: 1,
+                    count: 1,
+                    ty: DescriptorType::StorageImage,
+                    bind: ImageBind {
+                        image: &self.render_data.postfx_color[image_index],
+                    },
+                },
+                Bind {
+                    binding: 2,
+                    count: 1,
+                    ty: DescriptorType::CombinedImageSampler,
+                    bind: ImageBind {
+                        image: &self.look_up_table,
+                    },
+                },
+            ],
+        );
+
+        self.device
+            .call(|commands| {
+                let render_pass_begin_info = vk::RenderPassBeginInfo {
+                    render_pass: &self.render_data.graphics_render_pass,
+                    framebuffer: &self.render_data.graphics_framebuffers[image_index as usize],
+                    color_clear_values: &[
+                        [0.0385, 0.0385, 0.0385, 1.0],
+                        [1.0, 1.0, 1.0, 1.0],
+                        [1.0, 1.0, 1.0, 1.0],
+                    ],
+                    depth_stencil_clear_value: Some((1.0, 0)),
+                };
+
+                commands.begin_render_pass(render_pass_begin_info);
+
+                commands.bind_pipeline(&self.render_data.graphics_pipeline);
+
+                commands.bind_vertex_buffers(
+                    0,
+                    2,
+                    &[&self.data_buffer, &self.instance_buffer],
+                    &[entry_offset as usize, 0],
+                );
+
+                commands.bind_index_buffer(
+                    &self.data_buffer,
+                    entry_offset as usize + vertex_count * mem::size_of::<Vertex>(),
+                    vk::IndexType::Uint16,
+                );
+
+                commands.draw_indexed(index_count as _, self.instance_data.len() as _, 0, 0, 0);
+
+                commands.end_render_pass();
+
+                commands.pipeline_barrier(&[
+                    ImagePipelineBarrier {
+                        old_layout: ImageLayout::Undefined,
+                        new_layout: ImageLayout::General,
+                        image: &self.render_data.graphics_color[image_index as usize],
+                    },
+                    ImagePipelineBarrier {
+                        old_layout: ImageLayout::Undefined,
+                        new_layout: ImageLayout::General,
+                        image: &self.render_data.graphics_occlusion[image_index as usize],
+                    },
+                    ImagePipelineBarrier {
+                        old_layout: ImageLayout::Undefined,
+                        new_layout: ImageLayout::ShaderReadOnly,
+                        image: &self.render_data.depth,
+                    },
+                ]);
+
+                let render_pass_begin_info = vk::RenderPassBeginInfo {
+                    render_pass: &self.render_data.postfx_render_pass,
+                    framebuffer: &self.render_data.postfx_framebuffers[image_index as usize],
+                    color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
+                    depth_stencil_clear_value: None,
+                };
+
+                commands.begin_render_pass(render_pass_begin_info);
+
+                commands.bind_pipeline(&self.render_data.postfx_pipeline);
+
+                commands.draw(3, 1, 0, 0);
+
+                commands.end_render_pass();
+
+                commands.pipeline_barrier(ImagePipelineBarrier {
+                    old_layout: ImageLayout::Undefined,
+                    new_layout: ImageLayout::General,
+                    image: &self.render_data.postfx_color[image_index as usize],
+                });
+
+                let render_pass_begin_info = vk::RenderPassBeginInfo {
+                    render_pass: &render_data.present_render_pass,
+                    framebuffer: &render_data.present_framebuffers[image_index as usize],
+                    color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
+                    depth_stencil_clear_value: Some((1.0, 0)),
+                };
+
+                commands.begin_render_pass(render_pass_begin_info);
+
+                commands.bind_pipeline(&render_data.present_pipeline);
+
+                commands.draw(3, 1, 0, 0);
+
+                commands.end_render_pass();
+            })
+            .expect("failed to record command buffer");
+
+        let present_result = self.device.present();
+
+        match present_result {
+            Ok(()) => {}
+            Err(e) => warn!("failed to present: {:?}", e),
+        }
     }
 
     fn resize(&mut self, resolution: (u32, u32)) {
-        todo!()
+        self.settings.resolution = Vector::<f32, 2>::new([resolution.0 as _, resolution.1 as _]);
+
+        self.render_data = Some(VulkanRenderData::load(&self, self.render_data.take()));
     }
 }
 
@@ -593,13 +1105,217 @@ impl VulkanRenderData {
             .collect::<Vec<_>>();
 
         //PIPELINES
+        let graphics_prepass_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
+            device: &vk.device,
+            render_pass: &graphics_render_pass,
+            descriptor_set_count: swapchain_images.len() as _,
+            color_count: 0,
+            extent: (graphics_extent.0, graphics_extent.1),
+            cull_mode: CullMode::FRONT,
+            vertex_shader: &vk.graphics_vertex_shader,
+            fragment_shader: None,
+            depth_stencil: DepthStencil {
+                test: true,
+                write: true,
+                compare_op: CompareOp::Less,
+            },
+            vertex_input: &[
+                VertexInput {
+                    binding: 0,
+                    location: 0,
+                    format: Format::Rgb32Sfloat,
+                    rate: InputRate::Vertex,
+                },
+                VertexInput {
+                    binding: 0,
+                    location: 1,
+                    format: Format::Rgb32Sfloat,
+                    rate: InputRate::Vertex,
+                },
+                VertexInput {
+                    binding: 0,
+                    location: 2,
+                    format: Format::Rgb32Sfloat,
+                    rate: InputRate::Vertex,
+                },
+                VertexInput {
+                    binding: 1,
+                    location: 0,
+                    format: Format::Rgb32Uint,
+                    rate: InputRate::Instance,
+                },
+            ],
+            layout: &[
+                Descriptor {
+                    binding: 0,
+                    ty: DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 2,
+                    ty: DescriptorType::StorageBuffer,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+            ],
+        });
+
+        let graphics_raycast_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
+            device: &vk.device,
+            render_pass: &graphics_render_pass,
+            descriptor_set_count: swapchain_images.len() as _,
+            color_count: 2,
+            extent: (graphics_extent.0, graphics_extent.1),
+            cull_mode: CullMode::FRONT,
+            vertex_shader: &vk.graphics_vertex_shader,
+            fragment_shader: Some(&vk.graphics_fragment_shader),
+            depth_stencil: DepthStencil {
+                test: true,
+                write: false,
+                compare_op: CompareOp::LessOrEqual,
+            },
+            vertex_input: &[
+                VertexInput {
+                    binding: 0,
+                    location: 0,
+                    format: Format::Rgb32Sfloat,
+                    rate: InputRate::Vertex,
+                },
+                VertexInput {
+                    binding: 0,
+                    location: 1,
+                    format: Format::Rgb32Sfloat,
+                    rate: InputRate::Vertex,
+                },
+                VertexInput {
+                    binding: 0,
+                    location: 2,
+                    format: Format::Rgb32Sfloat,
+                    rate: InputRate::Vertex,
+                },
+                VertexInput {
+                    binding: 1,
+                    location: 0,
+                    format: Format::Rgb32Uint,
+                    rate: InputRate::Instance,
+                },
+            ],
+            layout: &[
+                Descriptor {
+                    binding: 0,
+                    ty: DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 1,
+                    ty: DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 2,
+                    ty: DescriptorType::StorageBuffer,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+            ],
+        });
+
+        let postfx_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
+            device: &vk.device,
+            render_pass: &postfx_render_pass,
+            descriptor_set_count: swapchain_images.len() as _,
+            color_count: 1,
+            extent: (graphics_extent.0, graphics_extent.1),
+            cull_mode: CullMode::BACK,
+            vertex_shader: &vk.fullscreen_vertex_shader,
+            fragment_shader: Some(&vk.postfx_fragment_shader),
+            depth_stencil: DepthStencil {
+                test: false,
+                write: false,
+                compare_op: CompareOp::Always,
+            },
+            vertex_input: &[],
+            layout: &[
+                Descriptor {
+                    binding: 0,
+                    ty: DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 1,
+                    ty: DescriptorType::StorageImage,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 2,
+                    ty: DescriptorType::StorageImage,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 3,
+                    ty: DescriptorType::CombinedImageSampler,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+            ],
+        });
+
+        let present_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
+            device: &vk.device,
+            render_pass: &present_render_pass,
+            descriptor_set_count: swapchain_images.len() as _,
+            color_count: 1,
+            extent: (present_extent.0, present_extent.1),
+            cull_mode: CullMode::BACK,
+            vertex_shader: &vk.fullscreen_vertex_shader,
+            fragment_shader: Some(&vk.present_fragment_shader),
+            depth_stencil: DepthStencil {
+                test: false,
+                write: false,
+                compare_op: CompareOp::Always,
+            },
+            vertex_input: &[],
+            layout: &[
+                Descriptor {
+                    binding: 0,
+                    ty: DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 1,
+                    ty: DescriptorType::StorageImage,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+                Descriptor {
+                    binding: 2,
+                    ty: DescriptorType::CombinedImageSampler,
+                    count: 1,
+                    stage: ShaderStage::FRAGMENT,
+                },
+            ],
+        });
 
         Self {
             graphics_color,
             graphics_occlusion,
             graphics_framebuffers,
             graphics_render_pass,
-            graphics_pipeline,
+            graphics_prepass_pipeline,
+            graphics_raycast_pipeline,
             postfx_color,
             postfx_framebuffers,
             postfx_render_pass,
@@ -641,104 +1357,6 @@ fn create_graphics_pipeline(
     attachment_count: usize,
     cull_mode: u32,
 ) -> vk::Pipeline {
-    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
-        topology: vk::PrimitiveTopology::TriangleList,
-        primitive_restart_enable: false,
-    };
-
-    let tessellation_state = vk::PipelineTessellationStateCreateInfo {};
-
-    let viewport = vk::Viewport {
-        x: 0.0,
-        y: 0.0,
-        width: extent.0 as f32,
-        height: extent.1 as f32,
-        min_depth: 0.0,
-        max_depth: 1.0,
-    };
-
-    let scissor = vk::Rect2d {
-        offset: (0, 0),
-        extent,
-    };
-
-    let viewport_state = vk::PipelineViewportStateCreateInfo {
-        viewports: &[viewport],
-        scissors: &[scissor],
-    };
-
-    let rasterizer = vk::PipelineRasterizationStateCreateInfo {
-        depth_clamp_enable: false,
-        rasterizer_discard_enable: false,
-        polygon_mode: vk::PolygonMode::Fill,
-        cull_mode,
-        front_face: vk::FrontFace::CounterClockwise,
-        depth_bias_enable: false,
-        depth_bias_constant_factor: 0.0,
-        depth_bias_clamp: 0.0,
-        depth_bias_slope_factor: 0.0,
-        line_width: 1.0,
-    };
-
-    let multisampling = vk::PipelineMultisampleStateCreateInfo {};
-
-    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
-        depth_test_enable: true,
-        depth_write_enable: true,
-        depth_compare_op: vk::CompareOp::Less,
-        depth_bounds_test_enable: false,
-        min_depth_bounds: 0.0,
-        max_depth_bounds: 1.0,
-    };
-
-    let color_blend_attachments = (0..attachment_count)
-        .map(|_| vk::PipelineColorBlendAttachmentState {
-            color_write_mask: vk::COLOR_COMPONENT_R
-                | vk::COLOR_COMPONENT_G
-                | vk::COLOR_COMPONENT_B
-                | vk::COLOR_COMPONENT_A,
-            blend_enable: true,
-            src_color_blend_factor: vk::BlendFactor::SrcAlpha,
-            dst_color_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
-            color_blend_op: vk::BlendOp::Add,
-            src_alpha_blend_factor: vk::BlendFactor::SrcAlpha,
-            dst_alpha_blend_factor: vk::BlendFactor::OneMinusSrcAlpha,
-            alpha_blend_op: vk::BlendOp::Add,
-        })
-        .collect::<Vec<_>>();
-
-    let color_blending = vk::PipelineColorBlendStateCreateInfo {
-        logic_op_enable: false,
-        logic_op: vk::LogicOp::Copy,
-        attachments: &color_blend_attachments[..],
-        blend_constants: &[0.0, 0.0, 0.0, 0.0],
-    };
-
-    let dynamic_state = vk::PipelineDynamicStateCreateInfo {
-        dynamic_states: &[],
-    };
-
-    let present_pipeline_create_info = vk::GraphicsPipelineCreateInfo {
-        stages,
-        vertex_input_state: &vertex_input_info,
-        input_assembly_state: &input_assembly,
-        tessellation_state: &tessellation_state,
-        viewport_state: &viewport_state,
-        rasterization_state: &rasterizer,
-        multisample_state: &multisampling,
-        depth_stencil_state: &depth_stencil,
-        color_blend_state: &color_blending,
-        dynamic_state: &dynamic_state,
-        layout: &layout,
-        render_pass: &render_pass,
-        subpass: 0,
-        base_pipeline: None,
-        base_pipeline_index: -1,
-    };
-
-    vk::Pipeline::new_graphics_pipelines(device, None, &[present_pipeline_create_info])
-        .expect("failed to create graphics pipeline")
-        .remove(0)
 }
 */
 /*
@@ -2555,528 +3173,6 @@ impl VulkanRenderData {
         .as_mut()
         .expect("failed to retrieve render data");
 
-    vk::Fence::wait(&[&mut self.in_flight_fence], true, u64::MAX)
-        .expect("failed to wait for fence");
-
-    vk::Fence::reset(&[&mut self.in_flight_fence]).expect("failed to reset fence");
-
-    let image_index_result = render_data.swapchain.acquire_next_image(
-        u64::MAX,
-        Some(&mut self.image_available_semaphore),
-        None,
-    );
-
-    let image_index = match image_index_result {
-        Ok(i) => i,
-        Err(e) => {
-            warn!("failed to acquire next image: {:?}", e);
-            return;
-        }
-    };
-
-    {
-        for i in 0..render_data.graphics_descriptor_sets.len() {
-            let camera_buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.data_buffer,
-                offset: camera_offset as _,
-                range: mem::size_of::<Camera>(),
-            };
-
-            let camera_buffer_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UniformBuffer,
-                buffer_infos: &[camera_buffer_info],
-                image_infos: &[],
-            };
-
-            let settings_buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.data_buffer,
-                offset: settings_offset as _,
-                range: mem::size_of::<RenderSettings>(),
-            };
-
-            let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UniformBuffer,
-                buffer_infos: &[settings_buffer_info],
-                image_infos: &[],
-            };
-
-            //initial padding for octree data then octree size.
-            let octree_bytes = 2 * mem::size_of::<u32>()
-                + self.octree.nodes().len() * mem::size_of::<crate::octree::Node>();
-
-            let octree_buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.octree_buffer,
-                offset: 0,
-                range: octree_bytes,
-            };
-
-            let octree_buffer_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
-                dst_binding: 2,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageBuffer,
-                buffer_infos: &[octree_buffer_info],
-                image_infos: &[],
-            };
-
-            /*
-            let cubelet_sdf_info = vk::DescriptorImageInfo {
-            sampler: &self.cubelet_sdf_result_sampler,
-            image_view: &self.cubelet_sdf_result_view,
-            image_layout: vk::ImageLayout::General,
-            };
-
-            let cubelet_sdf_descriptor_write = vk::WriteDescriptorSet {
-            dst_set: &render_data.graphics_descriptor_sets[image_index as usize],
-            dst_binding: 2,
-            dst_array_element: 0,
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::StorageImage,
-            buffer_infos: &[],
-            image_infos: &[cubelet_sdf_info],
-            };*/
-
-            vk::DescriptorSet::update(
-                &[
-                    camera_buffer_descriptor_write,
-                    settings_buffer_descriptor_write,
-                    octree_buffer_descriptor_write,
-                    //cubelet_sdf_descriptor_write,
-                ],
-                &[],
-            );
-        }
-
-        for i in 0..render_data.postfx_descriptor_sets.len() {
-            let settings_buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.data_buffer,
-                offset: settings_offset as _,
-                range: mem::size_of::<RenderSettings>(),
-            };
-
-            let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UniformBuffer,
-                buffer_infos: &[settings_buffer_info],
-                image_infos: &[],
-            };
-
-            let color_info = vk::DescriptorImageInfo {
-                sampler: &render_data.graphics_color_samplers[image_index as usize],
-                image_view: &render_data.graphics_color_views[image_index as usize],
-                image_layout: vk::ImageLayout::General,
-            };
-
-            let color_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageImage,
-                buffer_infos: &[],
-                image_infos: &[color_info],
-            };
-
-            let occlusion_info = vk::DescriptorImageInfo {
-                sampler: &render_data.graphics_occlusion_samplers[image_index as usize],
-                image_view: &render_data.graphics_occlusion_views[image_index as usize],
-                image_layout: vk::ImageLayout::General,
-            };
-
-            let occlusion_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                dst_binding: 2,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageImage,
-                buffer_infos: &[],
-                image_infos: &[occlusion_info],
-            };
-
-            let distance_info = vk::DescriptorImageInfo {
-                sampler: &render_data.distance_samplers[image_index as usize],
-                image_view: &render_data.distance_views[image_index as usize],
-                image_layout: vk::ImageLayout::General,
-            };
-
-            let distance_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.postfx_descriptor_sets[image_index as usize],
-                dst_binding: 3,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageImage,
-                buffer_infos: &[],
-                image_infos: &[distance_info],
-            };
-
-            vk::DescriptorSet::update(
-                &[
-                    settings_buffer_descriptor_write,
-                    color_descriptor_write,
-                    occlusion_descriptor_write,
-                    distance_descriptor_write,
-                ],
-                &[],
-            );
-        }
-
-        for i in 0..render_data.present_descriptor_sets.len() {
-            let settings_buffer_info = vk::DescriptorBufferInfo {
-                buffer: &self.data_buffer,
-                offset: settings_offset as _,
-                range: mem::size_of::<RenderSettings>(),
-            };
-
-            let settings_buffer_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UniformBuffer,
-                buffer_infos: &[settings_buffer_info],
-                image_infos: &[],
-            };
-
-            let color_info = vk::DescriptorImageInfo {
-                sampler: &render_data.postfx_color_samplers[image_index as usize],
-                image_view: &render_data.postfx_color_views[image_index as usize],
-                image_layout: vk::ImageLayout::General,
-            };
-
-            let color_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageImage,
-                buffer_infos: &[],
-                image_infos: &[color_info],
-            };
-
-            let look_up_table_info = vk::DescriptorImageInfo {
-                sampler: &self.look_up_table_sampler,
-                image_view: &self.look_up_table_view,
-                image_layout: vk::ImageLayout::ShaderReadOnly,
-            };
-
-            let look_up_table_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                dst_binding: 2,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::CombinedImageSampler,
-                buffer_infos: &[],
-                image_infos: &[look_up_table_info],
-            };
-
-            let distance_info = vk::DescriptorImageInfo {
-                sampler: &render_data.distance_samplers[image_index as usize],
-                image_view: &render_data.distance_views[image_index as usize],
-                image_layout: vk::ImageLayout::General,
-            };
-
-            let distance_descriptor_write = vk::WriteDescriptorSet {
-                dst_set: &render_data.present_descriptor_sets[image_index as usize],
-                dst_binding: 3,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::StorageImage,
-                buffer_infos: &[],
-                image_infos: &[distance_info],
-            };
-
-            vk::DescriptorSet::update(
-                &[
-                    settings_buffer_descriptor_write,
-                    color_descriptor_write,
-                    look_up_table_descriptor_write,
-                    distance_descriptor_write,
-                ],
-                &[],
-            );
-        }
-
-        self.command_buffer
-            .record(|commands| {
-                if camera_chunk_position != last_camera_chunk_position {
-                    let buffer_copy = vk::BufferCopy {
-                        src_offset: instance_offset as _,
-                        dst_offset: 0,
-                        size: (self.instance_data.len() * mem::size_of::<Vector<u32, 3>>())
-                            as _,
-                    };
-
-                    commands.copy_buffer(
-                        &self.staging_buffer,
-                        &mut self.instance_buffer,
-                        &[buffer_copy],
-                    );
-                }
-
-                if self.camera.is_dirty() {
-                    let buffer_copy = vk::BufferCopy {
-                        src_offset: camera_offset as _,
-                        dst_offset: camera_offset as _,
-                        size: mem::size_of::<Camera>() as _,
-                    };
-
-                    commands.copy_buffer(
-                        &self.staging_buffer,
-                        &mut self.data_buffer,
-                        &[buffer_copy],
-                    );
-                    self.camera.clean();
-                }
-
-                if self.settings.is_dirty() {
-                    let buffer_copy = vk::BufferCopy {
-                        src_offset: settings_offset as _,
-                        dst_offset: settings_offset as _,
-                        size: mem::size_of::<RenderSettings>() as _,
-                    };
-
-                    commands.copy_buffer(
-                        &self.staging_buffer,
-                        &mut self.data_buffer,
-                        &[buffer_copy],
-                    );
-                    self.settings.clean();
-                }
-
-                //Copy vertices and indices
-                let buffer_copy = vk::BufferCopy {
-                    src_offset: entry_offset as _,
-                    dst_offset: entry_offset as _,
-                    size: (vertex_count * mem::size_of::<Vertex>()
-                        + index_count * mem::size_of::<u16>())
-                        as _,
-                };
-
-                commands.copy_buffer(
-                    &self.staging_buffer,
-                    &mut self.data_buffer,
-                    &[buffer_copy],
-                );
-                //Graphics
-                let render_pass_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: &render_data.graphics_render_pass,
-                    framebuffer: &render_data.graphics_framebuffers[image_index as usize],
-                    render_area: vk::Rect2d {
-                        offset: (0, 0),
-                        extent: (
-                            self.render_info.extent.0 / self.render_info.scaling_factor,
-                            self.render_info.extent.1 / self.render_info.scaling_factor,
-                        ),
-                    },
-                    color_clear_values: &[
-                        [0.0385, 0.0385, 0.0385, 1.0],
-                        [1.0, 1.0, 1.0, 1.0],
-                        [1.0, 1.0, 1.0, 1.0],
-                    ],
-                    //this wont run because load_op is set to load
-                    depth_stencil_clear_value: Some((1.0, 0)),
-                };
-
-                commands.begin_render_pass(render_pass_begin_info);
-
-                commands.bind_pipeline(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.graphics_pipeline,
-                );
-
-                commands.bind_vertex_buffers(
-                    0,
-                    2,
-                    &[&self.data_buffer, &self.instance_buffer],
-                    &[entry_offset as usize, 0],
-                );
-
-                commands.bind_index_buffer(
-                    &self.data_buffer,
-                    entry_offset as usize + vertex_count * mem::size_of::<Vertex>(),
-                    vk::IndexType::Uint16,
-                );
-
-                commands.bind_descriptor_sets(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.graphics_pipeline_layout,
-                    0,
-                    &[&render_data.graphics_descriptor_sets[image_index as usize]],
-                    &[],
-                );
-
-                commands.draw_indexed(index_count as _, self.instance_data.len() as _, 0, 0, 0);
-
-                commands.end_render_pass();
-
-                let color_barrier = vk::ImageMemoryBarrier {
-                    old_layout: vk::ImageLayout::Undefined,
-                    new_layout: vk::ImageLayout::General,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: &render_data.graphics_color[image_index as usize],
-                    src_access_mask: 0,
-                    dst_access_mask: 0,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                let occlusion_barrier = vk::ImageMemoryBarrier {
-                    old_layout: vk::ImageLayout::Undefined,
-                    new_layout: vk::ImageLayout::General,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: &render_data.graphics_occlusion[image_index as usize],
-                    src_access_mask: 0,
-                    dst_access_mask: 0,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                let distance_barrier = vk::ImageMemoryBarrier {
-                    old_layout: vk::ImageLayout::Undefined,
-                    new_layout: vk::ImageLayout::General,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: &render_data.distance[image_index as usize],
-                    src_access_mask: 0,
-                    dst_access_mask: 0,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                let render_pass_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: &render_data.postfx_render_pass,
-                    framebuffer: &render_data.postfx_framebuffers[image_index as usize],
-                    render_area: vk::Rect2d {
-                        offset: (0, 0),
-                        extent: (
-                            self.render_info.extent.0 / self.render_info.scaling_factor,
-                            self.render_info.extent.1 / self.render_info.scaling_factor,
-                        ),
-                    },
-                    color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
-                    depth_stencil_clear_value: None,
-                };
-
-                commands.begin_render_pass(render_pass_begin_info);
-
-                commands.bind_pipeline(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.postfx_pipeline,
-                );
-
-                commands.bind_descriptor_sets(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.postfx_pipeline_layout,
-                    0,
-                    &[&render_data.postfx_descriptor_sets[image_index as usize]],
-                    &[],
-                );
-
-                commands.draw(3, 1, 0, 0);
-
-                commands.end_render_pass();
-
-                let color_barrier = vk::ImageMemoryBarrier {
-                    old_layout: vk::ImageLayout::Undefined,
-                    new_layout: vk::ImageLayout::General,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: &render_data.postfx_color[image_index as usize],
-                    src_access_mask: 0,
-                    dst_access_mask: 0,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::IMAGE_ASPECT_COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                };
-
-                let render_pass_begin_info = vk::RenderPassBeginInfo {
-                    render_pass: &render_data.present_render_pass,
-                    framebuffer: &render_data.present_framebuffers[image_index as usize],
-                    render_area: vk::Rect2d {
-                        offset: (0, 0),
-                        extent: self.render_info.extent,
-                    },
-                    color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
-                    depth_stencil_clear_value: Some((1.0, 0)),
-                };
-
-                commands.begin_render_pass(render_pass_begin_info);
-
-                commands.bind_pipeline(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.present_pipeline,
-                );
-
-                commands.bind_descriptor_sets(
-                    vk::PipelineBindPoint::Graphics,
-                    &render_data.present_pipeline_layout,
-                    0,
-                    &[&render_data.present_descriptor_sets[image_index as usize]],
-                    &[],
-                );
-
-                commands.draw(3, 1, 0, 0);
-
-                commands.end_render_pass();
-            })
-            .expect("failed to record command buffer");
-
-        let submit_info = vk::SubmitInfo {
-            wait_semaphores: &[&self.image_available_semaphore],
-            wait_stages: &[vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT],
-            command_buffers: &[&self.command_buffer],
-            signal_semaphores: &[&mut self.render_finished_semaphore],
-        };
-
-        self.queue
-            .submit(&[submit_info], Some(&mut self.in_flight_fence))
-            .expect("failed to submit draw command buffer");
-
-        let present_info = vk::PresentInfo {
-            wait_semaphores: &[&self.render_finished_semaphore],
-            swapchains: &[&render_data.swapchain],
-            image_indices: &[image_index],
-        };
-
-        let present_result = self.queue.present(present_info);
-
-        match present_result {
-            Ok(()) => {}
-            Err(e) => warn!("failed to present: {:?}", e),
-        }
     }
 }
 

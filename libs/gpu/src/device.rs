@@ -20,6 +20,7 @@ pub enum Device {
         queues: Vec<vk::Queue>,
         command_pool: vk::CommandPool,
         command_buffer: vk::CommandBuffer,
+        descriptor_pool: vk::DescriptorPool,
     },
 }
 
@@ -128,6 +129,41 @@ impl Device {
                     vk::CommandBuffer::allocate(device.clone(), command_buffer_allocate_info)
                         .expect("failed to create command buffer")
                         .remove(0);
+        
+                let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::UniformBuffer,
+            descriptor_count: 16,
+        };
+
+        let storage_buffer_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageBuffer,
+            descriptor_count: 16,
+        };
+        
+        let storage_image_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::StorageImage,
+            descriptor_count: 16,
+        };
+
+        let sampler_pool_size = vk::DescriptorPoolSize {
+            descriptor_type: vk::DescriptorType::CombinedImageSampler,
+            descriptor_count: 16,
+        };
+
+        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+            max_sets: 16,
+            pool_sizes: &[
+                uniform_buffer_pool_size,
+                storage_buffer_pool_size,
+                storage_image_pool_size,
+                sampler_pool_size,
+            ],
+        };
+
+        let descriptor_pool =
+            vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
+                .expect("failed to create descriptor pool");
+
 
                 Self::Vulkan {
                     instance: instance.clone(),
@@ -136,6 +172,7 @@ impl Device {
                     queues,
                     command_pool,
                     command_buffer,
+                    descriptor_pool,
                 }
             }
         }
