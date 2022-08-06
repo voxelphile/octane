@@ -2477,7 +2477,7 @@ pub enum Error {
     CompressionExhausted,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Format {
     Rgba8Srgb,
     Bgra8Srgb,
@@ -3951,18 +3951,20 @@ pub struct PipelineShaderStageCreateInfo<'a> {
     pub entry_point: &'a str,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum VertexInputRate {
     Vertex = 0,
     Instance = 1,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct VertexInputBindingDescription {
     pub binding: u32,
     pub stride: usize,
     pub input_rate: VertexInputRate,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct VertexInputAttributeDescription {
     pub location: u32,
     pub binding: u32,

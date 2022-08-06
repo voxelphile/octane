@@ -224,7 +224,7 @@ impl Vulkan {
         let mut cube = Mesh::from_obj(cube_obj);
 
         let (cube_vertices, cube_indices) = cube.get();
-
+        dbg!(cube_indices);
         staging_buffer.write(BufferWrite {
             offset: 0,
             data: &cube_vertices[..],
@@ -875,7 +875,7 @@ impl VulkanRenderData {
                     dst: Some(0),
                     dst_access: Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
                     dst_stage: PipelineStage::EARLY_FRAGMENT_TESTS,
-                    attachments: &[0, 1, 2],
+                    attachments: &[2],
                 },
                 Subpass {
                     src: Some(0),
@@ -975,7 +975,7 @@ impl VulkanRenderData {
             device: &vk.device,
             render_pass: &graphics_render_pass,
             descriptor_set_count: swapchain_images.len() as _,
-            color_count: 2,
+            color_count: 0,
             subpass: 0,
             extent: (graphics_extent.0, graphics_extent.1),
             cull_mode: CullMode::FRONT,

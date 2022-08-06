@@ -2,8 +2,8 @@
 
 #define SCALE 4
 
-#define ENABLE_NEAREST_NEIGHBOR false
-#define ENABLE_HQ4X true
+#define ENABLE_NEAREST_NEIGHBOR true
+#define ENABLE_HQ4X false
 
 layout(binding = 0) uniform RenderSettings {
 	vec2 resolution;

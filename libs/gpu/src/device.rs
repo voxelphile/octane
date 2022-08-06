@@ -458,7 +458,7 @@ impl Commands<'_> {
             Self::Vulkan { commands } => {
                 let RenderPass::Vulkan { render_pass, .. } = info.render_pass else { panic!("not a vulkan render pass") };
                 let Framebuffer::Vulkan { framebuffer, extent, .. } = info.framebuffer else { panic!("not a vulkan framebuffer") };
-                
+
                 let info = vk::RenderPassBeginInfo {
                     render_pass: &render_pass,
                     framebuffer: &framebuffer,
