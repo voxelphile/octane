@@ -1,27 +1,36 @@
 use crate::prelude::*;
 
 pub struct RenderPassInfo<'a> {
-    device: &'a Device,
-    attachments: &'a [Attachment],
-    subpasses: &'a [Subpass<'a>],
+    pub device: &'a Device,
+    pub attachments: &'a [Attachment],
+    pub subpasses: &'a [Subpass<'a>],
+}
+
+pub struct RenderPassBeginInfo<'a> {
+    pub render_pass: &'a RenderPass,
+    pub framebuffer: &'a Framebuffer,
+    pub color_clear_values: &'a [[f32; 4]],
+    pub depth_stencil_clear_value: Option<(f32, u32)>,
 }
 
 pub struct Subpass<'a> {
-    src: Option<u32>,
-    src_access: Access,
-    src_stage: PipelineStage,
-    dst: Option<u32>,
-    dst_access: Access,
-    dst_stage: PipelineStage,
-    attachments: &'a [u32],
+    pub src: Option<u32>,
+    pub src_access: Access,
+    pub src_stage: PipelineStage,
+    pub dst: Option<u32>,
+    pub dst_access: Access,
+    pub dst_stage: PipelineStage,
+    pub attachments: &'a [u32],
 }
 
 pub struct Attachment {
-    format: Format,
-    load_op: AttachmentLoadOp,
-    store_op: AttachmentStoreOp,
-    layout: ImageLayout,
-    ty: AttachmentType,
+    pub format: Format,
+    pub load_op: AttachmentLoadOp,
+    pub store_op: AttachmentStoreOp,
+    pub initial_layout: ImageLayout,
+    pub final_layout: ImageLayout,
+    pub layout: ImageLayout,
+    pub ty: AttachmentType,
 }
 
 #[derive(Clone, Copy)]
@@ -81,8 +90,8 @@ impl RenderPass {
                         store_op: attachment.store_op.into(),
                         stencil_load_op: vk::AttachmentLoadOp::DontCare,
                         stencil_store_op: vk::AttachmentStoreOp::DontCare,
-                        initial_layout: vk::ImageLayout::Undefined,
-                        final_layout: attachment.layout.into(),
+                        initial_layout: attachment.initial_layout.into(),
+                        final_layout: attachment.final_layout.into(),
                     })
                     .collect::<Vec<_>>();
 

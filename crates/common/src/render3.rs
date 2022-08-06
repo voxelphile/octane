@@ -167,7 +167,7 @@ impl Vulkan {
                 | BufferUsage::INDEX
                 | BufferUsage::UNIFORM,
             properties: MemoryProperties::DEVICE_LOCAL,
-            size: BIG_BUFFER,
+            size: SMALL_BUFFER,
         });
 
         let instance_buffer = Buffer::new(BufferInfo {
@@ -226,27 +226,27 @@ impl Vulkan {
         let (cube_vertices, cube_indices) = cube.get();
 
         staging_buffer.write(BufferWrite {
-            offset: 0,
+            offset: VERTEX_OFFSET,
             data: &cube_vertices[..],
         });
 
-        device.copy_buffer_to_buffer(BufferCopy {
-            from: &staging_buffer,
-            to: &mut data_buffer,
-            src: 0,
-            dst: VERTEX_OFFSET,
-            size: (cube_vertices.len() * mem::size_of::<Vertex>()) as u64,
-        });
-
         staging_buffer.write(BufferWrite {
-            offset: 0,
+            offset: INDEX_OFFSET,
             data: &cube_indices[..],
         });
 
         device.copy_buffer_to_buffer(BufferCopy {
             from: &staging_buffer,
             to: &mut data_buffer,
-            src: 0,
+            src: VERTEX_OFFSET,
+            dst: VERTEX_OFFSET,
+            size: (cube_vertices.len() * mem::size_of::<Vertex>()) as u64,
+        });
+
+        device.copy_buffer_to_buffer(BufferCopy {
+            from: &staging_buffer,
+            to: &mut data_buffer,
+            src: INDEX_OFFSET,
             dst: INDEX_OFFSET,
             size: (cube_indices.len() * mem::size_of::<u16>()) as u64,
         });
@@ -405,6 +405,7 @@ impl Renderer for Vulkan {
 
         self.last_camera = Some(batch.camera);
 
+        dbg!(batch.camera);
         self.staging_buffer.write(BufferWrite {
             offset: CAMERA_OFFSET,
             data: &[batch.camera],

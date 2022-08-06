@@ -68,32 +68,32 @@ impl From<CompareOp> for vk::CompareOp {
 
 #[derive(Clone, Copy)]
 pub struct DepthStencil {
-    test: bool,
-    write: bool,
-    compare_op: CompareOp,
+    pub test: bool,
+    pub write: bool,
+    pub compare_op: CompareOp,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum VertexInputRate {
+pub enum InputRate {
     Vertex,
     Instance,
 }
 
-impl From<VertexInputRate> for vk::VertexInputRate {
-    fn from(input_rate: VertexInputRate) -> Self {
+impl From<InputRate> for vk::VertexInputRate {
+    fn from(input_rate: InputRate) -> Self {
         match input_rate {
-            VertexInputRate::Vertex => Self::Vertex,
-            VertexInputRate::Instance => Self::Instance,
+            InputRate::Vertex => Self::Vertex,
+            InputRate::Instance => Self::Instance,
         }
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct VertexInput {
-    binding: u32,
-    location: u32,
-    format: Format,
-    rate: VertexInputRate,
+    pub binding: u32,
+    pub location: u32,
+    pub format: Format,
+    pub rate: InputRate,
 }
 
 #[derive(Clone, Copy)]
@@ -122,11 +122,29 @@ pub struct Descriptor {
     pub stage: ShaderStage,
 }
 
+#[derive(Clone, Copy)]
+pub enum Binding<'a> {
+    Buffer {
+        binding: u32,
+        ty: DescriptorType,
+        offset: usize,
+        range: usize,
+        buffer: &'a Buffer,
+    },
+    Image {
+        binding: u32,
+        ty: DescriptorType,
+        layout: ImageLayout,
+        image: &'a Image,
+    },
+}
+
 pub struct GraphicsPipelineInfo<'a> {
     pub device: &'a Device,
     pub render_pass: &'a RenderPass,
     pub descriptor_set_count: u32,
-    pub attachment_count: u32,
+    pub color_count: u32,
+    pub subpass: u32,
     pub extent: (u32, u32),
     pub cull_mode: CullMode,
     pub vertex_shader: &'a Shader,
@@ -142,6 +160,7 @@ pub enum Pipeline {
         descriptor_set_layout: vk::DescriptorSetLayout,
         pipeline: vk::Pipeline,
         pipeline_layout: vk::PipelineLayout,
+        bind_point: vk::PipelineBindPoint,
     },
 }
 
@@ -153,13 +172,6 @@ impl Pipeline {
                 descriptor_pool,
                 ..
             } => {
-                let distance_binding = vk::DescriptorSetLayoutBinding {
-                    binding: 3,
-                    descriptor_type: vk::DescriptorType::StorageImage,
-                    descriptor_count: 1,
-                    stage: vk::SHADER_STAGE_FRAGMENT,
-                };
-
                 let bindings = info
                     .layout
                     .iter()
@@ -277,14 +289,14 @@ impl Pipeline {
 
                     bindings.push(vertex_binding);
 
-                    for i in input {
+                    for (x, i) in input.iter().enumerate() {
                         let location = i.location;
 
                         let format = i.format.into();
 
                         let offset = input
                             .iter()
-                            .take(location as usize)
+                            .take(x)
                             .map(|i| i.format.to_bytes() as u32)
                             .sum::<u32>();
 
@@ -354,7 +366,7 @@ impl Pipeline {
                     max_depth_bounds: 1.0,
                 };
 
-                let color_blend_attachments = (0..info.attachment_count)
+                let color_blend_attachments = (0..info.color_count)
                     .map(|_| vk::PipelineColorBlendAttachmentState {
                         color_write_mask: vk::COLOR_COMPONENT_R
                             | vk::COLOR_COMPONENT_G
@@ -394,7 +406,7 @@ impl Pipeline {
                     dynamic_state: &dynamic_state,
                     layout: &pipeline_layout,
                     render_pass: &render_pass,
-                    subpass: 0,
+                    subpass: info.subpass,
                     base_pipeline: None,
                     base_pipeline_index: -1,
                 };
@@ -412,7 +424,107 @@ impl Pipeline {
                     descriptor_set_layout,
                     pipeline,
                     pipeline_layout,
+                    bind_point: vk::PipelineBindPoint::Graphics,
                 }
+            }
+        }
+    }
+
+    pub fn bind(&mut self, image_index: u32, bindings: &'_ [Binding]) {
+        match self {
+            Pipeline::Vulkan {
+                descriptor_sets, ..
+            } => {
+                let mut buffer_infos = vec![];
+                let mut image_infos = vec![];
+
+                let mut buffer_bindings = vec![];
+                let mut image_bindings = vec![];
+
+                let mut write_descriptors = vec![];
+
+                for binding in bindings.clone() {
+                    match binding {
+                        Binding::Buffer {
+                            offset,
+                            range,
+                            buffer,
+                            ..
+                        } => {
+                            let buffer = if let Buffer::Vulkan { buffer, .. } = buffer {
+                                buffer
+                            } else {
+                                panic!("not a vulkan buffer");
+                            };
+
+                            let buffer_info = vk::DescriptorBufferInfo {
+                                buffer: &buffer,
+                                offset: *offset as _,
+                                range: *range as _,
+                            };
+
+                            let index = buffer_infos.len();
+
+                            buffer_infos.push(buffer_info);
+
+                            buffer_bindings.push(binding);
+                        }
+                        Binding::Image { layout, image, .. } => {
+                            let (view, sampler) = if let Image::Vulkan { view, sampler, .. } = image
+                            {
+                                (view, sampler)
+                            } else {
+                                panic!("not a vulkan image");
+                            };
+
+                            let image_info = vk::DescriptorImageInfo {
+                                sampler: &sampler,
+                                image_view: &view,
+                                image_layout: layout.clone().into(),
+                            };
+
+                            let index = image_infos.len();
+
+                            image_infos.push(image_info);
+
+                            image_bindings.push(binding);
+                        }
+                    }
+                }
+
+                for (index, binding) in buffer_bindings.iter().enumerate() {
+                    let Binding::Buffer { binding, ty, .. } = binding else { panic!("not a vulkan buffer") };
+
+                    let write_descriptor = vk::WriteDescriptorSet {
+                        dst_set: &descriptor_sets[image_index as usize],
+                        dst_binding: *binding,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: ty.clone().into(),
+                        buffer_infos: &buffer_infos[index..=index],
+                        image_infos: &[],
+                    };
+
+                    write_descriptors.push(write_descriptor);
+                }
+
+                for (index, binding) in image_bindings.iter().enumerate() {
+                    let Binding::Image { binding, ty, .. } = binding else { panic!("not a vulkan image") };
+
+                    let write_descriptor = vk::WriteDescriptorSet {
+                        dst_set: &descriptor_sets[image_index as usize],
+                        dst_binding: *binding,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: ty.clone().into(),
+                        buffer_infos: &[],
+                        image_infos: &image_infos[index..=index],
+                    };
+
+                    write_descriptors.push(write_descriptor);
+                }
+
+                vk::DescriptorSet::update(&write_descriptors, &[]);
             }
         }
     }

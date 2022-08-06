@@ -1,9 +1,11 @@
 #![feature(let_chains)]
+#![feature(let_else)]
 
 mod access;
 mod buffer;
 mod context;
 mod device;
+mod error;
 mod format;
 mod framebuffer;
 mod image;
@@ -19,6 +21,7 @@ pub mod prelude {
     pub use crate::buffer::*;
     pub use crate::context::*;
     pub use crate::device::*;
+    pub use crate::error::*;
     pub use crate::format::*;
     pub use crate::framebuffer::*;
     pub use crate::image::*;

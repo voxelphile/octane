@@ -21,35 +21,35 @@ impl ImageUsage {
     pub(crate) fn to_vk(self) -> u32 {
         let mut vk = 0;
 
-        if self == Self::TRANSFER_SRC {
+        if self.contains(Self::TRANSFER_SRC) {
             vk |= vk::IMAGE_USAGE_TRANSFER_SRC;
         }
 
-        if self == Self::TRANSFER_DST {
+        if self.contains(Self::TRANSFER_DST) {
             vk |= vk::IMAGE_USAGE_TRANSFER_DST;
         }
 
-        if self == Self::SAMPLED {
+        if self.contains(Self::SAMPLED) {
             vk |= vk::IMAGE_USAGE_SAMPLED;
         }
 
-        if self == Self::STORAGE {
+        if self.contains(Self::STORAGE) {
             vk |= vk::IMAGE_USAGE_STORAGE;
         }
 
-        if self == Self::COLOR {
+        if self.contains(Self::COLOR) {
             vk |= vk::IMAGE_USAGE_COLOR_ATTACHMENT;
         }
 
-        if self == Self::DEPTH_STENCIL {
+        if self.contains(Self::DEPTH_STENCIL) {
             vk |= vk::IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT;
         }
 
-        if self == Self::TRANSIENT {
+        if self.contains(Self::TRANSIENT) {
             vk |= vk::IMAGE_USAGE_TRANSIENT_ATTACHMENT;
         }
 
-        if self == Self::INPUT {
+        if self.contains(Self::INPUT) {
             vk |= vk::IMAGE_USAGE_INPUT_ATTACHMENT;
         }
 
@@ -227,7 +227,7 @@ impl Image {
                 a: vk::ComponentSwizzle::Identity,
             },
             subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::IMAGE_ASPECT_COLOR,
+                aspect_mask: format.aspect_mask(),
                 base_mip_level: 0,
                 level_count: 1,
                 base_array_layer: 0,

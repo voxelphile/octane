@@ -1,9 +1,5 @@
 use crate::prelude::*;
 
-use std::marker;
-use std::mem;
-use std::rc::Rc;
-
 use bitflags::bitflags;
 
 bitflags! {
@@ -21,27 +17,27 @@ impl BufferUsage {
     pub(crate) fn to_vk(self) -> u32 {
         let mut vk = 0;
 
-        if self == Self::TRANSFER_SRC {
+        if self.contains(Self::TRANSFER_SRC) {
             vk |= vk::BUFFER_USAGE_TRANSFER_SRC;
         }
 
-        if self == Self::TRANSFER_DST {
+        if self.contains(Self::TRANSFER_DST) {
             vk |= vk::BUFFER_USAGE_TRANSFER_DST
         }
 
-        if self == Self::STORAGE {
+        if self.contains(Self::STORAGE) {
             vk |= vk::BUFFER_USAGE_STORAGE
         }
 
-        if self == Self::UNIFORM {
+        if self.contains(Self::UNIFORM) {
             vk |= vk::BUFFER_USAGE_UNIFORM
         }
 
-        if self == Self::VERTEX {
+        if self.contains(Self::VERTEX) {
             vk |= vk::BUFFER_USAGE_VERTEX
         }
 
-        if self == Self::INDEX {
+        if self.contains(Self::INDEX) {
             vk |= vk::BUFFER_USAGE_INDEX
         }
 
@@ -49,16 +45,16 @@ impl BufferUsage {
     }
 }
 
-pub struct BufferCopy<'a, T, U = T> {
-    pub from: &'a Buffer<T>,
-    pub to: &'a mut Buffer<U>,
+pub struct BufferCopy<'a> {
+    pub from: &'a Buffer,
+    pub to: &'a mut Buffer,
     pub src: u64,
     pub dst: u64,
     pub size: u64,
 }
 
-pub struct BufferImageCopy<'a, T> {
-    pub from: &'a Buffer<T>,
+pub struct BufferImageCopy<'a> {
+    pub from: &'a Buffer,
     pub to: &'a mut Image,
     pub src: u64,
     pub dst_extent: (u32, u32, u32),
@@ -74,18 +70,18 @@ pub struct BufferInfo<'a> {
     pub device: &'a Device,
     pub usage: BufferUsage,
     pub properties: MemoryProperties,
+    pub size: usize,
 }
 
 #[non_exhaustive]
-pub enum Buffer<T> {
+pub enum Buffer {
     Vulkan {
         buffer: vk::Buffer,
         memory: vk::Memory,
-        data: marker::PhantomData<T>,
     },
 }
 
-impl<T> Buffer<T> {
+impl Buffer {
     pub fn new(info: BufferInfo) -> Self {
         match info.device {
             Device::Vulkan {
@@ -94,7 +90,7 @@ impl<T> Buffer<T> {
                 ..
             } => {
                 let mut buffer =
-                    vk::Buffer::new(device.clone(), mem::size_of::<T> as u64, info.usage.to_vk())
+                    vk::Buffer::new(device.clone(), info.size as u64, info.usage.to_vk())
                         .expect("failed to create buffer");
 
                 let memory_allocate_info = vk::MemoryAllocateInfo {
@@ -106,17 +102,13 @@ impl<T> Buffer<T> {
                     memory_allocate_info,
                     buffer.memory_requirements(),
                     physical_device.memory_properties(),
-                    false,
+                    info.properties.contains(MemoryProperties::HOST_VISIBLE),
                 )
                 .expect("failed to allocate memory");
 
                 buffer.bind_memory(&memory);
 
-                Self::Vulkan {
-                    buffer,
-                    memory,
-                    data: marker::PhantomData,
-                }
+                Self::Vulkan { buffer, memory }
             }
         }
     }

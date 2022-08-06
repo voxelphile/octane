@@ -1,14 +1,17 @@
 use crate::prelude::*;
 
 pub struct FramebufferInfo<'a> {
-    device: &'a Device,
-    render_pass: &'a RenderPass,
-    extent: (u32, u32, u32),
-    attachments: &'a [Image],
+    pub device: &'a Device,
+    pub render_pass: &'a RenderPass,
+    pub extent: (u32, u32, u32),
+    pub attachments: &'a [&'a Image],
 }
 
 pub enum Framebuffer {
-    Vulkan { framebuffer: vk::Framebuffer },
+    Vulkan {
+        framebuffer: vk::Framebuffer,
+        extent: (u32, u32, u32),
+    },
 }
 
 impl Framebuffer {
@@ -41,7 +44,10 @@ impl Framebuffer {
                 let framebuffer = vk::Framebuffer::new(device.clone(), framebuffer_create_info)
                     .expect("failed to create framebuffer");
 
-                Self::Vulkan { framebuffer }
+                Self::Vulkan {
+                    framebuffer,
+                    extent: info.extent,
+                }
             }
         }
     }

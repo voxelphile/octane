@@ -3,11 +3,14 @@
 #define CHUNK_SIZE 8
 
 layout(binding = 0) uniform Camera {
-	mat4 model;
 	mat4 view;
 	mat4 proj;
-	mat4 camera;
+	mat4 model;
 } camera;
+
+layout(binding = 1) uniform Object {
+	mat4 model;
+} object;
 
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
@@ -19,8 +22,8 @@ layout(location = 1) out vec3 out_position;
 layout(location = 2) out uvec3 out_chunk_position;
 
 void main() {
-	mat4 true_model = camera.model;
-	
+	mat4 true_model = object.model;
+
 	true_model[3].xyz += vec3(in_chunk_position) * CHUNK_SIZE;
 	
 	vec3 position = in_position * CHUNK_SIZE / 2;

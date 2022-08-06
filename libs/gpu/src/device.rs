@@ -3,6 +3,7 @@ pub use crate::prelude::*;
 use std::cmp;
 use std::mem;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 use log::{error, info, trace, warn};
 
@@ -21,6 +22,9 @@ pub enum Device {
         command_pool: vk::CommandPool,
         command_buffer: vk::CommandBuffer,
         descriptor_pool: vk::DescriptorPool,
+        image_available_semaphore: Rc<RefCell<vk::Semaphore>>,
+        render_finished_semaphore: Rc<RefCell<vk::Semaphore>>,
+        in_flight_fence: vk::Fence,
     },
 }
 
@@ -132,26 +136,26 @@ impl Device {
         
                 let uniform_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: 16,
+            descriptor_count: 32,
         };
 
         let storage_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 16,
+            descriptor_count: 32,
         };
         
         let storage_image_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::StorageImage,
-            descriptor_count: 16,
+            descriptor_count: 32,
         };
 
         let sampler_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::CombinedImageSampler,
-            descriptor_count: 16,
+            descriptor_count: 32,
         };
 
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
-            max_sets: 16,
+            max_sets: 32,
             pool_sizes: &[
                 uniform_buffer_pool_size,
                 storage_buffer_pool_size,
@@ -164,6 +168,26 @@ impl Device {
             vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
                 .expect("failed to create descriptor pool");
 
+        let semaphore_create_info = vk::SemaphoreCreateInfo {};
+
+        let image_available_semaphore =
+            vk::Semaphore::new(device.clone(), semaphore_create_info)
+                .expect("failed to create semaphore");
+
+        let image_available_semaphore = Rc::new(RefCell::new(image_available_semaphore));
+
+        let semaphore_create_info = vk::SemaphoreCreateInfo {};
+
+        let render_finished_semaphore =
+            vk::Semaphore::new(device.clone(), semaphore_create_info)
+                .expect("failed to create semaphore");
+        
+        let render_finished_semaphore = Rc::new(RefCell::new(render_finished_semaphore));
+
+        let fence_create_info = vk::FenceCreateInfo {};
+
+        let in_flight_fence =
+            vk::Fence::new(device.clone(), fence_create_info).expect("failed to create fence");
 
                 Self::Vulkan {
                     instance: instance.clone(),
@@ -173,15 +197,18 @@ impl Device {
                     command_pool,
                     command_buffer,
                     descriptor_pool,
+                    image_available_semaphore,
+                    render_finished_semaphore,
+                    in_flight_fence,
                 }
             }
         }
     }
 
-    pub fn copy_buffer_to_buffer<T, U>(&mut self, mut copy: BufferCopy<'_, T, U>) {
+    pub fn copy_buffer_to_buffer(&mut self, mut copy: BufferCopy<'_>) {
         match self {
             Self::Vulkan { command_buffer, queues, .. } => {
-                command_buffer.record(|commands| {
+                command_buffer.record(|mut commands| {
                     let buffer_copy = vk::BufferCopy {
                         src_offset: copy.src,
                         dst_offset: copy.dst,
@@ -190,6 +217,8 @@ impl Device {
 
                     if let Buffer::Vulkan { buffer: from, .. } = &copy.from && let Buffer::Vulkan { buffer: to, .. } = &mut copy.to {
                         commands.copy_buffer(from, to, &[buffer_copy]);
+                    } else {
+                        panic!("not a vulkan buffer");
                     }
                 }).expect("failed to record copy buffer to buffer commands");
 
@@ -199,6 +228,7 @@ impl Device {
                     command_buffers: &[&command_buffer],
                     signal_semaphores: &[],
                 };
+
                 queues[0]
                     .submit(&[submit_info], None)
                     .expect("failed to submit buffer copy command buffer");
@@ -208,11 +238,11 @@ impl Device {
         }
     }
 
-    pub fn copy_buffer_to_image<T>(&mut self, mut copy: BufferImageCopy<'_, T>) {
+    pub fn copy_buffer_to_image(&mut self, mut copy: BufferImageCopy<'_>) {
         match self {
             Self::Vulkan { command_buffer, queues, .. } => {
                 command_buffer
-                    .record(|commands| {
+                    .record(|mut commands| {
                         if let Buffer::Vulkan { buffer: from, .. } = &copy.from && let Image::Vulkan { image: to, .. } = &mut copy.to { 
                             let barrier = vk::ImageMemoryBarrier {
                                 old_layout: vk::ImageLayout::Undefined,
@@ -304,5 +334,341 @@ impl Device {
                 queues[0].wait_idle().expect("failed to wait on queue");
             }
         }
+    }
+
+    pub fn synchronize(&mut self) {
+        match self {
+            Device::Vulkan { in_flight_fence, .. } => {
+                vk::Fence::wait(&[in_flight_fence], true, u64::MAX)
+                    .expect("failed to wait for fence");
+
+                vk::Fence::reset(&[in_flight_fence]).expect("failed to reset fence");
+            }
+        }
+    }
+    
+    pub fn draw_call<'a>(&'a mut self, mut script: impl FnMut(Commands<'_>)) {
+        match self {
+            Device::Vulkan { 
+                queues,
+                command_buffer,
+                image_available_semaphore,
+                render_finished_semaphore,
+                in_flight_fence,
+                .. 
+            } => {
+                command_buffer
+                    .record(|commands| {
+                        let commands = Commands::Vulkan {
+                            commands
+                        };
+
+                        script(commands);
+                    })
+                    .expect("failed to record command buffer");
+
+                let submit_info = vk::SubmitInfo {
+                    wait_semaphores: &[&image_available_semaphore.borrow()],
+                    wait_stages: &[vk::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT],
+                    command_buffers: &[command_buffer],
+                    signal_semaphores: &[&mut render_finished_semaphore.borrow_mut()],
+                };
+
+                queues[0]
+                    .submit(&[submit_info], Some(in_flight_fence))
+                    .expect("failed to submit draw command buffer");
+                
+                queues[0]
+                    .wait_idle()
+                    .expect("failed to wait on queue");
+            }
+        }
+    }
+
+    pub fn call<'a>(&'a mut self, mut script: impl FnMut(Commands<'_>)) {
+        match self {
+            Device::Vulkan { 
+                queues,
+                command_buffer,
+                .. 
+            } => {
+                command_buffer
+                    .record(|commands| {
+                        let commands = Commands::Vulkan {
+                            commands
+                        };
+
+                        script(commands);
+                    })
+                    .expect("failed to record command buffer");
+
+                let submit_info = vk::SubmitInfo {
+                    wait_semaphores: &[],
+                    wait_stages: &[],
+                    command_buffers: &[command_buffer],
+                    signal_semaphores: &[],
+                };
+
+                queues[0]
+                    .submit(&[submit_info], None)
+                    .expect("failed to submit draw command buffer");
+
+                queues[0]
+                    .wait_idle()
+                    .expect("failed to wait on queue");
+            }
+        }
+    }
+
+    pub fn present(&mut self, swapchain: &Swapchain) -> Result<(), Error> {
+        match self {
+            Device::Vulkan { 
+                queues,
+                render_finished_semaphore,
+                .. 
+            } => {
+                let (swapchain, &image_index) = if let Swapchain::Vulkan { swapchain, image_index, .. } = swapchain {
+                    (swapchain, image_index)
+                } else {
+                    panic!("not a vulkan swapchain");
+                };
+            
+                let present_info = vk::PresentInfo {
+                wait_semaphores: &[&render_finished_semaphore.borrow()],
+                swapchains: &[&swapchain],
+                image_indices: &[image_index],
+                };
+
+                queues[0].present(present_info).map_err(|_| Error::Presentation)
+            }
+        }
+    }
+}
+
+#[non_exhaustive]
+pub enum Commands<'a> {
+    Vulkan {
+        commands: vk::Commands<'a>,
+    }
+}
+
+impl Commands<'_> {
+    pub fn begin_render_pass(&mut self, info: RenderPassBeginInfo<'_>) {
+        match self {
+            Self::Vulkan { commands } => {
+                let RenderPass::Vulkan { render_pass, .. } = info.render_pass else { panic!("not a vulkan render pass") };
+                let Framebuffer::Vulkan { framebuffer, extent, .. } = info.framebuffer else { panic!("not a vulkan framebuffer") };
+                
+                let info = vk::RenderPassBeginInfo {
+                    render_pass: &render_pass,
+                    framebuffer: &framebuffer,
+                    render_area: vk::Rect2d {
+                        offset: (0, 0),
+                        extent: (extent.0, extent.1),
+                    },
+                    color_clear_values: &info.color_clear_values,
+                    depth_stencil_clear_value: info.depth_stencil_clear_value,
+                };
+
+                commands.begin_render_pass(info);
+            }
+        }
+    }
+
+    pub fn end_render_pass(&mut self) {
+        match self {
+            Self::Vulkan { commands } => {
+                commands.end_render_pass();
+            }
+        }
+        
+    }
+    
+    pub fn next_subpass(&mut self) {
+        match self {
+            Self::Vulkan { commands } => {
+                commands.next_subpass();
+            }
+        }
+        
+    }
+    
+    pub fn bind_pipeline(&mut self, image_index: u32, pipeline: &Pipeline) {
+        match self {
+            Self::Vulkan { commands } => {
+                let Pipeline::Vulkan { descriptor_sets, pipeline, pipeline_layout, bind_point, .. } = pipeline else { panic!("not a vulkan pipeline") };
+
+                commands.bind_pipeline(*bind_point, pipeline);
+                commands.bind_descriptor_sets(*bind_point, pipeline_layout, 0, &[&descriptor_sets[image_index as usize]], &[]);
+            }
+        }
+        
+    }
+    
+    pub fn bind_vertex_buffers(&mut self, 
+        first_binding: u32,
+        buffers: &'_ [&'_ Buffer],
+        offsets: &'_ [usize],
+        ) {
+        match self {
+            Self::Vulkan { commands } => {
+                 let buffers = buffers.iter().map(|buffer| 
+                     {
+                        let Buffer::Vulkan { buffer, .. } = buffer else { panic!("not a vulkan buffer") };
+
+                        buffer
+                     }).collect::<Vec<_>>();
+
+                 commands.bind_vertex_buffers(first_binding, &buffers, offsets);
+            }
+        }
+        
+    }
+    
+    pub fn bind_index_buffer(&mut self, buffer: &'_ Buffer, offset: usize) {
+        match self {
+            Self::Vulkan { commands } => {
+                let Buffer::Vulkan { buffer, .. } = buffer else { panic!("not a vulkan buffer") };
+                
+                commands.bind_index_buffer(buffer, offset, vk::IndexType::Uint16);
+            }
+        }
+        
+    }
+    
+    pub fn draw(&mut self,
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+        ) {
+        match self {
+            Self::Vulkan { commands } => {
+                commands.draw(vertex_count, instance_count, first_vertex, first_instance);
+            }
+        }
+        
+    }
+    
+    pub fn draw_indexed(&mut self,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        vertex_offset: i32,
+        first_instance: u32,
+
+        ) {
+        match self {
+            Self::Vulkan { commands } => {
+                commands.draw_indexed(index_count, instance_count, first_index, vertex_offset, first_instance);
+            }
+        }
+        
+    }
+
+    pub fn pipeline_barrier(&mut self, src_stage: PipelineStage, dst_stage: PipelineStage, barriers: &'_ [Barrier]) {
+        match self {
+            Self::Vulkan { commands } => {
+                let mut memory_barriers = vec![];
+                let mut buffer_barriers = vec![];
+                let mut image_barriers = vec![];
+
+                for barrier in barriers {
+                    match barrier {
+                        Barrier::Memory {
+                            src_access,
+                            dst_access,
+                        } => {
+                            let memory_barrier = vk::MemoryBarrier {
+                                src_access_mask: src_access.to_vk(),
+                                dst_access_mask: dst_access.to_vk(),
+                            };
+
+                            memory_barriers.push(memory_barrier);
+                        },
+                        Barrier::Buffer {
+                            src_access,
+                            dst_access,
+                            buffer,
+                            offset,
+                            size
+                        } => {
+                            let Buffer::Vulkan { buffer, .. } = buffer else { panic!("not a vulkan buffer") };
+                            
+                            let buffer_barrier = vk::BufferMemoryBarrier {
+                                src_access_mask: src_access.to_vk(),
+                                dst_access_mask: dst_access.to_vk(),
+                                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                                buffer: &buffer,
+                                offset: *offset as _,
+                                size: *size as _,
+                           };
+
+                            buffer_barriers.push(buffer_barrier);
+                        },
+                        Barrier::Image {
+                            src_access,
+                            dst_access,
+                            old_layout,
+                            new_layout,
+                            image,
+                        } => {
+                            let Image::Vulkan { image, format, .. } = image else { panic!("not a vulkan image") };
+
+                            let image_barrier = vk::ImageMemoryBarrier {
+old_layout: old_layout.clone().into(),
+                    new_layout: new_layout.clone().into(),
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: &image,
+                    src_access_mask: src_access.to_vk(),
+                    dst_access_mask: dst_access.to_vk(),
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: format.aspect_mask(),
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                            };
+
+                            image_barriers.push(image_barrier);
+                        }
+                    }
+                }
+
+                commands.pipeline_barrier(
+                    src_stage.to_vk(),
+                    dst_stage.to_vk(),
+                    0,
+                    &memory_barriers,
+                    &buffer_barriers,
+                    &image_barriers,
+                );
+            }
+        }
+        
+    }
+}
+
+pub enum Barrier<'a> {
+    Memory {
+        src_access: Access,
+        dst_access: Access,
+    },
+    Buffer {
+        src_access: Access,
+        dst_access: Access,
+        offset: usize,
+        size: usize,
+        buffer: &'a Buffer,
+    },
+    Image {
+        src_access: Access,
+        dst_access: Access,
+        old_layout: ImageLayout,
+        new_layout: ImageLayout,
+        image: &'a Image
     }
 }

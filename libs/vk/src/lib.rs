@@ -2491,6 +2491,15 @@ pub enum Format {
     D32Sfloat,
 }
 
+impl Format {
+    pub fn aspect_mask(self) -> u32 {
+        match self {
+            Self::D32Sfloat => IMAGE_ASPECT_DEPTH,
+            _ => IMAGE_ASPECT_COLOR,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum IndexType {
     Uint16,
@@ -5083,7 +5092,7 @@ impl CommandBuffer {
         }
     }
 
-    pub fn record(&mut self, mut script: impl FnMut(&mut Commands)) -> Result<(), Error> {
+    pub fn record<'a>(&'a mut self, mut script: impl FnMut(Commands<'_>)) -> Result<(), Error> {
         let begin_info = ffi::CommandBufferBeginInfo {
             structure_type: ffi::StructureType::CommandBufferBeginInfo,
             p_next: ptr::null(),
@@ -5100,11 +5109,11 @@ impl CommandBuffer {
             _ => panic!("unexpected result: {:?}", result),
         }
 
-        let mut commands = Commands {
+        let commands = Commands {
             command_buffer: self,
         };
 
-        script(&mut commands);
+        script(commands);
 
         let result = unsafe { ffi::vkEndCommandBuffer(self.handle) };
 
@@ -5231,7 +5240,6 @@ impl Commands<'_> {
     pub fn bind_vertex_buffers(
         &mut self,
         first_binding: u32,
-        binding_count: u32,
         buffers: &'_ [&'_ Buffer],
         offsets: &'_ [usize],
     ) {
@@ -5244,11 +5252,13 @@ impl Commands<'_> {
             .map(|&offset| offset as _)
             .collect::<Vec<_>>();
 
+        assert_eq!(buffers.len(), offsets.len());
+
         unsafe {
             ffi::vkCmdBindVertexBuffers(
                 self.command_buffer.handle,
                 first_binding,
-                binding_count,
+                buffers.len() as _,
                 buffers.as_ptr(),
                 offsets.as_ptr(),
             )

@@ -1,3 +1,5 @@
+#![feature(box_syntax)]
+
 mod window;
 
 mod term {
@@ -12,12 +14,13 @@ use crate::window::{Event as WindowEvent, Keycode, Window};
 
 use common::mesh::Mesh;
 use common::octree::{Octree, SparseOctree};
-use common::render::{self, Renderer};
+use common::render::{self, Condition, Renderer};
 use common::voxel::{Id::*, Voxel};
 
 use math::prelude::{Matrix, Vector};
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
 use std::mem;
 use std::path::Path;
@@ -53,8 +56,10 @@ impl log::Log for Logger {
 
 static LOGGER: Logger = Logger;
 
+pub const CHUNK_SIZE: usize = 8;
+
 //TODO identify why release segfaults
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
     log::set_max_level(log::LevelFilter::Info);
@@ -65,12 +70,12 @@ fn main() {
     window.rename("Octane");
     window.show();
 
-    let render_distance = 32;
+    let render_distance = 2;
 
     let octree = {
         let mut octree = SparseOctree::<Voxel>::new();
 
-        let ct = 2 * info.render_distance as usize * CHUNK_SIZE;
+        let ct = 2 * render_distance as usize * CHUNK_SIZE;
 
         use noise::NoiseFn;
         let perlin = noise::Perlin::new();
@@ -102,27 +107,7 @@ fn main() {
         octree
     };
 
-    let mut projection = Matrix::<f32, 4, 4>::identity();
-    let mut camera = Matrix::<f32, 4, 4>::identity();
-    let mut model = Matrix::<f32, 4, 4>::identity();
-
     //create matrices
-    {
-        let fov = 45.0_f32 * 2.0 * std::f32::consts::PI / 360.0;
-
-        let focal_length = 1.0 / (fov / 2.0).tan();
-
-        let aspect_ratio = (960) as f32 / (540) as f32;
-
-        let near = 0.01;
-        let far = 1000.0;
-
-        projection[0][0] = focal_length / aspect_ratio;
-        projection[1][1] = -focal_length;
-        projection[2][2] = far / (near - far);
-        projection[2][3] = -1.0;
-        projection[3][2] = (near * far) / (near - far);
-    }
 
     let mut base_path = std::env::current_exe().expect("failed to load path of executable");
     base_path.pop();
@@ -138,35 +123,41 @@ fn main() {
 
     let mut vulkan = render::Vulkan::init(render_info);
 
-    vulkan.camera.proj = projection;
-    vulkan.camera.view = camera.inverse();
-    vulkan.camera.camera = camera;
-    vulkan.camera.model = model;
-
-    let present_vertex_shader = format!("{}/assets/fullscreen.vert.spirv", base_path_str);
-    let present_fragment_shader = format!("{}/assets/present.frag.spirv", base_path_str);
-    let postfx_vertex_shader = format!("{}/assets/fullscreen.vert.spirv", base_path_str);
-    let postfx_fragment_shader = format!("{}/assets/postfx.frag.spirv", base_path_str);
-    let graphics_vertex_shader = ;
-    let graphics_fragment_shader = format!("{}/assets/voxel.frag.spirv", base_path_str);
-    let jfa_shader = format!("{}/assets/jfa.comp.spirv", base_path_str);
-
     let cube = format!("{}/assets/cube.obj", base_path_str);
     let cube_obj = fs::File::open(cube).expect("failed to open obj");
 
     let mut cube = Mesh::from_obj(cube_obj);
 
-    let batch = render::Batch {
-        graphics_vertex_shader,
-        graphics_fragment_shader,
-        postfx_vertex_shader,
-        postfx_fragment_shader,
-        present_vertex_shader,
-        present_fragment_shader,
-        jfa_shader,
-    };
+    let mut camera = render::Camera::default();
 
-    let entries = [render::Entry { mesh: &cube }];
+    camera.proj = {
+        let mut projection = Matrix::<f32, 4, 4>::identity();
+
+        let fov = 45.0_f32 * 2.0 * std::f32::consts::PI / 360.0;
+
+        let focal_length = 1.0 / (fov / 2.0).tan();
+
+        let aspect_ratio = (960) as f32 / (540) as f32;
+
+        let near = 0.01;
+        let far = 1000.0;
+
+        projection[0][0] = focal_length / aspect_ratio;
+        projection[1][1] = -focal_length;
+        projection[2][2] = far / (near - far);
+        projection[2][3] = -1.0;
+        projection[3][2] = (near * far) / (near - far);
+        projection
+    };
+    camera.model = Matrix::identity();
+    camera.view = Matrix::identity();
+
+    let mut batch = render::Batch { camera };
+
+    let mut objects = [render::Object {
+        data: &octree,
+        model: Matrix::identity(),
+    }];
 
     let startup = std::time::Instant::now();
     let mut last = startup;
@@ -176,7 +167,7 @@ fn main() {
     let mut x_rot = 0.0;
     let mut y_rot = 0.0;
     let middle = (2.0 * render_distance as f32 * 8.0) / 2.0 - 4.0;
-    let height = 32.0;
+    let height = 16.0;
     let mut position = Vector::<f32, 4>::new([middle, height, middle, 1.0]);
     let mut should_capture = false;
     let mut prev_should_capture = false;
@@ -242,7 +233,9 @@ fn main() {
                     break 'main;
                 }
                 WindowEvent::Resized { resolution } => {
-                    {
+                    camera.proj = {
+                        let mut projection = Matrix::<f32, 4, 4>::identity();
+
                         let fov = 45.0_f32 * 2.0 * std::f32::consts::PI / 360.0;
 
                         let focal_length = 1.0 / (fov / 2.0).tan();
@@ -257,7 +250,8 @@ fn main() {
                         projection[2][2] = far / (near - far);
                         projection[2][3] = -1.0;
                         projection[3][2] = (near * far) / (near - far);
-                    }
+                        projection
+                    };
                     vulkan.resize(resolution);
                 }
             }
@@ -320,7 +314,7 @@ fn main() {
 
         let l = m * y_r;
         let l = l * x_r;
-        let mut p = Vector::<f32, 4>::new(l[3]);
+        let mut p = Vector::<f32, 4>::new(*l[3]);
         p[1] = 0.0;
         p[3] = 0.0;
         let p = if p.magnitude() > 0.0 {
@@ -335,20 +329,12 @@ fn main() {
         camera[3][1] = position[1];
         camera[3][2] = position[2];
 
-        let follow = 2.0 * 1.0 as f32;
-        let angle: f32 = 0.0;
+        objects[0].model = Matrix::<f32, 4, 4>::identity();
 
-        vulkan.camera.model = Matrix::<f32, 4, 4>::identity();
-        vulkan.camera.model[0][0] = angle.cos();
-        vulkan.camera.model[2][0] = angle.sin();
-        vulkan.camera.model[0][2] = -angle.sin();
-        vulkan.camera.model[2][2] = angle.cos();
+        batch.camera.model = camera;
+        batch.camera.view = camera.inverse();
 
-        vulkan.camera.view = camera.inverse();
-
-        vulkan.camera.camera = camera;
-
-        vulkan.draw_batch(batch.clone(), &entries);
+        while let Condition::Retry = vulkan.draw(batch, &objects).map_err(|e| box e)? {}
 
         fps += 1;
     }
@@ -361,4 +347,5 @@ fn main() {
     drop(window);
     //vk shutdown happens during implicit Drop.
     //Rc ensures shutdown happens in right order.
+    Ok(())
 }

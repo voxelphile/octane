@@ -15,7 +15,7 @@
 
 struct Voxel {
 	uint id;
-}
+};
 
 struct Node {
 	uint child;
@@ -25,18 +25,21 @@ struct Node {
 };
 
 layout(binding = 0) uniform Camera {
-	mat4 model;
 	mat4 view;
 	mat4 proj;
-	mat4 camera;
+	mat4 model;
 } camera;
 
-layout(binding = 1) uniform RenderSettings {
+layout(binding = 1) uniform Object {
+	mat4 model;
+} object;
+
+layout(binding = 2) uniform RenderSettings {
 	vec2 resolution;
 	uint render_distance;
 } settings;
 
-layout( binding = 2) buffer Octree {
+layout( binding = 3) buffer Octree {
 	uint size;
 	uint len;
 	Node data[];
@@ -48,11 +51,6 @@ layout(location = 2) in flat uvec3 in_chunk_position;
 
 layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec4 out_occlusion;
-
-int   seed = 1;
-void  srand(int s ) { seed = s; }
-int   rand(void)  { seed=seed*0x343fd+0x269ec3; return (seed>>16)&32767; }
-float frand(void) { return float(rand())/32767.0; }
 
 vec4 get_albedo(uint id) {
 	vec4 albedo = vec4(0);
@@ -181,7 +179,7 @@ bool get_voxel(vec3 position, out uint node_index, out uint node_depth, bool ign
 
 	Node node = octree.data[node_index];
 
-	return !(get_albedo(node.id).a != 1 && ignore_transparent);
+	return !(get_albedo(node.voxel.id).a != 1 && ignore_transparent);
 }
 
 
@@ -372,13 +370,13 @@ bool ray_cast(Ray ray, out RayHit hit) {
 		if (voxel_found) {
 			Node current = octree.data[node_index];
 
-			if (in_bounds && /*in_object &&*/ ray.medium != current.id) {
+			if (in_bounds && /*in_object &&*/ ray.medium != current.voxel.id) {
 				vec3 destination = ray.origin + ray.direction * (dist - 1e-4);
 				vec3 back_step = p - s * vec3(mask);
 				vec3 normal = vec3(mask) * sign(-ray.direction);
 				vec2 uv = mod(vec2(dot(vec3(mask) * destination.yzx, vec3(1.0)), dot(vec3(mask) * destination.zxy, vec3(1.0))), vec2(1.0));
 				vec3 reflection = reflect(ray.direction, normal);
-				float eta = get_refraction(ray.medium) / get_refraction(current.id);
+				float eta = get_refraction(ray.medium) / get_refraction(current.voxel.id);
 				vec3 refraction = refract(ray.direction, normal, eta);
 
 				hit.node = node_index;	
@@ -415,11 +413,11 @@ float depth(mat4 true_model, vec3 position) {
 }
 
 void main() {
-	out_color = vec4(1);
+	out_color = vec4(0.1);
 	out_occlusion = vec4(1);	
-
+	return;
 	vec3 sun_pos = vec3(1000, 2000, 100);
-	mat4 true_model = camera.model;
+	mat4 true_model = object.model;
 
 	true_model[3].xyz += vec3(in_chunk_position * CHUNK_SIZE);
 
@@ -427,7 +425,7 @@ void main() {
 
 	near_plane = vec4((inverse(camera.proj) * near_plane).xy, 0.0, 1.0);
 
-	vec3 camera_position = (camera.camera * near_plane).xyz;
+	vec3 camera_position = (camera.model * near_plane).xyz;
 
 	vec3 model_position = (true_model * vec4(in_position, 1.0)).xyz;
 
@@ -453,7 +451,7 @@ void main() {
 
 	bool voxel_found = get_voxel(point, node_index, node_depth, false);
 
-	uint medium = voxel_found ? octree.data[node_index].id : 42069;
+	uint medium = voxel_found ? octree.data[node_index].voxel.id : 42069;
 	vec4 albedo = voxel_found ? get_albedo(medium) : vec4(0);
 
 	Ray ray = Ray(point, dir, 4000, medium, false);
@@ -469,22 +467,22 @@ void main() {
 			Node node = octree.data[ray_hit.node];
 		
 			albedo.xyz *= max(pow(ray_hit.dist, 2), 1);
-			albedo += get_albedo(node.id);
-			float reflectivity = get_reflectivity(node.id);
+			albedo += get_albedo(node.voxel.id);
+			float reflectivity = get_reflectivity(node.voxel.id);
 			if (ENABLE_REFLECTION && reflectivity > 0) {
-				Ray ref = Ray(ray_hit.destination, ray_hit.reflection, 4000, node.id, false);
+				Ray ref = Ray(ray_hit.destination, ray_hit.reflection, 4000, node.voxel.id, false);
 				RayHit ref_hit;
 
 				bool ref_success = ray_cast(ref, ref_hit);
 
 				if (ref_success) {
 					Node node = octree.data[ref_hit.node];
-					albedo += get_albedo(node.id) * reflectivity;
+					albedo += get_albedo(node.voxel.id) * reflectivity;
 				}
 			}
 			if (ENABLE_REFRACTION && albedo.a < 1) {
 				//I don't know how to fix transparency other than making the ray unbounded.
-				ray = Ray(ray_hit.destination + ray_hit.refraction * EPSILON, ray_hit.refraction, 4000, node.id, false);
+				ray = Ray(ray_hit.destination + ray_hit.refraction * EPSILON, ray_hit.refraction, 4000, node.voxel.id, false);
 				last_medium = ray.medium;
 			} else {
 				break;

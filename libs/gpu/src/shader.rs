@@ -9,6 +9,8 @@ use std::time::SystemTime;
 
 use bitflags::bitflags;
 
+use log::info;
+
 bitflags! {
     #[repr(transparent)]
     pub struct ShaderStage: u32 {
@@ -44,31 +46,33 @@ impl ShaderInput {
         }
     }
 
-    pub(crate) fn get_asset(&self) -> &Path {
+    pub(crate) fn get_asset(&self) -> Option<&Path> {
         match self {
-            Self::Spirv { asset } => &asset,
-            Self::Glsl { asset, .. } => &asset,
+            Self::Spirv { asset } => Some(&asset),
+            Self::Glsl { asset, .. } => Some(&asset),
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ShaderLastModified {
-    asset: SystemTime,
+    asset: Option<SystemTime>,
     resource: Option<SystemTime>,
 }
 
 impl ShaderLastModified {
     fn from_input(input: &ShaderInput) -> ShaderLastModified {
         ShaderLastModified {
-            asset: {
-                let metadata =
-                    fs::metadata(input.get_asset()).expect("failed to get metadata of shader file");
+            asset: input.get_asset().map(|asset| {
+                let metadata = fs::metadata(asset).expect(&format!(
+                    "failed to get metadata of shader file: {}",
+                    asset.as_os_str().to_str().unwrap()
+                ));
 
                 metadata
                     .modified()
                     .expect("failed to get last modified of shader file")
-            },
+            }),
             resource: input.get_resource().map(|resource| {
                 let metadata =
                     fs::metadata(resource).expect("failed to get metadata of shader file");
@@ -102,15 +106,15 @@ impl Shader {
     pub fn new(info: ShaderInfo) -> Self {
         match info.device {
             Device::Vulkan { device, .. } => {
-                let last_modified = ShaderLastModified::from_input(&info.input);
+                let last_modified = Default::default();
 
                 if let Some(_) = info.input.get_resource() {
                     Self::compile_spirv(&info.input, &last_modified, &info.entry)
                         .expect("failed to compile shader");
                 }
 
-                let mut file =
-                    fs::File::open(info.input.get_asset()).expect("failed to open shader file");
+                let mut file = fs::File::open(info.input.get_asset().unwrap())
+                    .expect("failed to open shader file");
 
                 let shader_module = Self::load_vk_shader(device.clone(), &mut file);
 
@@ -134,12 +138,8 @@ impl Shader {
                 input,
                 entry,
             } => {
-                if let Some(_) = input.get_resource() {
-                    Self::compile_spirv(input, last_modified, entry)?;
-                }
-
                 let modified = {
-                    let metadata = fs::metadata(input.get_asset())
+                    let metadata = fs::metadata(input.get_asset().unwrap())
                         .expect("failed to get metadata of shader file");
 
                     metadata
@@ -147,13 +147,20 @@ impl Shader {
                         .expect("failed to get last modified of shader file")
                 };
 
-                let reload = modified != last_modified.asset;
+                let reload =
+                    last_modified.asset.is_none() || last_modified.asset.unwrap() != modified;
 
                 if reload {
+                    info!("reloading shader");
+
+                    if let Some(_) = input.get_resource() {
+                        Self::compile_spirv(input, last_modified, entry)?;
+                    }
+
                     *last_modified = ShaderLastModified::from_input(&input);
 
-                    let mut file =
-                        fs::File::open(input.get_asset()).expect("failed to open shader file");
+                    let mut file = fs::File::open(input.get_asset().unwrap())
+                        .expect("failed to open shader file");
 
                     *shader_module = Self::load_vk_shader(device.clone(), &mut file);
                 }
@@ -182,9 +189,11 @@ impl Shader {
                 .expect("failed to get last modified of shader file")
         };
 
-        if modified == last_modified.resource.unwrap() {
+        if last_modified.resource.is_some() && modified == last_modified.resource.unwrap() {
             return Ok(());
         }
+
+        info!("compiling shader");
 
         let mut source_file = fs::File::open(resource).expect("failed to open shader file");
 
@@ -242,11 +251,11 @@ impl Shader {
             .flat_map(|a| a.to_le_bytes().into_iter())
             .collect::<Vec<_>>();
 
-        if fs::metadata(&asset).is_ok() {
-            fs::remove_file(&asset).expect("failed to remove file");
+        if fs::metadata(&asset.as_ref().unwrap()).is_ok() {
+            fs::remove_file(&asset.as_ref().unwrap()).expect("failed to remove file");
         }
 
-        fs::write(&asset, &binary).expect("failed to write shader");
+        fs::write(&asset.as_ref().unwrap(), &binary).expect("failed to write shader");
 
         Ok(())
     }

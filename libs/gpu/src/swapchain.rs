@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct SwapchainInfo<'a> {
@@ -20,6 +21,8 @@ pub enum Swapchain {
         device: Rc<vk::Device>,
         surface: Rc<vk::Surface>,
         swapchain: vk::Swapchain,
+        image_available_semaphore: Rc<RefCell<vk::Semaphore>>,
+        image_index: u32,
     },
 }
 
@@ -29,6 +32,7 @@ impl Swapchain {
             Device::Vulkan {
                 physical_device,
                 device,
+                image_available_semaphore,
                 ..
             } => {
                 let surface = if let Surface::Vulkan { surface } = info.surface {
@@ -83,7 +87,9 @@ impl Swapchain {
                     physical_device: physical_device.clone(),
                     device: device.clone(),
                     surface: surface.clone(),
+                    image_available_semaphore: image_available_semaphore.clone(),
                     swapchain,
+                    image_index: 0,
                 }
             }
         }
@@ -96,6 +102,7 @@ impl Swapchain {
                 device,
                 surface,
                 swapchain,
+                ..
             } => {
                 let vk::SurfaceFormat { format, .. } = physical_device.surface_format(&surface);
 
@@ -119,6 +126,27 @@ impl Swapchain {
                         }
                     })
                     .collect::<Vec<_>>()
+            }
+        }
+    }
+
+    pub fn acquire(&mut self) -> Result<u32, Error> {
+        match self {
+            Self::Vulkan {
+                swapchain,
+                image_available_semaphore,
+                image_index,
+                ..
+            } => {
+                *image_index = swapchain
+                    .acquire_next_image(
+                        u64::MAX,
+                        Some(&mut image_available_semaphore.borrow_mut()),
+                        None,
+                    )
+                    .map_err(|_| Error::Acquisition)?;
+
+                Ok(*image_index)
             }
         }
     }

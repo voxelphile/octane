@@ -49,7 +49,7 @@ impl Octree<Voxel> for SparseOctree<Voxel> {
     }
 
     fn place(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
-        self.size = 9;
+        self.size = 4;
 
         let mut hierarchy = self.get_position_hierarchy(x, y, z);
 
@@ -273,7 +273,7 @@ impl Default for Node {
             morton: u64::MAX,
             child: u32::MAX,
             valid: 0,
-            ..Self::default()
+            voxel: Voxel::default(),
         }
     }
 }
