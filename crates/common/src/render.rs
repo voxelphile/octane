@@ -23,7 +23,6 @@ use log::{error, info, trace, warn};
 use raw_window_handle::HasRawWindowHandle;
 
 pub const CHUNK_SIZE: usize = 8;
-static mut JFAI_DONE: bool = true;
 //temporary for here for now.
 #[derive(Default, Clone, Copy, Debug)]
 pub struct Camera {
@@ -39,7 +38,7 @@ pub struct ObjectData {
 
 #[derive(Default, Clone, Copy)]
 pub struct RenderSettings {
-    pub resolution: Vector<u32, 2>,
+    pub resolution: Vector<u32, 4>,
     pub render_distance: u32,
 }
 
@@ -75,13 +74,14 @@ impl error::Error for Error {}
 type Result = std::result::Result<Condition, Error>;
 
 pub trait Renderer {
-    fn draw(&mut self, batch: Batch, entries: &'_ [Object<'_>]) -> Result;
+    fn draw(&mut self, batch: Batch) -> Result;
     fn resize(&mut self, resolution: (u32, u32));
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Batch {
+pub struct Batch<'a> {
     pub camera: Camera,
+    pub objects: &'a [Object<'a>],
 }
 
 #[derive(Clone, Copy)]
@@ -167,7 +167,7 @@ impl Vulkan {
                 | BufferUsage::INDEX
                 | BufferUsage::UNIFORM,
             properties: MemoryProperties::DEVICE_LOCAL,
-            size: BIG_BUFFER,
+            size: SMALL_BUFFER,
         });
 
         let instance_buffer = Buffer::new(BufferInfo {
@@ -224,7 +224,7 @@ impl Vulkan {
         let mut cube = Mesh::from_obj(cube_obj);
 
         let (cube_vertices, cube_indices) = cube.get();
-        dbg!(cube_indices);
+
         staging_buffer.write(BufferWrite {
             offset: 0,
             data: &cube_vertices[..],
@@ -302,7 +302,7 @@ impl Vulkan {
         let last_camera = None;
 
         let settings = Bucket::new(RenderSettings {
-            resolution: Vector::new([960, 540]),
+            resolution: Vector::new([960, 540, 0, 0]),
             render_distance: info.render_distance,
         });
 
@@ -332,7 +332,7 @@ impl Vulkan {
 }
 
 impl Renderer for Vulkan {
-    fn draw(&mut self, batch: Batch, objects: &'_ [Object<'_>]) -> Result {
+    fn draw(&mut self, batch: Batch) -> Result {
         let cam_pos = {
             let mut cam_pos = batch.camera.model[3].resize();
 
@@ -367,7 +367,7 @@ impl Renderer for Vulkan {
             let mut instance_data = HashSet::new();
 
             for cx in 0..2 * self.settings.render_distance as usize {
-                for cy in 1..=3 {
+                for cy in 1..=6 {
                     for cz in 0..2 * self.settings.render_distance as usize {
                         instance_data
                             .insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
@@ -434,7 +434,7 @@ impl Renderer for Vulkan {
         self.staging_buffer.write(BufferWrite {
             offset: OBJECT_OFFSET,
             data: &[ObjectData {
-                model: objects[0].model,
+                model: batch.objects[0].model,
             }],
         });
 
@@ -449,18 +449,18 @@ impl Renderer for Vulkan {
         self.staging_buffer.write(BufferWrite {
             offset: 0,
             data: &[
-                objects[0].data.size() as u32,
-                objects[0].data.nodes().len() as u32,
+                batch.objects[0].data.size() as u32,
+                batch.objects[0].data.nodes().len() as u32,
             ],
         });
 
         self.staging_buffer.write(BufferWrite {
             offset: (2 * mem::size_of::<u32>()) as u64,
-            data: objects[0].data.nodes(),
+            data: batch.objects[0].data.nodes(),
         });
 
         let octree_bytes = 2 * mem::size_of::<u32>()
-            + objects[0].data.nodes().len() * mem::size_of::<crate::octree::Node>();
+            + batch.objects[0].data.nodes().len() * mem::size_of::<crate::octree::Node>();
 
         self.device.copy_buffer_to_buffer(BufferCopy {
             from: &self.staging_buffer,
@@ -495,6 +495,7 @@ impl Renderer for Vulkan {
 
         if reload_graphics {
             self.render_data = Some(VulkanRenderData::load(self));
+            return Ok(Condition::Retry);
         }
 
         self.device.synchronize();
@@ -763,7 +764,7 @@ impl Renderer for Vulkan {
     }
 
     fn resize(&mut self, resolution: (u32, u32)) {
-        self.settings.resolution = Vector::<u32, 2>::new([resolution.0, resolution.1]);
+        self.settings.resolution = Vector::<u32, 4>::new([resolution.0, resolution.1, 0, 0]);
 
         self.render_data = Some(VulkanRenderData::load(self));
     }
@@ -784,11 +785,7 @@ impl VulkanRenderData {
 
         let present_extent = (vk.settings.resolution[0], vk.settings.resolution[1], 1);
 
-        let graphics_extent = (
-            vk.settings.resolution[0] / 4,
-            vk.settings.resolution[1] / 4,
-            1,
-        );
+        let graphics_extent = (vk.settings.resolution[0], vk.settings.resolution[1], 1);
 
         //ATTACHMENTS
         let depth = Image::new(ImageInfo {
@@ -978,12 +975,12 @@ impl VulkanRenderData {
             color_count: 0,
             subpass: 0,
             extent: (graphics_extent.0, graphics_extent.1),
-            cull_mode: CullMode::FRONT,
+            cull_mode: CullMode::BACK,
             vertex_shader: &vk.graphics_vertex_shader,
             fragment_shader: None,
             depth_stencil: DepthStencil {
-                test: false,
-                write: false,
+                test: true,
+                write: true,
                 compare_op: CompareOp::Less,
             },
             vertex_input: &[
@@ -1029,7 +1026,7 @@ impl VulkanRenderData {
                     binding: 2,
                     ty: DescriptorType::UniformBuffer,
                     count: 1,
-                    stage: ShaderStage::FRAGMENT,
+                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
                 },
                 Descriptor {
                     binding: 3,
@@ -1047,11 +1044,11 @@ impl VulkanRenderData {
             color_count: 2,
             subpass: 1,
             extent: (graphics_extent.0, graphics_extent.1),
-            cull_mode: CullMode::FRONT,
+            cull_mode: CullMode::BACK,
             vertex_shader: &vk.graphics_vertex_shader,
             fragment_shader: Some(&vk.graphics_fragment_shader),
             depth_stencil: DepthStencil {
-                test: false,
+                test: true,
                 write: false,
                 compare_op: CompareOp::LessOrEqual,
             },
@@ -1098,7 +1095,7 @@ impl VulkanRenderData {
                     binding: 2,
                     ty: DescriptorType::UniformBuffer,
                     count: 1,
-                    stage: ShaderStage::FRAGMENT,
+                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
                 },
                 Descriptor {
                     binding: 3,

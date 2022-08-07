@@ -133,29 +133,30 @@ impl Device {
                     vk::CommandBuffer::allocate(device.clone(), command_buffer_allocate_info)
                         .expect("failed to create command buffer")
                         .remove(0);
-        
+        let count = 2048;
+
                 let uniform_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: 32,
+            descriptor_count: count,
         };
 
         let storage_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 32,
+            descriptor_count: count,
         };
         
         let storage_image_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::StorageImage,
-            descriptor_count: 32,
+            descriptor_count: count,
         };
 
         let sampler_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::CombinedImageSampler,
-            descriptor_count: 32,
+            descriptor_count: count,
         };
 
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
-            max_sets: 32,
+            max_sets: count,
             pool_sizes: &[
                 uniform_buffer_pool_size,
                 storage_buffer_pool_size,

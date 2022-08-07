@@ -139,7 +139,7 @@ impl Shader {
                 entry,
             } => {
                 let modified = {
-                    let metadata = fs::metadata(input.get_asset().unwrap())
+                    let metadata = fs::metadata(input.get_resource().unwrap())
                         .expect("failed to get metadata of shader file");
 
                     metadata
@@ -148,7 +148,7 @@ impl Shader {
                 };
 
                 let reload =
-                    last_modified.asset.is_none() || last_modified.asset.unwrap() != modified;
+                    last_modified.resource.is_none() || last_modified.resource.unwrap() != modified;
 
                 if reload {
                     info!("reloading shader");

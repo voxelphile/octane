@@ -13,15 +13,14 @@
 
 #define SAMPLE_COUNT 4
 
-struct Voxel {
-	uint id;
-};
-
 struct Node {
 	uint child;
 	uint valid;
 	uint64_t morton;
-	Voxel voxel;
+	//VOXEL DATA
+	uint id;
+	//PADDING
+	uint padding;
 };
 
 layout(binding = 0) uniform Camera {
@@ -35,19 +34,21 @@ layout(binding = 1) uniform Object {
 } object;
 
 layout(binding = 2) uniform RenderSettings {
-	vec2 resolution;
+	uvec4 resolution;
 	uint render_distance;
 } settings;
 
-layout( binding = 3) buffer Octree {
+layout(binding = 3, std430) buffer Octree {
 	uint size;
 	uint len;
 	Node data[];
 } octree;
 
-layout(location = 0) in vec3 in_uvw;
+layout(location = 0) in vec3 in_clip;
 layout(location = 1) in vec3 in_position;
 layout(location = 2) in flat uvec3 in_chunk_position;
+layout(location = 3) in vec3 in_point;
+layout(location = 4) in vec3 in_dir;
 
 layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec4 out_occlusion;
@@ -55,11 +56,11 @@ layout(location = 1) out vec4 out_occlusion;
 vec4 get_albedo(uint id) {
 	vec4 albedo = vec4(0);
 
-	if (id == 1) {
+	if (id == 2) {
 		albedo = vec4(0.25, 0.5, 0.1, 1);
-	} else if (id == 2) {
-		albedo = vec4(0, 0.41, 0.58, 0.1);
 	} else if (id == 3) {
+		albedo = vec4(0, 0.41, 0.58, 0.1);
+	} else if (id == 4) {
 		albedo = vec4(.72, .39, .12, 1);
 	}
 
@@ -179,7 +180,7 @@ bool get_voxel(vec3 position, out uint node_index, out uint node_depth, bool ign
 
 	Node node = octree.data[node_index];
 
-	return !(get_albedo(node.voxel.id).a != 1 && ignore_transparent);
+	return !(get_albedo(node.id).a != 1 && ignore_transparent);
 }
 
 
@@ -211,6 +212,7 @@ vec4 voxel_ao(vec3 pos, vec3 d1, vec3 d2) {
 	ao.w = vertex_ao(side.wx, corner.w);
 	return 1.0 - ao;
 }
+
 
 float jump_cast(mat4 true_model, vec3 ray_pos, vec3 dir) {
 float t_min = 0;
@@ -295,7 +297,6 @@ float t_min = 0;
 	return t_min;
 }
 
-
 struct Ray {
 	vec3 origin;
 	vec3 direction;
@@ -362,7 +363,6 @@ bool ray_cast(Ray ray, out RayHit hit) {
 		}
 
 
-
 		bool voxel_found = get_voxel(p, node_index, node_depth, get_albedo(ray.medium).a != 0);
 
 		int lod = int(octree.size) - int(node_depth) - 1;
@@ -370,13 +370,13 @@ bool ray_cast(Ray ray, out RayHit hit) {
 		if (voxel_found) {
 			Node current = octree.data[node_index];
 
-			if (in_bounds && /*in_object &&*/ ray.medium != current.voxel.id) {
+			if (in_bounds && /*in_object &&*/ ray.medium != current.id) {
 				vec3 destination = ray.origin + ray.direction * (dist - 1e-4);
 				vec3 back_step = p - s * vec3(mask);
 				vec3 normal = vec3(mask) * sign(-ray.direction);
 				vec2 uv = mod(vec2(dot(vec3(mask) * destination.yzx, vec3(1.0)), dot(vec3(mask) * destination.zxy, vec3(1.0))), vec2(1.0));
 				vec3 reflection = reflect(ray.direction, normal);
-				float eta = get_refraction(ray.medium) / get_refraction(current.voxel.id);
+				float eta = get_refraction(ray.medium) / get_refraction(current.id);
 				vec3 refraction = refract(ray.direction, normal, eta);
 
 				hit.node = node_index;	
@@ -413,15 +413,17 @@ float depth(mat4 true_model, vec3 position) {
 }
 
 void main() {
-	out_color = vec4(0.1);
+	out_color = vec4(1);
 	out_occlusion = vec4(1);	
-	return;
+
 	vec3 sun_pos = vec3(1000, 2000, 100);
 	mat4 true_model = object.model;
 
 	true_model[3].xyz += vec3(in_chunk_position * CHUNK_SIZE);
 
-	vec4 near_plane = vec4((gl_FragCoord.xy / (settings.resolution / 4)) * 2 - 1, 0, 1.0);
+	vec2 viewport = settings.resolution.xy;
+
+	vec4 near_plane = vec4((gl_FragCoord.xy / viewport.xy) * 2 - 1, 0, 1.0);
 
 	near_plane = vec4((inverse(camera.proj) * near_plane).xy, 0.0, 1.0);
 
@@ -451,38 +453,45 @@ void main() {
 
 	bool voxel_found = get_voxel(point, node_index, node_depth, false);
 
-	uint medium = voxel_found ? octree.data[node_index].voxel.id : 42069;
+	uint medium = voxel_found ? octree.data[node_index].id : 42070;
 	vec4 albedo = voxel_found ? get_albedo(medium) : vec4(0);
+
+	/*if (voxel_found) {
+	  out_color = vec4(1,0,0,1);
+	  } else {
+	  out_color = vec4(0,0,1,1);
+	  }
+	  return;*/
 
 	Ray ray = Ray(point, dir, 4000, medium, false);
 	RayHit ray_hit;
 
 	float occlusion = 1;
-	
+
 	uint last_medium = medium;
 	//Albedo
 	for (int c_sample = 0; c_sample < SAMPLE_COUNT;  c_sample++ ) {
 		bool success = ray_cast(ray, ray_hit);
 		if (success) {
 			Node node = octree.data[ray_hit.node];
-		
+
 			albedo.xyz *= max(pow(ray_hit.dist, 2), 1);
-			albedo += get_albedo(node.voxel.id);
-			float reflectivity = get_reflectivity(node.voxel.id);
+			albedo += get_albedo(node.id);
+			float reflectivity = get_reflectivity(node.id);
 			if (ENABLE_REFLECTION && reflectivity > 0) {
-				Ray ref = Ray(ray_hit.destination, ray_hit.reflection, 4000, node.voxel.id, false);
+				Ray ref = Ray(ray_hit.destination, ray_hit.reflection, 4000, node.id, false);
 				RayHit ref_hit;
 
 				bool ref_success = ray_cast(ref, ref_hit);
 
 				if (ref_success) {
 					Node node = octree.data[ref_hit.node];
-					albedo += get_albedo(node.voxel.id) * reflectivity;
+					albedo += get_albedo(node.id) * reflectivity;
 				}
 			}
 			if (ENABLE_REFRACTION && albedo.a < 1) {
 				//I don't know how to fix transparency other than making the ray unbounded.
-				ray = Ray(ray_hit.destination + ray_hit.refraction * EPSILON, ray_hit.refraction, 4000, node.voxel.id, false);
+				ray = Ray(ray_hit.destination + ray_hit.refraction * EPSILON, ray_hit.refraction, 4000, node.id, false);
 				last_medium = ray.medium;
 			} else {
 				break;

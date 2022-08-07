@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     window.rename("Octane");
     window.show();
 
-    let render_distance = 2;
+    let render_distance = 32;
 
     let octree = {
         let mut octree = SparseOctree::<Voxel>::new();
@@ -128,37 +128,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut cube = Mesh::from_obj(cube_obj);
 
-    let mut camera = render::Camera::default();
-
-    camera.proj = {
-        let mut projection = Matrix::<f32, 4, 4>::identity();
-
-        let fov = 45.0_f32 * 2.0 * std::f32::consts::PI / 360.0;
-
-        let focal_length = 1.0 / (fov / 2.0).tan();
-
-        let aspect_ratio = (960) as f32 / (540) as f32;
-
-        let near = 0.01;
-        let far = 1000.0;
-
-        projection[0][0] = focal_length / aspect_ratio;
-        projection[1][1] = -focal_length;
-        projection[2][2] = far / (near - far);
-        projection[2][3] = -1.0;
-        projection[3][2] = (near * far) / (near - far);
-        projection
-    };
-    camera.model = Matrix::identity();
-    camera.view = Matrix::identity();
-
-    let mut batch = render::Batch { camera };
-
-    let mut objects = [render::Object {
-        data: &octree,
-        model: Matrix::identity(),
-    }];
-
     let startup = std::time::Instant::now();
     let mut last = startup;
 
@@ -175,6 +144,28 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut fps_instant = startup;
     let mut fps = 0;
+
+    let mut camera = render::Camera::default();
+
+    camera.proj = {
+        let mut projection = Matrix::<f32, 4, 4>::identity();
+
+        let fov = 45.0_f32 * 2.0 * std::f32::consts::PI / 360.0;
+
+        let focal_length = 1.0 / (fov / 2.0).tan();
+
+        let aspect_ratio = 960 as f32 / 540 as f32;
+
+        let near = 0.01;
+        let far = 1000.0;
+
+        projection[0][0] = focal_length / aspect_ratio;
+        projection[1][1] = -focal_length;
+        projection[2][2] = far / (near - far);
+        projection[2][3] = -1.0;
+        projection[3][2] = (near * far) / (near - far);
+        projection
+    };
 
     'main: loop {
         let current = std::time::Instant::now();
@@ -227,6 +218,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         prev_should_capture = should_capture;
                         should_capture = false;
                         focus_lost = true;
+                        keys.clear();
                     }
                 }
                 WindowEvent::CloseRequested => {
@@ -252,6 +244,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         projection[3][2] = (near * far) / (near - far);
                         projection
                     };
+
                     vulkan.resize(resolution);
                 }
             }
@@ -259,7 +252,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let movement_speed = 10.92;
 
-        let mut camera = Matrix::<f32, 4, 4>::identity();
+        camera.model = Matrix::identity();
+        camera.view = Matrix::identity();
 
         let mut x_r = Matrix::<f32, 4, 4>::identity();
         let mut y_r = Matrix::<f32, 4, 4>::identity();
@@ -279,8 +273,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         y_r[1][2] = y_rot.sin();
         y_r[2][2] = y_rot.cos();
 
-        camera = camera * y_r;
-        camera = camera * x_r;
+        camera.model = camera.model * y_r;
+        camera.model = camera.model * x_r;
 
         let mut m = Matrix::<f32, 4, 4>::identity();
 
@@ -325,16 +319,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         position[0] += p[0] * movement_speed * delta_time as f32;
         position[2] += p[2] * movement_speed * delta_time as f32;
 
-        camera[3][0] = position[0];
-        camera[3][1] = position[1];
-        camera[3][2] = position[2];
+        camera.model[3][0] = position[0];
+        camera.model[3][1] = position[1];
+        camera.model[3][2] = position[2];
 
-        objects[0].model = Matrix::<f32, 4, 4>::identity();
+        camera.view = camera.model.inverse();
 
-        batch.camera.model = camera;
-        batch.camera.view = camera.inverse();
+        let objects = [render::Object {
+            data: &octree,
+            model: Matrix::identity(),
+        }];
 
-        while let Condition::Retry = vulkan.draw(batch, &objects).map_err(|e| box e)? {}
+        let batch = render::Batch {
+            camera,
+            objects: &objects,
+        };
+
+        vulkan.draw(batch).map_err(|e| box e)?;
 
         fps += 1;
     }

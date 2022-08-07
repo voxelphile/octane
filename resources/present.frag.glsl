@@ -1,6 +1,6 @@
 #version 450
 
-#define SCALE 4
+#define SCALE 1
 
 #define ENABLE_NEAREST_NEIGHBOR true
 #define ENABLE_HQ4X false
