@@ -1,12 +1,20 @@
 # Octane
-A voxel raycasting engine built entirely in Rust using Vulkan, with the help of GLSL. Created without direct dependency on C or C++, and with as few dependencies as possible.
 
-The goal of this project is to build a specialized game engine for use in future projects. It also has served as a learning exercise in many ways.
+## Description
 
-# Screenshot
-Features:
-- A raycasting engine built to render octrees.
-- Lighting with soft shadows.
-- Ambient occlusion.
-- Accurate reflection and refraction of light.
-![Octree Raycasting](https://i.imgur.com/9N85cXv.png)
+A voxel RTX engine built entirely in Rust, with the help of GLSL; created with as few dependencies as possible.
+
+The goal of this project is to build a specialized game engine for use in future projects.
+
+### Features:
+
+- [x] A RTX engine built to render octrees.
+- [x] Vulkan support.
+- [x] Support for Linux.
+- [ ] Support for Windows and OS X.
+- [ ] Path traced audio.
+- [ ] Dynamic simulation of objects.
+- [ ] Multiplayer.
+
+## Screenshot:
+![Octree RTX](https://i.imgur.com/DrViInUl.png)
