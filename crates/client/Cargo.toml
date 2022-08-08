@@ -8,7 +8,7 @@ common 	= { path = "../../crates/common" }
 
 math 	= { path = "../../libs/math" }
 x11 	= { path = "../../libs/x11" }
-vk 	= { path = "../../libs/vk" }
+input 	= { path = "../../libs/input" }
 net 	= { path = "../../libs/net" }
 
 log = "*"

@@ -2,13 +2,14 @@ use std::ffi::CString;
 use std::mem::MaybeUninit;
 
 mod ffi {
-    pub use libc::{c_char, c_int, c_long, c_uint, c_ulong};
+    pub use libc::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong};
 
     type XID = c_ulong;
     type Window = XID;
     type Atom = XID;
     type Time = c_ulong;
     type Bool = u32;
+    type Status = Bool;
 
     pub const KEY_PRESS: c_int = 2;
     pub const KEY_RELEASE: c_int = 3;
@@ -101,7 +102,7 @@ mod ffi {
         pub window: Window,
         pub message_type: Atom,
         pub format: c_int,
-        pub data: [c_long; 5],
+        pub data: [c_ulong; 5],
     }
 
     #[derive(Clone, Copy)]
@@ -161,6 +162,13 @@ mod ffi {
         pub fn XMapWindow(display: *mut Display, window: Window);
         pub fn XUnmapWindow(display: *mut Display, window: Window);
         pub fn XNextEvent(display: *mut Display, event: *mut Event);
+        pub fn XSendEvent(
+            display: *mut Display,
+            window: Window,
+            propogate: Bool,
+            event_mask: c_long,
+            event: *mut Event,
+        ) -> Status;
         pub fn XCloseDisplay(display: *mut Display);
         pub fn XInternAtom(
             display: *mut Display,
@@ -187,6 +195,16 @@ mod ffi {
             dst_y: c_int,
         );
         pub fn XFlush(display: *mut Display);
+        pub fn XChangeProperty(
+            display: *mut Display,
+            window: Window,
+            property: Atom,
+            ty: Atom,
+            format: c_int,
+            mode: c_int,
+            data: *const c_uchar,
+            nelements: c_int,
+        );
     }
     #[link(name = "Xfixes")]
     #[allow(non_snake_case)]
@@ -202,6 +220,12 @@ pub const POINTER_MOTION_MASK: i64 = 0x0000_0040;
 pub const EXPOSURE_MASK: i64 = 0x0000_8000;
 pub const STRUCTURE_NOTIFY_MASK: i64 = 0x0002_0000;
 pub const FOCUS_CHANGE_MASK: i64 = 0x0020_0000;
+pub const SUBSTRUCTURE_NOTIFY_MASK: i64 = 0x0008_0000;
+pub const SUBSTRUCTURE_REDIRECT_MASK: i64 = 0x0010_0000;
+
+pub const XA_ATOM: Atom = 4;
+
+pub const PROP_MODE_REPLACE: i32 = 0;
 
 pub type Display = *mut ffi::Display;
 pub type Screen = i32;
@@ -232,7 +256,7 @@ pub enum Event {
         window: Window,
         message_type: Atom,
         format: i32,
-        data: [i64; 5],
+        data: [u64; 5],
     },
     ConfigureNotify {
         x: i32,
@@ -394,8 +418,57 @@ pub fn next_event(display: Display) -> Result<Event, Error> {
     Ok(event)
 }
 
+pub fn send_event(
+    display: Display,
+    window: Window,
+    propogate: bool,
+    event_mask: i64,
+    event: Event,
+) {
+    let mut event = match event {
+        Event::ClientMessage {
+            serial,
+            send_event,
+            display,
+            window,
+            message_type,
+            format,
+            data,
+        } => {
+            let client_message = ffi::ClientMessageEvent {
+                ty: ffi::CLIENT_MESSAGE,
+                serial,
+                send_event: send_event as _,
+                display,
+                window,
+                message_type,
+                format,
+                data,
+            };
+
+            ffi::Event { client_message }
+        }
+        _ => todo!("sending event not implemented"),
+    };
+
+    unsafe { ffi::XSendEvent(display, window, propogate as _, event_mask, &mut event) };
+}
+
 pub fn close_display(display: Display) {
     unsafe { ffi::XCloseDisplay(display) };
+}
+
+pub fn change_property(
+    display: Display,
+    window: Window,
+    property: Atom,
+    ty: Atom,
+    format: i32,
+    mode: i32,
+    data: *const u8,
+    nelements: i32,
+) {
+    unsafe { ffi::XChangeProperty(display, window, property, ty, format, mode, data, nelements) };
 }
 
 pub fn intern_atom(display: Display, atom_name: &str, only_if_exists: bool) -> Atom {

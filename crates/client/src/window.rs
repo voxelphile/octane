@@ -119,6 +119,34 @@ mod linux {
             x11::store_name(self.display, self.window, title);
         }
 
+        pub fn fullscreen(&mut self, fullscreen: bool) {
+            let event = x11::Event::ClientMessage {
+                display: self.display,
+                window: self.window,
+                send_event: false,
+                serial: 0,
+                message_type: x11::intern_atom(self.display, "_NET_WM_STATE", true),
+                format: 32,
+                data: [
+                    fullscreen as _,
+                    x11::intern_atom(self.display, "_NET_WM_STATE_FULLSCREEN", true),
+                    0,
+                    0,
+                    1,
+                ],
+            };
+
+            x11::send_event(
+                self.display,
+                x11::root_window(self.display, x11::default_screen(self.display)),
+                false,
+                x11::SUBSTRUCTURE_REDIRECT_MASK | x11::SUBSTRUCTURE_NOTIFY_MASK,
+                event,
+            );
+
+            x11::flush(self.display);
+        }
+
         pub fn show_cursor(&mut self, show: bool) {
             if show && !self.cursor {
                 x11::show_cursor(self.display, self.window);

@@ -99,6 +99,7 @@ pub enum Shader {
         entry: String,
         input: ShaderInput,
         last_modified: ShaderLastModified,
+        initial: bool,
     },
 }
 
@@ -106,11 +107,12 @@ impl Shader {
     pub fn new(info: ShaderInfo) -> Self {
         match info.device {
             Device::Vulkan { device, .. } => {
-                let last_modified = Default::default();
+                let mut last_modified = Default::default();
 
                 if let Some(_) = info.input.get_resource() {
                     Self::compile_spirv(&info.input, &last_modified, &info.entry)
                         .expect("failed to compile shader");
+                    last_modified = ShaderLastModified::from_input(&info.input);
                 }
 
                 let mut file = fs::File::open(info.input.get_asset().unwrap())
@@ -124,12 +126,13 @@ impl Shader {
                     input: info.input,
                     last_modified,
                     shader_module,
+                    initial: true,
                 }
             }
         }
     }
 
-    pub fn reload(&mut self) -> Result<bool, ShaderError> {
+    pub fn load(&mut self) -> Result<bool, ShaderError> {
         match self {
             Self::Vulkan {
                 shader_module,
@@ -137,6 +140,7 @@ impl Shader {
                 device,
                 input,
                 entry,
+                initial,
             } => {
                 let modified = {
                     let metadata = fs::metadata(input.get_resource().unwrap())
@@ -147,11 +151,20 @@ impl Shader {
                         .expect("failed to get last modified of shader file")
                 };
 
-                let reload =
-                    last_modified.resource.is_none() || last_modified.resource.unwrap() != modified;
+                let load = *initial || last_modified.resource.unwrap() != modified;
 
-                if reload {
-                    info!("reloading shader");
+                *initial = false;
+
+                if load {
+                    let os_name = input
+                        .get_resource()
+                        .unwrap()
+                        .file_name()
+                        .expect("failed to get shader file name");
+
+                    let name = os_name.to_str().unwrap();
+
+                    info!("Loading shader: {}\n", name);
 
                     if let Some(_) = input.get_resource() {
                         Self::compile_spirv(input, last_modified, entry)?;
@@ -165,7 +178,7 @@ impl Shader {
                     *shader_module = Self::load_vk_shader(device.clone(), &mut file);
                 }
 
-                Ok(reload)
+                Ok(load)
             }
         }
     }
@@ -192,8 +205,6 @@ impl Shader {
         if last_modified.resource.is_some() && modified == last_modified.resource.unwrap() {
             return Ok(());
         }
-
-        info!("compiling shader");
 
         let mut source_file = fs::File::open(resource).expect("failed to open shader file");
 
@@ -229,6 +240,8 @@ impl Shader {
             .expect("failed to get shader file name");
 
         let name = os_name.to_str().unwrap();
+
+        info!("Compiling shader: {}\n", name);
 
         let kind = kind.unwrap();
 

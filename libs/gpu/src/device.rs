@@ -62,7 +62,7 @@ impl Device {
 
                     let (_, properties, physical_device) = candidates.remove(0);
 
-                    info!("Selected GPU \"{}\"", properties.device_name);
+                    info!("Selected GPU \"{}\"\n", properties.device_name);
 
                     physical_device
                 };

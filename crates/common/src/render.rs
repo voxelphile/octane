@@ -470,30 +470,30 @@ impl Renderer for Vulkan {
             size: octree_bytes as u64,
         });
 
-        let mut reload_graphics = false;
+        let mut load_graphics = false;
 
-        let mut reload_shader = |shader: &mut Shader| match shader.reload() {
-            Ok(reloaded) => {
-                if reloaded {
-                    info!("shader compiled");
-                    reload_graphics = true;
+        let mut load_shader = |shader: &mut Shader| match shader.load() {
+            Ok(loaded) => {
+                if loaded {
+                    load_graphics = true;
                 }
             }
             Err(err) => match err {
                 ShaderError::Compilation(_, message) => {
-                    error!("failed to compile shader: \n {}", message);
+                    error!("Failed to compile shader: \n {}", message);
                 }
                 _ => panic!("unexpected error refreshing shader"),
             },
         };
 
-        reload_shader(&mut self.graphics_vertex_shader);
-        reload_shader(&mut self.graphics_fragment_shader);
-        reload_shader(&mut self.fullscreen_vertex_shader);
-        reload_shader(&mut self.postfx_fragment_shader);
-        reload_shader(&mut self.present_fragment_shader);
+        load_shader(&mut self.graphics_vertex_shader);
+        load_shader(&mut self.graphics_fragment_shader);
+        load_shader(&mut self.fullscreen_vertex_shader);
+        load_shader(&mut self.postfx_fragment_shader);
+        load_shader(&mut self.present_fragment_shader);
 
-        if reload_graphics {
+        if load_graphics {
+            info!("Loading pipeline\n");
             self.render_data = Some(VulkanRenderData::load(self));
             return Ok(Condition::Retry);
         }
@@ -505,7 +505,7 @@ impl Renderer for Vulkan {
         let image_index = match render_data.swapchain.acquire() {
             Ok(i) => i,
             Err(e) => {
-                warn!("failed to acquire next image: {:?}", e);
+                warn!("Failed to acquire next image\n");
                 return Ok(Condition::Retry);
             }
         };
@@ -755,7 +755,7 @@ impl Renderer for Vulkan {
         match present_result {
             Ok(()) => {}
             Err(e) => {
-                warn!("failed to present: {:?}", e);
+                warn!("Failed to present\n");
                 return Ok(Condition::Retry);
             }
         }
@@ -2824,15 +2824,15 @@ impl VulkanRenderData {
         }
     }
 
-    let mut reload_graphics = false;
-    let mut reload_compute = false;
+    let mut load_graphics = false;
+    let mut load_compute = false;
 
     self.shaders
         .entry(batch.graphics_vertex_shader.clone())
         .or_insert_with(|| {
             info!("loading vertex shader");
 
-            reload_graphics = true;
+            load_graphics = true;
 
             let bytes = fs::read(&batch.graphics_vertex_shader).unwrap();
 
@@ -2852,7 +2852,7 @@ impl VulkanRenderData {
         .or_insert_with(|| {
             info!("loading fragment shader");
 
-            reload_graphics = true;
+            load_graphics = true;
 
             let bytes = fs::read(&batch.graphics_fragment_shader).unwrap();
 
@@ -2872,7 +2872,7 @@ impl VulkanRenderData {
         .or_insert_with(|| {
             info!("loading vertex shader");
 
-            reload_graphics = true;
+            load_graphics = true;
 
             let bytes = fs::read(&batch.postfx_vertex_shader).unwrap();
 
@@ -2892,7 +2892,7 @@ impl VulkanRenderData {
         .or_insert_with(|| {
             info!("loading fragment shader");
 
-            reload_graphics = true;
+            load_graphics = true;
 
             let bytes = fs::read(&batch.postfx_fragment_shader).unwrap();
 
@@ -2912,7 +2912,7 @@ impl VulkanRenderData {
         .or_insert_with(|| {
             info!("loading vertex shader");
 
-            reload_graphics = true;
+            load_graphics = true;
 
             let bytes = fs::read(&batch.present_vertex_shader).unwrap();
 
@@ -2932,7 +2932,7 @@ impl VulkanRenderData {
         .or_insert_with(|| {
             info!("loading fragment shader");
 
-            reload_graphics = true;
+            load_graphics = true;
 
             let bytes = fs::read(&batch.present_fragment_shader).unwrap();
 
@@ -2952,7 +2952,7 @@ impl VulkanRenderData {
         .or_insert_with(|| {
             info!("loading jfa compute shader");
 
-            reload_compute = true;
+            load_compute = true;
 
             let bytes = fs::read(&batch.jfa_shader).unwrap();
 
@@ -2967,7 +2967,7 @@ impl VulkanRenderData {
             shader_module
         });
 
-    if reload_graphics
+    if load_graphics
         || self.last_batch.graphics_vertex_shader != batch.graphics_vertex_shader
         || self.last_batch.graphics_fragment_shader != batch.graphics_fragment_shader
         || self.last_batch.postfx_vertex_shader != batch.postfx_vertex_shader
@@ -3032,7 +3032,7 @@ impl VulkanRenderData {
         ));
     }
 
-    if reload_compute || self.last_batch.jfa_shader != batch.jfa_shader {
+    if load_compute || self.last_batch.jfa_shader != batch.jfa_shader {
         self.device.wait_idle().expect("failed to wait on device");
 
         let jfa_shader = vk::PipelineShaderStageCreateInfo {

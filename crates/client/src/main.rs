@@ -17,6 +17,7 @@ use common::octree::{Octree, SparseOctree};
 use common::render::{self, Condition, Renderer};
 use common::voxel::{Id::*, Voxel};
 
+use input::prelude::*;
 use math::prelude::{Matrix, Vector};
 
 use std::collections::HashMap;
@@ -36,7 +37,7 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            println!(
+            print!(
                 "{}{}{}: {}",
                 match record.level() {
                     log::Level::Trace => term::BOLDMAGENTA,
@@ -58,10 +59,18 @@ static LOGGER: Logger = Logger;
 
 pub const CHUNK_SIZE: usize = 8;
 
-//TODO identify why release segfaults
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
+    let mut devices = dbg!(Device::enumerate());
+
+    loop {
+        for device in &mut devices {
+            device.poll();
+        }
+    }
+
+    panic!("lol");
     log::set_max_level(log::LevelFilter::Info);
     log::set_logger(&LOGGER).expect("failed to set logger");
 
@@ -69,6 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     window.rename("Octane");
     window.show();
+
+    window.fullscreen(false);
 
     let render_distance = 32;
 
@@ -98,10 +109,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            println!("building: {}%", ((x as f32 / ct as f32) * 100.0) as usize);
+            print!(
+                "\r{}info{}: Building octree: {}%",
+                term::BOLDCYAN,
+                term::RESET,
+                ((x as f32 / ct as f32) * 100.0) as usize
+            );
         }
 
-        println!("optimizing octree");
+        print!(
+            "\r{}info{}: Building octree: {}%\n",
+            term::BOLDCYAN,
+            term::RESET,
+            100
+        );
+        info!("Optimizing octree\n");
         octree.optimize();
 
         octree
@@ -122,11 +144,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let mut vulkan = render::Vulkan::init(render_info);
-
-    let cube = format!("{}/assets/cube.obj", base_path_str);
-    let cube_obj = fs::File::open(cube).expect("failed to open obj");
-
-    let mut cube = Mesh::from_obj(cube_obj);
 
     let startup = std::time::Instant::now();
     let mut last = startup;
