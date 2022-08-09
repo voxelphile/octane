@@ -17,7 +17,7 @@ use common::octree::{Octree, SparseOctree};
 use common::render::{self, Condition, Renderer};
 use common::voxel::{Id::*, Voxel};
 
-use input::prelude::*;
+//use input::prelude::*;
 use math::prelude::{Matrix, Vector};
 
 use std::collections::HashMap;
@@ -59,16 +59,31 @@ static LOGGER: Logger = Logger;
 
 pub const CHUNK_SIZE: usize = 8;
 
+pub extern "system" fn wnd_proc(hwnd: windows::ffi::Hwnd, u_msg: u32, w_param: windows::ffi::WParam, l_param: windows::ffi::LParam) -> windows::ffi::LResult {
+    0
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
-    let mut devices = dbg!(Device::enumerate());
+    use std::ptr;
 
-    loop {
-        for device in &mut devices {
-            device.poll();
-        }
-    }
+    let class_name = std::ffi::CString::new("octane").unwrap();
+
+    let wnd_class_a = windows::ffi::WndClassA {
+        style: 0,
+        lpfn_wnd_proc: wnd_proc,
+        cb_cls_extra: 0,
+        cb_wnd_extra: 0,
+        h_instance: ptr::null_mut(),
+        h_icon: ptr::null_mut(),
+        h_cursor: ptr::null_mut(),
+        hbr_background: ptr::null_mut(),
+        lpsz_menu_name: ptr::null_mut(),
+        lpsz_class_name: class_name.as_ptr() as _,
+    };
+
+    unsafe { windows::ffi::RegisterClassA(&wnd_class_a) };
 
     panic!("lol");
     log::set_max_level(log::LevelFilter::Info);

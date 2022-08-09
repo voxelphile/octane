@@ -7,10 +7,14 @@ edition = "2021"
 common 	= { path = "../../crates/common" }
 
 math 	= { path = "../../libs/math" }
-x11 	= { path = "../../libs/x11" }
-input 	= { path = "../../libs/input" }
 net 	= { path = "../../libs/net" }
 
 log = "*"
 noise = "*"
 raw-window-handle = "*"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { path = "../../libs/windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 	= { path = "../../libs/x11" }

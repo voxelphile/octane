@@ -13,8 +13,6 @@ mod ffi {
     use std::fmt;
     use std::mem;
 
-    use libc::{c_char, c_float, c_int, c_uint, c_ulong, c_void, size_t};
-
     macro_rules! impl_from_enum {
     ($ obj : expr, $($ name : ident => $ case : ident),*) => {
         match $obj {
@@ -222,6 +220,7 @@ mod ffi {
         SwapchainCreateInfo = 1000001000,
         PresentInfo = 1000001001,
         XlibSurfaceCreateInfo = 1000004000,
+        Win32SurfaceCreateInfo = 1000009000,
         DebugUtilsMessengerCreateInfo = 1000128004,
     }
 
@@ -316,27 +315,27 @@ mod ffi {
         FifoRelaxed = 3,
     }
 
-    pub type Extent2d = [c_uint; 2];
-    pub type Extent3d = [c_uint; 3];
+    pub type Extent2d = [u32; 2];
+    pub type Extent3d = [u32; 3];
 
-    pub type Offset2d = [c_int; 2];
-    pub type Offset3d = [c_int; 3];
+    pub type Offset2d = [i32; 2];
+    pub type Offset3d = [i32; 3];
 
-    pub type Bool = c_uint;
+    pub type Bool = u32;
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct SurfaceCapabilities {
-        pub min_image_count: c_uint,
-        pub max_image_count: c_uint,
+        pub min_image_count: u32,
+        pub max_image_count: u32,
         pub current_extent: Extent2d,
         pub min_image_extent: Extent2d,
         pub max_image_extent: Extent2d,
-        pub max_image_array_layers: c_uint,
-        pub supported_transforms: c_uint,
-        pub current_transform: c_uint,
-        pub supported_composite_alpha: c_uint,
-        pub supported_usage_flags: c_uint,
+        pub max_image_array_layers: u32,
+        pub supported_transforms: u32,
+        pub current_transform: u32,
+        pub supported_composite_alpha: u32,
+        pub supported_usage_flags: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -363,58 +362,58 @@ mod ffi {
     #[repr(C)]
     pub struct ApplicationInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub application_name: *const c_char,
-        pub application_version: c_uint,
-        pub engine_name: *const c_char,
-        pub engine_version: c_uint,
-        pub api_version: c_uint,
+        pub p_next: *const (),
+        pub application_name: *const i8,
+        pub application_version: u32,
+        pub engine_name: *const i8,
+        pub engine_version: u32,
+        pub api_version: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct InstanceCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub application_info: *const ApplicationInfo,
-        pub enabled_layer_count: c_uint,
-        pub enabled_layer_names: *const *const c_char,
-        pub enabled_extension_count: c_uint,
-        pub enabled_extension_names: *const *const c_char,
+        pub enabled_layer_count: u32,
+        pub enabled_layer_names: *const *const i8,
+        pub enabled_extension_count: u32,
+        pub enabled_extension_names: *const *const i8,
     }
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DebugUtilsLabel {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub label_name: *const c_char,
+        pub p_next: *const (),
+        pub label_name: *const i8,
         pub color: [f32; 4],
     }
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DebugUtilsObjectNameInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub object_type: ObjectType,
-        pub object_handle: c_ulong,
-        pub object_name: *const c_char,
+        pub object_handle: u64,
+        pub object_name: *const i8,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DebugUtilsMessengerCallbackData {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub message_id_name: *const c_char,
-        pub message_id_number: c_int,
-        pub message: *const c_char,
-        pub queue_label_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub message_id_name: *const i8,
+        pub message_id_number: i32,
+        pub message: *const i8,
+        pub queue_label_count: u32,
         pub queue_labels: *const DebugUtilsLabel,
-        pub cmd_buf_label_count: c_uint,
+        pub cmd_buf_label_count: u32,
         pub cmd_buf_labels: *const DebugUtilsLabel,
-        pub object_count: c_uint,
+        pub object_count: u32,
         pub objects: *const DebugUtilsObjectNameInfo,
     }
 
@@ -422,36 +421,36 @@ mod ffi {
     #[repr(C)]
     pub struct DebugUtilsMessengerCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub message_severity: c_int,
-        pub message_type: c_int,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub message_severity: i32,
+        pub message_type: i32,
         pub user_callback: DebugUtilsMessengerCallbackInternal,
-        pub user_data: *const c_void,
+        pub user_data: *const (),
     }
 
     pub type DebugUtilsMessengerCallbackInternal = unsafe extern "system" fn(
-        c_uint,
-        c_uint,
+        u32,
+        u32,
         *const DebugUtilsMessengerCallbackData,
-        *const c_void,
+        *const (),
     ) -> Bool;
 
     pub type CreateDebugUtilsMessenger = unsafe extern "system" fn(
         Instance,
         *const DebugUtilsMessengerCreateInfo,
-        *const c_void,
+        *const (),
         *mut DebugUtilsMessenger,
     ) -> Result;
 
     pub type DestroyDebugUtilsMessenger =
-        unsafe extern "system" fn(Instance, DebugUtilsMessenger, *const c_void) -> Result;
+        unsafe extern "system" fn(Instance, DebugUtilsMessenger, *const ()) -> Result;
 
     pub unsafe extern "system" fn debug_utils_messenger_callback(
-        message_severity: c_uint,
-        message_type: c_uint,
+        message_severity: u32,
+        message_type: u32,
         callback_data: *const DebugUtilsMessengerCallbackData,
-        user_data: *const c_void,
+        user_data: *const (),
     ) -> Bool {
         let callback_data = callback_data.as_ref().unwrap();
 
@@ -483,107 +482,107 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceLimits {
-        pub max_image_dimension_1d: c_uint,
-        pub max_image_dimension_2d: c_uint,
-        pub max_image_dimension_3d: c_uint,
-        pub max_image_dimension_cube: c_uint,
-        pub max_image_array_layers: c_uint,
-        pub max_texel_buffer_elements: c_uint,
-        pub max_uniform_buffer_range: c_uint,
-        pub max_storage_buffer_range: c_uint,
-        pub max_push_constants_size: c_uint,
-        pub max_memory_allocation_count: c_uint,
-        pub max_sampler_allocation_count: c_uint,
+        pub max_image_dimension_1d: u32,
+        pub max_image_dimension_2d: u32,
+        pub max_image_dimension_3d: u32,
+        pub max_image_dimension_cube: u32,
+        pub max_image_array_layers: u32,
+        pub max_texel_buffer_elements: u32,
+        pub max_uniform_buffer_range: u32,
+        pub max_storage_buffer_range: u32,
+        pub max_push_constants_size: u32,
+        pub max_memory_allocation_count: u32,
+        pub max_sampler_allocation_count: u32,
         pub buffer_image_granularity: DeviceSize,
         pub sparse_address_space_size: DeviceSize,
-        pub max_bound_descriptor_sets: c_uint,
-        pub max_per_stage_descriptor_samplers: c_uint,
-        pub max_per_stage_descriptor_uniform_buffers: c_uint,
-        pub max_per_stage_descriptor_storage_buffers: c_uint,
-        pub max_per_stage_descriptor_sampled_images: c_uint,
-        pub max_per_stage_descriptor_storage_images: c_uint,
-        pub max_per_stage_descriptor_input_attachments: c_uint,
-        pub max_per_stage_resources: c_uint,
-        pub max_descriptor_set_samplers: c_uint,
-        pub max_descriptor_set_uniform_buffers: c_uint,
-        pub max_descriptor_set_uniform_buffers_dynamic: c_uint,
-        pub max_descriptor_set_storage_buffers: c_uint,
-        pub max_descriptor_set_storage_buffers_dynamic: c_uint,
-        pub max_descriptor_set_sampled_images: c_uint,
-        pub max_descriptor_set_storage_images: c_uint,
-        pub max_descriptor_set_input_attachments: c_uint,
-        pub max_vertex_input_attributes: c_uint,
-        pub max_vertex_input_bindings: c_uint,
-        pub max_vertex_input_attribute_offset: c_uint,
-        pub max_vertex_input_binding_stride: c_uint,
-        pub max_vertex_output_components: c_uint,
-        pub max_tessellation_generation_level: c_uint,
-        pub max_tessellation_patch_size: c_uint,
-        pub max_tessellation_control_per_vertex_input_components: c_uint,
-        pub max_tessellation_control_per_vertex_output_components: c_uint,
-        pub max_tessellation_control_per_patch_output_components: c_uint,
-        pub max_tessellation_control_total_output_components: c_uint,
-        pub max_tessellation_evaluation_input_components: c_uint,
-        pub max_tessellation_evaluation_output_components: c_uint,
-        pub max_geometry_shader_invocations: c_uint,
-        pub max_geometry_input_components: c_uint,
-        pub max_geometry_output_components: c_uint,
-        pub max_geometry_output_vertices: c_uint,
-        pub max_geometry_total_output_components: c_uint,
-        pub max_fragment_input_components: c_uint,
-        pub max_fragment_output_attachments: c_uint,
-        pub max_fragment_dual_src_attachments: c_uint,
-        pub max_fragment_combined_output_resources: c_uint,
-        pub max_compute_shared_memory_size: c_uint,
-        pub max_compute_work_group_count: [c_uint; 3],
-        pub max_compute_work_group_invocations: c_uint,
-        pub max_compute_work_group_size: [c_uint; 3],
-        pub sub_pixel_precision_bits: c_uint,
-        pub sub_texel_precision_bits: c_uint,
-        pub mipmap_precision_bits: c_uint,
-        pub max_draw_indexed_index_value: c_uint,
-        pub max_draw_indirect_count: c_uint,
-        pub max_sampler_lod_bias: c_float,
-        pub max_sampler_anisotropy: c_float,
-        pub max_viewports: c_uint,
-        pub max_viewport_dimensions: [c_uint; 2],
-        pub viewport_bounds_range: [c_float; 2],
-        pub viewport_sub_pixel_bits: c_uint,
-        pub min_memory_map_alignment: size_t,
+        pub max_bound_descriptor_sets: u32,
+        pub max_per_stage_descriptor_samplers: u32,
+        pub max_per_stage_descriptor_uniform_buffers: u32,
+        pub max_per_stage_descriptor_storage_buffers: u32,
+        pub max_per_stage_descriptor_sampled_images: u32,
+        pub max_per_stage_descriptor_storage_images: u32,
+        pub max_per_stage_descriptor_input_attachments: u32,
+        pub max_per_stage_resources: u32,
+        pub max_descriptor_set_samplers: u32,
+        pub max_descriptor_set_uniform_buffers: u32,
+        pub max_descriptor_set_uniform_buffers_dynamic: u32,
+        pub max_descriptor_set_storage_buffers: u32,
+        pub max_descriptor_set_storage_buffers_dynamic: u32,
+        pub max_descriptor_set_sampled_images: u32,
+        pub max_descriptor_set_storage_images: u32,
+        pub max_descriptor_set_input_attachments: u32,
+        pub max_vertex_input_attributes: u32,
+        pub max_vertex_input_bindings: u32,
+        pub max_vertex_input_attribute_offset: u32,
+        pub max_vertex_input_binding_stride: u32,
+        pub max_vertex_output_components: u32,
+        pub max_tessellation_generation_level: u32,
+        pub max_tessellation_patch_size: u32,
+        pub max_tessellation_control_per_vertex_input_components: u32,
+        pub max_tessellation_control_per_vertex_output_components: u32,
+        pub max_tessellation_control_per_patch_output_components: u32,
+        pub max_tessellation_control_total_output_components: u32,
+        pub max_tessellation_evaluation_input_components: u32,
+        pub max_tessellation_evaluation_output_components: u32,
+        pub max_geometry_shader_invocations: u32,
+        pub max_geometry_input_components: u32,
+        pub max_geometry_output_components: u32,
+        pub max_geometry_output_vertices: u32,
+        pub max_geometry_total_output_components: u32,
+        pub max_fragment_input_components: u32,
+        pub max_fragment_output_attachments: u32,
+        pub max_fragment_dual_src_attachments: u32,
+        pub max_fragment_combined_output_resources: u32,
+        pub max_compute_shared_memory_size: u32,
+        pub max_compute_work_group_count: [u32; 3],
+        pub max_compute_work_group_invocations: u32,
+        pub max_compute_work_group_size: [u32; 3],
+        pub sub_pixel_precision_bits: u32,
+        pub sub_texel_precision_bits: u32,
+        pub mipmap_precision_bits: u32,
+        pub max_draw_indexed_index_value: u32,
+        pub max_draw_indirect_count: u32,
+        pub max_sampler_lod_bias: f32,
+        pub max_sampler_anisotropy: f32,
+        pub max_viewports: u32,
+        pub max_viewport_dimensions: [u32; 2],
+        pub viewport_bounds_range: [f32; 2],
+        pub viewport_sub_pixel_bits: u32,
+        pub min_memory_map_alignment: usize,
         pub min_texel_buffer_offset_alignment: DeviceSize,
         pub min_uniform_buffer_offset_alignment: DeviceSize,
         pub min_storage_buffer_offset_alignment: DeviceSize,
-        pub min_texel_offset: c_int,
-        pub max_texel_offset: c_uint,
-        pub min_texel_gather_offset: c_int,
-        pub max_texel_gather_offset: c_uint,
-        pub min_interpolation_offset: c_float,
-        pub max_interpolation_offset: c_float,
-        pub sub_pixel_interpolation_offset_bits: c_uint,
-        pub max_framebuffer_width: c_uint,
-        pub max_framebuffer_height: c_uint,
-        pub max_framebuffer_layers: c_uint,
+        pub min_texel_offset: i32,
+        pub max_texel_offset: u32,
+        pub min_texel_gather_offset: i32,
+        pub max_texel_gather_offset: u32,
+        pub min_interpolation_offset: f32,
+        pub max_interpolation_offset: f32,
+        pub sub_pixel_interpolation_offset_bits: u32,
+        pub max_framebuffer_width: u32,
+        pub max_framebuffer_height: u32,
+        pub max_framebuffer_layers: u32,
         pub framebuffer_color_sample_counts: Flags,
         pub framebuffer_depth_sample_counts: Flags,
         pub framebuffer_stencil_sample_counts: Flags,
         pub framebuffer_no_attachments_sample_counts: Flags,
-        pub max_color_attachments: c_uint,
+        pub max_color_attachments: u32,
         pub sampled_image_color_sample_counts: Flags,
         pub sampled_image_integer_sample_counts: Flags,
         pub sampled_imae_depth_sample_counts: Flags,
         pub sampled_image_stencil_sample_counts: Flags,
         pub storage_image_sample_counts: Flags,
-        pub max_sample_mask_words: c_uint,
+        pub max_sample_mask_words: u32,
         pub timestamp_compute_and_graphics: Bool,
-        pub timestamp_period: c_float,
-        pub max_clip_distances: c_uint,
-        pub max_cull_distances: c_uint,
-        pub max_combined_clip_and_cull_distances: c_uint,
-        pub discrete_queue_priorities: c_uint,
-        pub point_size_range: [c_float; 2],
-        pub line_width_range: [c_float; 2],
-        pub point_size_granularity: c_float,
-        pub line_width_granularity: c_float,
+        pub timestamp_period: f32,
+        pub max_clip_distances: u32,
+        pub max_cull_distances: u32,
+        pub max_combined_clip_and_cull_distances: u32,
+        pub discrete_queue_priorities: u32,
+        pub point_size_range: [f32; 2],
+        pub line_width_range: [f32; 2],
+        pub point_size_granularity: f32,
+        pub line_width_granularity: f32,
         pub strict_lines: Bool,
         pub standard_sample_locations: Bool,
         pub optimal_buffer_copy_offset_alignment: DeviceSize,
@@ -603,13 +602,13 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceProperties {
-        pub api_version: c_uint,
-        pub driver_version: c_uint,
-        pub vendor_id: c_uint,
-        pub device_id: c_uint,
+        pub api_version: u32,
+        pub driver_version: u32,
+        pub vendor_id: u32,
+        pub device_id: u32,
         pub device_type: PhysicalDeviceType,
-        pub device_name: [c_char; 256],
-        pub pipeline_cache_uuid: [c_char; 16],
+        pub device_name: [i8; 256],
+        pub pipeline_cache_uuid: [i8; 16],
         pub limits: PhysicalDeviceLimits,
         pub sparse_properties: PhysicalDeviceSparseProperties,
     }
@@ -736,35 +735,35 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct QueueFamilyProperties {
-        pub queue_flags: c_uint,
-        pub queue_count: c_uint,
-        pub timestamp_valid_bits: c_uint,
-        pub min_image_transfer_granularity: [c_uint; 3],
+        pub queue_flags: u32,
+        pub queue_count: u32,
+        pub timestamp_valid_bits: u32,
+        pub min_image_transfer_granularity: [u32; 3],
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DeviceQueueCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub queue_family_index: c_uint,
-        pub queue_count: c_uint,
-        pub queue_priorities: *const c_float,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub queue_family_index: u32,
+        pub queue_count: u32,
+        pub queue_priorities: *const f32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DeviceCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub queue_create_info_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub queue_create_info_count: u32,
         pub queue_create_infos: *const DeviceQueueCreateInfo,
-        pub enabled_layer_count: c_uint,
-        pub enabled_layer_names: *const *const c_char,
-        pub enabled_extension_count: c_uint,
-        pub enabled_extension_names: *const *const c_char,
+        pub enabled_layer_count: u32,
+        pub enabled_layer_names: *const *const i8,
+        pub enabled_extension_count: u32,
+        pub enabled_extension_names: *const *const i8,
         pub enabled_features: *const PhysicalDeviceFeatures,
     }
 
@@ -773,29 +772,40 @@ mod ffi {
     #[repr(C)]
     pub struct XlibSurfaceCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub display: *const c_void,
-        pub window: c_ulong,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub display: *const (),
+        pub window: u64,
     }
 
+    #[cfg(target_os = "windows")]
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    pub struct Win32SurfaceCreateInfo {
+        pub structure_type: StructureType,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub hinstance: *mut (),
+        pub hwnd: *mut (),
+    }
+    
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct SwapchainCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub surface: Surface,
-        pub min_image_count: c_uint,
+        pub min_image_count: u32,
         pub image_format: Format,
         pub image_color_space: ColorSpace,
         pub image_extent: Extent2d,
-        pub image_array_layers: c_uint,
-        pub image_usage: c_uint,
+        pub image_array_layers: u32,
+        pub image_usage: u32,
         pub image_sharing_mode: SharingMode,
-        pub queue_family_index_count: c_uint,
-        pub queue_family_indices: *const c_uint,
-        pub pre_transform: c_uint,
+        pub queue_family_index_count: u32,
+        pub queue_family_indices: *const u32,
+        pub pre_transform: u32,
         pub composite_alpha: CompositeAlpha,
         pub present_mode: PresentMode,
         pub clipped: Bool,
@@ -838,19 +848,19 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct ImageSubresourceRange {
-        pub aspect_mask: c_uint,
-        pub base_mip_level: c_uint,
-        pub level_count: c_uint,
-        pub base_array_layer: c_uint,
-        pub layer_count: c_uint,
+        pub aspect_mask: u32,
+        pub base_mip_level: u32,
+        pub level_count: u32,
+        pub base_array_layer: u32,
+        pub layer_count: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct ImageViewCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub image: Image,
         pub view_type: ImageViewType,
         pub format: Format,
@@ -862,41 +872,41 @@ mod ffi {
     #[repr(C)]
     pub struct ShaderModuleCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub code_size: size_t,
-        pub code: *const c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub code_size: usize,
+        pub code: *const u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PipelineShaderStageCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub stage: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub stage: u32,
         pub module: ShaderModule,
-        pub entry_point: *const c_char,
-        pub specialization_info: *const c_void,
+        pub entry_point: *const i8,
+        pub specialization_info: *const (),
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PushConstantRange {
-        pub stage_flags: c_uint,
-        pub offset: c_uint,
-        pub size: c_uint,
+        pub stage_flags: u32,
+        pub offset: u32,
+        pub size: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PipelineLayoutCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub set_layout_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub set_layout_count: u32,
         pub set_layouts: *const DescriptorSetLayout,
-        pub push_constant_range_count: c_uint,
+        pub push_constant_range_count: u32,
         pub push_constant_ranges: *const PushConstantRange,
     }
 
@@ -969,9 +979,9 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct AttachmentDescription {
-        flags: c_uint,
+        flags: u32,
         format: Format,
-        samples: c_uint,
+        samples: u32,
         load_op: AttachmentLoadOp,
         store_op: AttachmentStoreOp,
         stencil_load_op: AttachmentLoadOp,
@@ -999,7 +1009,7 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct AttachmentReference {
-        pub attachment: c_uint,
+        pub attachment: u32,
         pub layout: ImageLayout,
     }
 
@@ -1031,41 +1041,41 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct SubpassDescription {
-        pub flags: c_uint,
+        pub flags: u32,
         pub pipeline_bind_point: PipelineBindPoint,
-        pub input_attachment_count: c_uint,
+        pub input_attachment_count: u32,
         pub input_attachments: *const AttachmentReference,
-        pub color_attachment_count: c_uint,
+        pub color_attachment_count: u32,
         pub color_attachments: *const AttachmentReference,
         pub resolve_attachments: *const AttachmentReference,
         pub depth_stencil_attachment: *const AttachmentReference,
-        pub preserve_attachment_count: c_uint,
-        pub preserve_attachments: *const c_uint,
+        pub preserve_attachment_count: u32,
+        pub preserve_attachments: *const u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct SubpassDependency {
-        pub src_subpass: c_uint,
-        pub dst_subpass: c_uint,
-        pub src_stage_mask: c_uint,
-        pub dst_stage_mask: c_uint,
-        pub src_access_mask: c_uint,
-        pub dst_access_mask: c_uint,
-        pub dependency_flags: c_uint,
+        pub src_subpass: u32,
+        pub dst_subpass: u32,
+        pub src_stage_mask: u32,
+        pub dst_stage_mask: u32,
+        pub src_access_mask: u32,
+        pub dst_access_mask: u32,
+        pub dependency_flags: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct RenderPassCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub attachment_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub attachment_count: u32,
         pub attachments: *const AttachmentDescription,
-        pub subpass_count: c_uint,
+        pub subpass_count: u32,
         pub subpasses: *const SubpassDescription,
-        pub dependency_count: c_uint,
+        pub dependency_count: u32,
         pub dependencies: *const SubpassDependency,
     }
 
@@ -1088,29 +1098,29 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct VertexInputBindingDescription {
-        pub binding: c_uint,
-        pub stride: c_uint,
+        pub binding: u32,
+        pub stride: u32,
         pub input_rate: VertexInputRate,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct VertexInputAttributeDescription {
-        pub location: c_uint,
-        pub binding: c_uint,
+        pub location: u32,
+        pub binding: u32,
         pub format: Format,
-        pub offset: c_uint,
+        pub offset: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PipelineVertexInputStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub vertex_binding_description_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub vertex_binding_description_count: u32,
         pub vertex_binding_descriptions: *const VertexInputBindingDescription,
-        pub vertex_attribute_description_count: c_uint,
+        pub vertex_attribute_description_count: u32,
         pub vertex_attribute_descriptions: *const VertexInputAttributeDescription,
     }
 
@@ -1140,8 +1150,8 @@ mod ffi {
     #[repr(C)]
     pub struct PipelineInputAssemblyStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub topology: PrimitiveTopology,
         pub primitive_restart_enable: Bool,
     }
@@ -1150,20 +1160,20 @@ mod ffi {
     #[repr(C)]
     pub struct PipelineTessellationStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub patch_control_points: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub patch_control_points: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct Viewport {
-        pub x: c_float,
-        pub y: c_float,
-        pub width: c_float,
-        pub height: c_float,
-        pub min_depth: c_float,
-        pub max_depth: c_float,
+        pub x: f32,
+        pub y: f32,
+        pub width: f32,
+        pub height: f32,
+        pub min_depth: f32,
+        pub max_depth: f32,
     }
 
     #[derive(Clone, Copy)]
@@ -1177,11 +1187,11 @@ mod ffi {
     #[repr(C)]
     pub struct PipelineViewportStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub viewport_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub viewport_count: u32,
         pub viewports: *const Viewport,
-        pub scissor_count: c_uint,
+        pub scissor_count: u32,
         pub scissors: *const Rect2d,
     }
 
@@ -1223,30 +1233,30 @@ mod ffi {
     #[repr(C)]
     pub struct PipelineRasterizationStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub depth_clamp_enable: Bool,
         pub rasterizer_discard_enable: Bool,
         pub polygon_mode: PolygonMode,
-        pub cull_mode: c_uint,
+        pub cull_mode: u32,
         pub front_face: FrontFace,
         pub depth_bias_enable: Bool,
-        pub depth_bias_constant_factor: c_float,
-        pub depth_bias_clamp: c_float,
-        pub depth_bias_slope_factor: c_float,
-        pub line_width: c_float,
+        pub depth_bias_constant_factor: f32,
+        pub depth_bias_clamp: f32,
+        pub depth_bias_slope_factor: f32,
+        pub line_width: f32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PipelineMultisampleStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub rasterization_samples: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub rasterization_samples: u32,
         pub sample_shading_enable: Bool,
-        pub min_sample_shading: c_float,
-        pub sample_mask: *const c_uint,
+        pub min_sample_shading: f32,
+        pub sample_mask: *const u32,
         pub alpha_to_coverage_enable: Bool,
         pub alpha_to_one_enable: Bool,
     }
@@ -1308,17 +1318,17 @@ mod ffi {
         pub pass_op: StencilOp,
         pub depth_fail_op: StencilOp,
         pub compare_op: CompareOp,
-        pub compare_mask: c_uint,
-        pub write_mask: c_uint,
-        pub reference: c_uint,
+        pub compare_mask: u32,
+        pub write_mask: u32,
+        pub reference: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PipelineDepthStencilStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub depth_test_enable: Bool,
         pub depth_write_enable: Bool,
         pub depth_compare_op: CompareOp,
@@ -1326,8 +1336,8 @@ mod ffi {
         pub stencil_test_enable: Bool,
         pub front: StencilOpState,
         pub back: StencilOpState,
-        pub min_depth_bounds: c_float,
-        pub max_depth_bounds: c_float,
+        pub min_depth_bounds: f32,
+        pub max_depth_bounds: f32,
     }
 
     #[derive(Clone, Copy)]
@@ -1374,7 +1384,7 @@ mod ffi {
         pub src_alpha_blend_factor: BlendFactor,
         pub dst_alpha_blend_factor: BlendFactor,
         pub alpha_blend_op: BlendOp,
-        pub color_write_mask: c_uint,
+        pub color_write_mask: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -1395,13 +1405,13 @@ mod ffi {
     #[repr(C)]
     pub struct PipelineColorBlendStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub logic_op_enable: Bool,
         pub logic_op: LogicOp,
-        pub attachment_count: c_uint,
+        pub attachment_count: u32,
         pub attachments: *const PipelineColorBlendAttachmentState,
-        pub blend_constants: [c_float; 4],
+        pub blend_constants: [f32; 4],
     }
 
     #[derive(Clone, Copy)]
@@ -1422,9 +1432,9 @@ mod ffi {
     #[repr(C)]
     pub struct PipelineDynamicStateCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub dynamic_state_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub dynamic_state_count: u32,
         pub dynamic_states: *const DynamicState,
     }
 
@@ -1432,21 +1442,21 @@ mod ffi {
     #[repr(C)]
     pub struct ComputePipelineCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub stage: PipelineShaderStageCreateInfo,
         pub layout: PipelineLayout,
         pub base_pipeline_handle: Pipeline,
-        pub base_pipeline_index: c_int,
+        pub base_pipeline_index: i32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct GraphicsPipelineCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub stage_count: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub stage_count: u32,
         pub stages: *const PipelineShaderStageCreateInfo,
         pub vertex_input_state: *const PipelineVertexInputStateCreateInfo,
         pub input_assembly_state: *const PipelineInputAssemblyStateCreateInfo,
@@ -1459,23 +1469,23 @@ mod ffi {
         pub dynamic_state: *const PipelineDynamicStateCreateInfo,
         pub layout: PipelineLayout,
         pub render_pass: RenderPass,
-        pub subpass: c_uint,
+        pub subpass: u32,
         pub base_pipeline_handle: Pipeline,
-        pub base_pipeline_index: c_int,
+        pub base_pipeline_index: i32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct FramebufferCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
         pub render_pass: RenderPass,
-        pub attachment_count: c_uint,
+        pub attachment_count: u32,
         pub attachments: *const ImageView,
-        pub width: c_uint,
-        pub height: c_uint,
-        pub layers: c_uint,
+        pub width: u32,
+        pub height: u32,
+        pub layers: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -1487,8 +1497,8 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct ClearDepthStencilValue {
-        pub depth: c_float,
-        pub stencil: c_uint,
+        pub depth: f32,
+        pub stencil: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -1502,11 +1512,11 @@ mod ffi {
     #[repr(C)]
     pub struct RenderPassBeginInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub render_pass: RenderPass,
         pub framebuffer: Framebuffer,
         pub render_area: Rect2d,
-        pub clear_value_count: c_uint,
+        pub clear_value_count: u32,
         pub clear_values: *const ClearValue,
     }
 
@@ -1521,18 +1531,18 @@ mod ffi {
     #[repr(C)]
     pub struct CommandBufferBeginInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub inheritence_info: *const c_void,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub inheritence_info: *const (),
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct CommandPoolCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
-        pub queue_family_index: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
+        pub queue_family_index: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -1548,39 +1558,39 @@ mod ffi {
     #[repr(C)]
     pub struct CommandBufferAllocateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub command_pool: CommandPool,
         pub level: CommandBufferLevel,
-        pub command_buffer_count: c_uint,
+        pub command_buffer_count: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct FenceCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct SemaphoreCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub flags: c_uint,
+        pub p_next: *const (),
+        pub flags: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct SubmitInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub wait_semaphore_count: c_uint,
+        pub p_next: *const (),
+        pub wait_semaphore_count: u32,
         pub wait_semaphores: *const Semaphore,
         pub wait_dst_stage_mask: *const Flags,
-        pub command_buffer_count: c_uint,
+        pub command_buffer_count: u32,
         pub command_buffers: *const CommandBuffer,
-        pub signal_semaphore_count: c_uint,
+        pub signal_semaphore_count: u32,
         pub signal_semaphores: *const Semaphore,
     }
 
@@ -1588,12 +1598,12 @@ mod ffi {
     #[repr(C)]
     pub struct PresentInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub wait_semaphore_count: c_uint,
+        pub p_next: *const (),
+        pub wait_semaphore_count: u32,
         pub wait_semaphores: *const Semaphore,
-        pub swapchain_count: c_uint,
+        pub swapchain_count: u32,
         pub swapchains: *const Swapchain,
-        pub image_indices: *const c_uint,
+        pub image_indices: *const u32,
         pub results: *const Result,
     }
 
@@ -1601,22 +1611,22 @@ mod ffi {
     #[repr(C)]
     pub struct BufferCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub flags: Flags,
         pub size: DeviceSize,
         pub usage: Flags,
         pub sharing_mode: SharingMode,
-        pub queue_family_index_count: c_uint,
-        pub queue_family_indices: *const c_uint,
+        pub queue_family_index_count: u32,
+        pub queue_family_indices: *const u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct MemoryAllocateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub size: DeviceSize,
-        pub memory_type_index: c_uint,
+        pub memory_type_index: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -1624,14 +1634,14 @@ mod ffi {
     pub struct MemoryRequirements {
         pub size: DeviceSize,
         pub alignment: DeviceSize,
-        pub memory_type: c_uint,
+        pub memory_type: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct MemoryType {
         pub property_flags: Flags,
-        pub heap_index: c_uint,
+        pub heap_index: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -1644,9 +1654,9 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct PhysicalDeviceMemoryProperties {
-        pub memory_type_count: c_uint,
+        pub memory_type_count: u32,
         pub memory_types: [MemoryType; 32],
-        pub memory_heap_count: c_uint,
+        pub memory_heap_count: u32,
         pub memory_heaps: [MemoryHeap; 32],
     }
 
@@ -1670,20 +1680,20 @@ mod ffi {
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DescriptorSetLayoutBinding {
-        pub binding: c_uint,
+        pub binding: u32,
         pub descriptor_type: DescriptorType,
-        pub descriptor_count: c_uint,
-        pub stage: c_uint,
-        pub immutable_samplers: *const c_void,
+        pub descriptor_count: u32,
+        pub stage: u32,
+        pub immutable_samplers: *const (),
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DescriptorSetLayoutCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub flags: Flags,
-        pub binding_count: c_uint,
+        pub binding_count: u32,
         pub bindings: *const DescriptorSetLayoutBinding,
     }
 
@@ -1707,45 +1717,45 @@ mod ffi {
     #[repr(C)]
     pub struct WriteDescriptorSet {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub dst_set: DescriptorSet,
-        pub dst_binding: c_uint,
-        pub dst_array_element: c_uint,
-        pub descriptor_count: c_uint,
+        pub dst_binding: u32,
+        pub dst_array_element: u32,
+        pub descriptor_count: u32,
         pub descriptor_type: DescriptorType,
         pub image_infos: *const DescriptorImageInfo,
         pub buffer_infos: *const DescriptorBufferInfo,
-        pub texel_buffer_view: *const c_void,
+        pub texel_buffer_view: *const (),
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct CopyDescriptorSet {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub src_set: DescriptorSet,
-        pub src_binding: c_uint,
-        pub src_array_element: c_uint,
+        pub src_binding: u32,
+        pub src_array_element: u32,
         pub dst_set: DescriptorSet,
-        pub dst_binding: c_uint,
-        pub dst_array_element: c_uint,
-        pub descriptor_count: c_uint,
+        pub dst_binding: u32,
+        pub dst_array_element: u32,
+        pub descriptor_count: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DescriptorPoolSize {
         pub descriptor_type: DescriptorType,
-        pub descriptor_count: c_uint,
+        pub descriptor_count: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct DescriptorSetAllocateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub descriptor_pool: DescriptorPool,
-        pub descriptor_set_count: c_uint,
+        pub descriptor_set_count: u32,
         pub set_layouts: *const DescriptorSetLayout,
     }
 
@@ -1753,10 +1763,10 @@ mod ffi {
     #[repr(C)]
     pub struct DescriptorPoolCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub flags: Flags,
-        pub max_sets: c_uint,
-        pub pool_size_count: c_uint,
+        pub max_sets: u32,
+        pub pool_size_count: u32,
         pub pool_sizes: *const DescriptorPoolSize,
     }
 
@@ -1798,19 +1808,19 @@ mod ffi {
     #[repr(C)]
     pub struct ImageCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub flags: Flags,
         pub image_type: ImageType,
         pub format: Format,
         pub extent: Extent3d,
-        pub mip_levels: c_uint,
-        pub array_layers: c_uint,
+        pub mip_levels: u32,
+        pub array_layers: u32,
         pub samples: Flags,
         pub tiling: ImageTiling,
         pub image_usage: u32,
         pub sharing_mode: SharingMode,
-        pub queue_family_index_count: c_uint,
-        pub queue_family_indices: *const c_uint,
+        pub queue_family_index_count: u32,
+        pub queue_family_indices: *const u32,
         pub initial_layout: ImageLayout,
     }
 
@@ -1826,17 +1836,17 @@ mod ffi {
     #[repr(C)]
     pub struct ImageSubresourceLayers {
         pub aspect_mask: Flags,
-        pub mip_level: c_uint,
-        pub base_array_layer: c_uint,
-        pub layer_count: c_uint,
+        pub mip_level: u32,
+        pub base_array_layer: u32,
+        pub layer_count: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct BufferImageCopy {
         pub buffer_offset: DeviceSize,
-        pub buffer_row_length: c_uint,
-        pub buffer_image_height: c_uint,
+        pub buffer_row_length: u32,
+        pub buffer_image_height: u32,
         pub image_subresource: ImageSubresourceLayers,
         pub image_offset: Offset3d,
         pub image_extent: Extent3d,
@@ -1922,7 +1932,7 @@ mod ffi {
     #[repr(C)]
     pub struct SamplerCreateInfo {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
+        pub p_next: *const (),
         pub flags: Flags,
         pub mag_filter: Filter,
         pub min_filter: Filter,
@@ -1930,13 +1940,13 @@ mod ffi {
         pub address_mode_u: SamplerAddressMode,
         pub address_mode_v: SamplerAddressMode,
         pub address_mode_w: SamplerAddressMode,
-        pub mip_lod_bias: c_float,
+        pub mip_lod_bias: f32,
         pub anisotropy_enable: Bool,
-        pub max_anisotropy: c_float,
+        pub max_anisotropy: f32,
         pub compare_enable: Bool,
         pub compare_op: CompareOp,
-        pub min_lod: c_float,
-        pub max_lod: c_float,
+        pub min_lod: f32,
+        pub max_lod: f32,
         pub border_color: BorderColor,
         pub unnormalized_coordinates: Bool,
     }
@@ -1945,13 +1955,13 @@ mod ffi {
     #[repr(C)]
     pub struct ImageMemoryBarrier {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub src_access_mask: c_uint,
-        pub dst_access_mask: c_uint,
+        pub p_next: *const (),
+        pub src_access_mask: u32,
+        pub dst_access_mask: u32,
         pub old_layout: ImageLayout,
         pub new_layout: ImageLayout,
-        pub src_queue_family_index: c_uint,
-        pub dst_queue_family_index: c_uint,
+        pub src_queue_family_index: u32,
+        pub dst_queue_family_index: u32,
         pub image: Image,
         pub subresource_range: ImageSubresourceRange,
     }
@@ -1960,23 +1970,23 @@ mod ffi {
     #[repr(C)]
     pub struct MemoryBarrier {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub src_access_mask: c_uint,
-        pub dst_access_mask: c_uint,
+        pub p_next: *const (),
+        pub src_access_mask: u32,
+        pub dst_access_mask: u32,
     }
 
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct BufferMemoryBarrier {
         pub structure_type: StructureType,
-        pub p_next: *const c_void,
-        pub src_access_mask: c_uint,
-        pub dst_access_mask: c_uint,
-        pub src_queue_family_index: c_uint,
-        pub dst_queue_family_index: c_uint,
+        pub p_next: *const (),
+        pub src_access_mask: u32,
+        pub dst_access_mask: u32,
+        pub src_queue_family_index: u32,
+        pub dst_queue_family_index: u32,
         pub buffer: Buffer,
-        pub offset: c_ulong,
-        pub size: c_ulong,
+        pub offset: u64,
+        pub size: u64,
     }
 
     #[link(name = "vulkan")]
@@ -1985,14 +1995,14 @@ mod ffi {
         //TODO implement VkAllocationCallbacks
         pub fn vkCreateInstance(
             create_info: *const InstanceCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             instance: *mut Instance,
         ) -> Result;
-        pub fn vkDestroyInstance(instance: Instance, allocator: *const c_void);
-        pub fn vkGetInstanceProcAddr(instance: Instance, name: *const c_char) -> *const c_void;
+        pub fn vkDestroyInstance(instance: Instance, allocator: *const ());
+        pub fn vkGetInstanceProcAddr(instance: Instance, name: *const i8) -> *const ();
         pub fn vkEnumeratePhysicalDevices(
             instance: Instance,
-            physical_device_count: *mut c_uint,
+            physical_device_count: *mut u32,
             physical_devices: *mut PhysicalDevice,
         ) -> Result;
         pub fn vkGetPhysicalDeviceProperties(
@@ -2001,7 +2011,7 @@ mod ffi {
         );
         pub fn vkGetPhysicalDeviceQueueFamilyProperties(
             physical_device: PhysicalDevice,
-            queue_family_property_count: *mut c_uint,
+            queue_family_property_count: *mut u32,
             queue_family_properties: *mut QueueFamilyProperties,
         );
         pub fn vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -2011,7 +2021,7 @@ mod ffi {
         );
         pub fn vkGetPhysicalDeviceSurfaceSupportKHR(
             physical_device: PhysicalDevice,
-            queue_family_index: c_uint,
+            queue_family_index: u32,
             surface: Surface,
             supported: *mut Bool,
         ) -> Result;
@@ -2022,16 +2032,16 @@ mod ffi {
         pub fn vkCreateDevice(
             physical_device: PhysicalDevice,
             create_info: *const DeviceCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             device: *mut Device,
         ) -> Result;
-        pub fn vkDestroyDevice(device: Device, allocator: *const c_void);
+        pub fn vkDestroyDevice(device: Device, allocator: *const ());
         pub fn vkDeviceWaitIdle(device: Device) -> Result;
         pub fn vkQueueWaitIdle(queue: Queue) -> Result;
         pub fn vkGetDeviceQueue(
             device: Device,
-            queue_family_index: c_uint,
-            queue_index: c_uint,
+            queue_family_index: u32,
+            queue_index: u32,
             queue: *mut Queue,
         );
         pub fn vkGetBufferMemoryRequirements(
@@ -2043,120 +2053,127 @@ mod ffi {
         pub fn vkCreateXlibSurfaceKHR(
             instance: Instance,
             create_info: *const XlibSurfaceCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             surface: *mut Surface,
         );
-        pub fn vkDestroySurfaceKHR(instance: Instance, surface: Surface, allocator: *const c_void);
+        #[cfg(target_os = "windows")]
+        pub fn vkCreateWin32SurfaceKHR(
+            instance: Instance,
+            create_info: *const Win32SurfaceCreateInfo,
+            allocator: *const (),
+            surface: *mut Surface,
+        );
+        pub fn vkDestroySurfaceKHR(instance: Instance, surface: Surface, allocator: *const ());
         pub fn vkCreateSwapchainKHR(
             device: Device,
             create_info: *const SwapchainCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             swapchain: *mut Swapchain,
         ) -> Result;
         pub fn vkDestroySwapchainKHR(
             device: Device,
             swapchain: Swapchain,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkGetSwapchainImagesKHR(
             device: Device,
             swapchain: Swapchain,
-            swapchain_image_count: *mut c_uint,
+            swapchain_image_count: *mut u32,
             swapchain_images: *mut Image,
         );
         pub fn vkCreateImageView(
             device: Device,
             create_info: *const ImageViewCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             image_view: *mut ImageView,
         ) -> Result;
-        pub fn vkDestroyImageView(device: Device, image_view: ImageView, allocator: *const c_void);
+        pub fn vkDestroyImageView(device: Device, image_view: ImageView, allocator: *const ());
         pub fn vkCreateShaderModule(
             device: Device,
             create_info: *const ShaderModuleCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             shader_module: *mut ShaderModule,
         ) -> Result;
         pub fn vkDestroyShaderModule(
             device: Device,
             shader_module: ShaderModule,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkCreatePipelineLayout(
             device: Device,
             create_info: *const PipelineLayoutCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             pipeline_layout: *mut PipelineLayout,
         ) -> Result;
         pub fn vkDestroyPipelineLayout(
             device: Device,
             pipeline_layout: PipelineLayout,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkCreateRenderPass(
             device: Device,
             create_info: *const RenderPassCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             render_pass: *mut RenderPass,
         ) -> Result;
         pub fn vkDestroyRenderPass(
             device: Device,
             render_pass: RenderPass,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkCreateGraphicsPipelines(
             device: Device,
             pipeline_cache: PipelineCache,
-            create_info_count: c_uint,
+            create_info_count: u32,
             create_infos: *const GraphicsPipelineCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             pipelines: *mut Pipeline,
         ) -> Result;
         pub fn vkCreateComputePipelines(
             device: Device,
             pipeline_cache: PipelineCache,
-            create_info_count: c_uint,
+            create_info_count: u32,
             create_infos: *const ComputePipelineCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             pipelines: *mut Pipeline,
         ) -> Result;
-        pub fn vkDestroyPipeline(device: Device, pipeline: Pipeline, allocator: *const c_void);
+        pub fn vkDestroyPipeline(device: Device, pipeline: Pipeline, allocator: *const ());
         pub fn vkCreateFramebuffer(
             device: Device,
             create_info: *const FramebufferCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             framebuffer: *mut Framebuffer,
         ) -> Result;
         pub fn vkDestroyFramebuffer(
             device: Device,
             framebuffer: Framebuffer,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkCreateCommandPool(
             device: Device,
             create_info: *const CommandPoolCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             command_pool: *mut CommandPool,
         ) -> Result;
         pub fn vkDestroyCommandPool(
             device: Device,
             command_pool: CommandPool,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkCreateBuffer(
             device: Device,
             create_info: *const BufferCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             buffer: *mut Buffer,
         ) -> Result;
-        pub fn vkDestroyBuffer(device: Device, buffer: Buffer, allocator: *const c_void);
+        pub fn vkDestroyBuffer(device: Device, buffer: Buffer, allocator: *const ());
         pub fn vkAllocateMemory(
             device: Device,
             allocate_info: *const MemoryAllocateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             memory: *mut DeviceMemory,
         ) -> Result;
-        pub fn vkFreeMemory(device: Device, memory: DeviceMemory, allocator: *const c_void);
+        pub fn vkFreeMemory(device: Device, memory: DeviceMemory, allocator: *const ());
         pub fn vkBindBufferMemory(
             device: Device,
             buffer: Buffer,
@@ -2187,29 +2204,29 @@ mod ffi {
         );
         pub fn vkCmdDraw(
             command_buffer: CommandBuffer,
-            vertex_count: c_uint,
-            instance_count: c_uint,
-            first_vertex: c_uint,
-            first_instance: c_uint,
+            vertex_count: u32,
+            instance_count: u32,
+            first_vertex: u32,
+            first_instance: u32,
         );
         pub fn vkCmdDrawIndexed(
             command_buffer: CommandBuffer,
-            index_count: c_uint,
-            instance_count: c_uint,
-            first_index: c_uint,
-            vertex_offset: c_int,
-            first_instance: c_uint,
+            index_count: u32,
+            instance_count: u32,
+            first_index: u32,
+            vertex_offset: i32,
+            first_instance: u32,
         );
         pub fn vkCmdDispatch(
             command_buffer: CommandBuffer,
-            group_count_x: c_uint,
-            group_count_y: c_uint,
-            group_count_z: c_uint,
+            group_count_x: u32,
+            group_count_y: u32,
+            group_count_z: u32,
         );
         pub fn vkCmdBindVertexBuffers(
             command_buffer: CommandBuffer,
-            first_binding: c_uint,
-            binding_count: c_uint,
+            first_binding: u32,
+            binding_count: u32,
             buffers: *const Buffer,
             offsets: *const DeviceSize,
         );
@@ -2223,7 +2240,7 @@ mod ffi {
             command_buffer: CommandBuffer,
             src_buffer: Buffer,
             dst_buffer: Buffer,
-            region_count: c_uint,
+            region_count: u32,
             regions: *const BufferCopy,
         );
         pub fn vkCmdCopyBufferToImage(
@@ -2231,7 +2248,7 @@ mod ffi {
             src_buffer: Buffer,
             dst_image: Image,
             dst_image_layout: ImageLayout,
-            region_count: c_uint,
+            region_count: u32,
             regions: *const BufferImageCopy,
         );
         pub fn vkCmdPipelineBarrier(
@@ -2239,46 +2256,46 @@ mod ffi {
             src_stage_mask: Flags,
             dst_stage_mask: Flags,
             dependency_flags: Flags,
-            memory_barrier_count: c_uint,
+            memory_barrier_count: u32,
             memory_barriers: *const MemoryBarrier,
-            buffer_memory_barrier_count: c_uint,
+            buffer_memory_barrier_count: u32,
             buffer_memory_barriers: *const BufferMemoryBarrier,
-            image_memory_barrier_count: c_uint,
+            image_memory_barrier_count: u32,
             image_memory_barriers: *const ImageMemoryBarrier,
         );
         pub fn vkCreateFence(
             device: Device,
             create_info: *const FenceCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             fence: *mut Fence,
         ) -> Result;
-        pub fn vkDestroyFence(device: Device, fence: Fence, allocator: *const c_void);
+        pub fn vkDestroyFence(device: Device, fence: Fence, allocator: *const ());
         pub fn vkCreateSemaphore(
             device: Device,
             create_info: *const SemaphoreCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             semaphore: *mut Semaphore,
         ) -> Result;
-        pub fn vkDestroySemaphore(device: Device, semaphore: Semaphore, allocator: *const c_void);
+        pub fn vkDestroySemaphore(device: Device, semaphore: Semaphore, allocator: *const ());
         pub fn vkWaitForFences(
             device: Device,
-            fence_count: c_uint,
+            fence_count: u32,
             fence: *const Fence,
             wait_all: Bool,
-            timeout: c_ulong,
+            timeout: u64,
         ) -> Result;
-        pub fn vkResetFences(device: Device, fence_count: c_uint, fence: *const Fence) -> Result;
+        pub fn vkResetFences(device: Device, fence_count: u32, fence: *const Fence) -> Result;
         pub fn vkAcquireNextImageKHR(
             device: Device,
             swapchain: Swapchain,
-            timeout: c_ulong,
+            timeout: u64,
             semaphore: Semaphore,
             fence: Fence,
-            image_index: *mut c_uint,
+            image_index: *mut u32,
         ) -> Result;
         pub fn vkQueueSubmit(
             queue: Queue,
-            submit_count: c_uint,
+            submit_count: u32,
             submit_infos: *const SubmitInfo,
             fence: Fence,
         ) -> Result;
@@ -2290,36 +2307,36 @@ mod ffi {
             offset: DeviceSize,
             size: DeviceSize,
             flags: Flags,
-            data: *mut *mut c_void,
+            data: *mut *mut (),
         ) -> Result;
         pub fn vkUnmapMemory(device: Device, memory: DeviceMemory);
         pub fn vkCreateDescriptorSetLayout(
             device: Device,
             create_info: *const DescriptorSetLayoutCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             set_layout: *mut DescriptorSetLayout,
         ) -> Result;
         pub fn vkDestroyDescriptorSetLayout(
             device: Device,
             set_layout: DescriptorSetLayout,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkCreateDescriptorPool(
             device: Device,
             create_info: *const DescriptorPoolCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             descriptor_pool: *mut DescriptorPool,
         ) -> Result;
         pub fn vkDestroyDescriptorPool(
             device: Device,
             descriptor_pool: DescriptorPool,
-            allocator: *const c_void,
+            allocator: *const (),
         );
         pub fn vkUpdateDescriptorSets(
             device: Device,
-            write_count: c_uint,
+            write_count: u32,
             writes: *const WriteDescriptorSet,
-            copy_count: c_uint,
+            copy_count: u32,
             copies: *const CopyDescriptorSet,
         );
         pub fn vkAllocateDescriptorSets(
@@ -2331,19 +2348,19 @@ mod ffi {
             command_buffer: CommandBuffer,
             bind_point: PipelineBindPoint,
             layout: PipelineLayout,
-            first_set: c_uint,
-            descriptor_set_count: c_uint,
+            first_set: u32,
+            descriptor_set_count: u32,
             descriptor_sets: *const DescriptorSet,
-            dynamic_offset_count: c_uint,
-            dynamic_offsets: *const c_uint,
+            dynamic_offset_count: u32,
+            dynamic_offsets: *const u32,
         );
         pub fn vkCreateImage(
             device: Device,
             create_info: *const ImageCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             image: *mut Image,
         ) -> Result;
-        pub fn vkDestroyImage(device: Device, image: Image, allocator: *const c_void);
+        pub fn vkDestroyImage(device: Device, image: Image, allocator: *const ());
         pub fn vkGetImageMemoryRequirements(
             device: Device,
             image: Image,
@@ -2358,10 +2375,10 @@ mod ffi {
         pub fn vkCreateSampler(
             device: Device,
             create_info: *const SamplerCreateInfo,
-            allocator: *const c_void,
+            allocator: *const (),
             sampler: *mut Sampler,
         ) -> Result;
-        pub fn vkDestroySampler(device: Device, sampler: Sampler, allocator: *const c_void);
+        pub fn vkDestroySampler(device: Device, sampler: Sampler, allocator: *const ());
     }
 }
 
@@ -3391,6 +3408,41 @@ impl Queue {
 pub struct Surface {
     instance: Rc<Instance>,
     handle: ffi::Surface,
+}
+
+#[cfg(target_os = "windows")]
+impl Surface {
+    pub fn new(instance: Rc<Instance>, window: &impl HasRawWindowHandle) -> Rc<Self> {
+        match window.raw_window_handle() {
+            RawWindowHandle::Win32(win32_handle) => {
+                let create_info = ffi::Win32SurfaceCreateInfo {
+                    structure_type: ffi::StructureType::Win32SurfaceCreateInfo,
+                    p_next: ptr::null(),
+                    flags: 0,
+                    hinstance: unsafe { mem::transmute(win32_handle.hinstance) } ,
+                    hwnd: unsafe { mem::transmute(win32_handle.hwnd) },
+                };
+
+                let mut handle = MaybeUninit::<ffi::Surface>::uninit();
+
+                unsafe {
+                    ffi::vkCreateWin32SurfaceKHR(
+                        instance.handle,
+                        &create_info,
+                        ptr::null(),
+                        handle.as_mut_ptr(),
+                    )
+                };
+
+                let handle = unsafe { handle.assume_init() };
+
+                Rc::new(Self { instance, handle })
+            }
+            RawWindowHandle::Xcb(_) => unimplemented!("xcb unimplemented"),
+            RawWindowHandle::Wayland(_) => unimplemented!("wayland unimplemented"),
+            _ => panic!("unsupported window handle"),
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
