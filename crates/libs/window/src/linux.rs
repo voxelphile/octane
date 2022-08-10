@@ -138,7 +138,7 @@ impl Window {
             -1,
             -1,
             -1,
-            self.resolution.1 as i32 / 2,
+            self.resolution.-1 as i32 / 2,
             self.resolution.0 as i32 / 2,
         );
     }

@@ -47,8 +47,6 @@ layout(binding = 3, std430) buffer Octree {
 layout(location = 0) in vec3 in_clip;
 layout(location = 1) in vec3 in_position;
 layout(location = 2) in flat uvec3 in_chunk_position;
-layout(location = 3) in vec3 in_point;
-layout(location = 4) in vec3 in_dir;
 
 layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec4 out_occlusion;

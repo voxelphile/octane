@@ -1989,7 +1989,7 @@ mod ffi {
         pub size: u64,
     }
 
-    #[link(name = "vulkan")]
+    #[link(name = "vulkan-1")]
     #[allow(non_snake_case)]
     extern "C" {
         //TODO implement VkAllocationCallbacks
@@ -2384,6 +2384,7 @@ mod ffi {
 
 pub const KHR_SURFACE: &str = "VK_KHR_surface";
 pub const KHR_XLIB_SURFACE: &str = "VK_KHR_xlib_surface";
+pub const KHR_WIN32_SURFACE: &str = "VK_KHR_win32_surface";
 pub const KHR_SWAPCHAIN: &str = "VK_KHR_swapchain";
 
 pub const EXT_DEBUG_REPORT: &str = "VK_EXT_debug_report";

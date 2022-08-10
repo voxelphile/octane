@@ -217,6 +217,7 @@ impl Vulkan {
         let mut base_path = std::env::current_exe().expect("failed to load path of executable");
         base_path.pop();
         let base_path_str = base_path.to_str().unwrap();
+        let base_path_str = base_path_str.replace("\\\\?\\", "");
 
         let cube = format!("{}/assets/cube.obj", base_path_str);
         let cube_obj = fs::File::open(cube).expect("failed to open obj");
@@ -302,7 +303,7 @@ impl Vulkan {
         let last_camera = None;
 
         let settings = Bucket::new(RenderSettings {
-            resolution: Vector::new([960, 540, 0, 0]),
+            resolution: Vector::new([944, 501, 0, 0]),
             render_distance: info.render_distance,
         });
 

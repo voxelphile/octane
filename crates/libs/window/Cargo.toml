@@ -1,0 +1,15 @@
+[package]
+name = "window"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+raw-window-handle = "*"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = "*"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl 	= "*"

@@ -15,10 +15,10 @@ pub enum Context {
 
 fn debug_utils_messenger_callback(data: &vk::DebugUtilsMessengerCallbackData) -> bool {
     match data.message_severity {
-        vk::DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE => trace!("{}", data.message),
-        vk::DEBUG_UTILS_MESSAGE_SEVERITY_INFO => info!("{}", data.message),
-        vk::DEBUG_UTILS_MESSAGE_SEVERITY_WARNING => warn!("{}", data.message),
-        vk::DEBUG_UTILS_MESSAGE_SEVERITY_ERROR => error!("{}", data.message),
+        vk::DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE => trace!("{}\n", data.message),
+        vk::DEBUG_UTILS_MESSAGE_SEVERITY_INFO => info!("{}\n", data.message),
+        vk::DEBUG_UTILS_MESSAGE_SEVERITY_WARNING => warn!("{}\n", data.message),
+        vk::DEBUG_UTILS_MESSAGE_SEVERITY_ERROR => error!("{}\n", data.message),
         _ => panic!("unrecognized message severity"),
     }
 
@@ -39,8 +39,18 @@ impl Context {
             api_version: (1, 0, 0).into(),
         };
 
-        let mut extensions = vec![vk::KHR_SURFACE, vk::KHR_XLIB_SURFACE];
+        let mut extensions = vec![vk::KHR_SURFACE];
         let mut layers = vec![];
+
+        #[cfg(target_os = "windows")]
+        {
+            extensions.push(vk::KHR_WIN32_SURFACE);
+        }
+        
+        #[cfg(target_os = "linux")]
+        {
+            extensions.push(vk::KHR_XLIB_SURFACE);
+        }
 
         let mut debug_utils_messenger_create_info = None;
 

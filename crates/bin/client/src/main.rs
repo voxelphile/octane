@@ -1,3 +1,4 @@
+#![feature(let_else)]
 #![feature(box_syntax)]
 
 mod window;
@@ -59,33 +60,9 @@ static LOGGER: Logger = Logger;
 
 pub const CHUNK_SIZE: usize = 8;
 
-pub extern "system" fn wnd_proc(hwnd: windows::ffi::Hwnd, u_msg: u32, w_param: windows::ffi::WParam, l_param: windows::ffi::LParam) -> windows::ffi::LResult {
-    0
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
-    use std::ptr;
-
-    let class_name = std::ffi::CString::new("octane").unwrap();
-
-    let wnd_class_a = windows::ffi::WndClassA {
-        style: 0,
-        lpfn_wnd_proc: wnd_proc,
-        cb_cls_extra: 0,
-        cb_wnd_extra: 0,
-        h_instance: ptr::null_mut(),
-        h_icon: ptr::null_mut(),
-        h_cursor: ptr::null_mut(),
-        hbr_background: ptr::null_mut(),
-        lpsz_menu_name: ptr::null_mut(),
-        lpsz_class_name: class_name.as_ptr() as _,
-    };
-
-    unsafe { windows::ffi::RegisterClassA(&wnd_class_a) };
-
-    panic!("lol");
     log::set_max_level(log::LevelFilter::Info);
     log::set_logger(&LOGGER).expect("failed to set logger");
 
@@ -149,8 +126,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut base_path = std::env::current_exe().expect("failed to load path of executable");
     base_path.pop();
     let base_path_str = base_path.to_str().unwrap();
+    let base_path_str = base_path_str.replace("\\\\?\\", "");
 
-    let hq4x = format!("{}/assets/hq4x.png", base_path_str);
+    let hq4x = format!("{}\\assets\\hq4x.png", base_path_str);
 
     let render_info = render::RendererInfo {
         window: &window,
@@ -210,11 +188,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             fps = 0;
         }
 
-        if should_capture {
-            window.capture();
-        }
-        window.show_cursor(!should_capture);
-
         //TODO must be done soon.. tired of this convoluted movement code.
         //simplify movement code
         let sens = 2.0;
@@ -231,12 +204,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 WindowEvent::PointerMotion { x, y } => {
                     if should_capture {
-                        x_rot -= ((x as f64 - window.resolution().0 as f64 / 2.0) * delta_time)
-                            as f32
-                            / sens;
-                        y_rot -= ((y as f64 - window.resolution().1 as f64 / 2.0) * delta_time)
-                            as f32
-                            / sens;
+                        let (mut cx, mut cy) = window.resolution();
+                        cx /= 2;
+                        cy /= 2;
+                        let difx = (x as f64 - cx as f64);
+                        let dify = (y as f64 - cy as f64);
+                        x_rot -= (difx * delta_time) as f32 / sens;
+                        y_rot -= (dify * delta_time) as f32 / sens;
                     }
                 }
                 WindowEvent::FocusIn => {
@@ -281,6 +255,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        
+        if should_capture {
+            window.capture();
+        }
+        window.show_cursor(!should_capture);
 
         let movement_speed = 10.92;
 
