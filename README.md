@@ -10,11 +10,12 @@ The goal of this project is to build a specialized game engine for use in future
 
 - [x] A RTX engine built to render octrees.
 - [x] Vulkan support.
-- [x] Support for Linux.
-- [ ] Support for Windows and OS X.
+- [x] Support for Windows and Linux.
+- [ ] Support for OS X.
 - [ ] Path traced audio.
 - [ ] Dynamic simulation of objects.
 - [ ] Multiplayer.
+
 
 ## Screenshot:
 ![Octree RTX](https://i.imgur.com/DrViInUl.png)
