@@ -59,7 +59,12 @@ pub enum Event {
     Resized { resolution: (u32, u32) },
 }
 
-pub extern "system" fn wnd_proc(hwnd: ffi::Hwnd, u_msg: u32, w_param: ffi::WParam, l_param: ffi::LParam) -> ffi::LResult {
+pub extern "system" fn wnd_proc(
+    hwnd: ffi::Hwnd, 
+    u_msg: u32, 
+    w_param: ffi::WParam, 
+    l_param: ffi::LParam
+) -> ffi::LResult {
     let event = try { match u_msg {
         CREATE => {
             unsafe { ffi::SetWindowLongPtrA(hwnd, Gwl::USER_DATA.bits(), *l_param as ffi::LongPtr) };
@@ -378,4 +383,9 @@ pub fn set_capture(hwnd: Hwnd) {
 
 pub fn release_capture() {
     unsafe { ffi::ReleaseCapture() };
+}
+
+pub fn client_to_screen(hwnd: Hwnd, mut pt: Point) -> Point {
+    unsafe { ffi::ClientToScreen(hwnd as _, &mut pt as *mut _ as _) };
+    pt
 }

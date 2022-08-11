@@ -77,6 +77,7 @@ extern "system" {
     pub fn DispatchMessageW(msg: *const Msg) -> LResult;
     pub fn SetCapture(hwnd: Hwnd) -> Hwnd;
     pub fn ReleaseCapture() -> Bool;
+    pub fn ClientToScreen(hwnd: Hwnd, point: *mut Point) -> Bool;
 }
 
 #[repr(C)]

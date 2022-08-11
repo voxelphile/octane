@@ -378,10 +378,6 @@ impl Device {
                 queues[0]
                     .submit(&[submit_info], Some(in_flight_fence))
                     .expect("failed to submit draw command buffer");
-                
-                queues[0]
-                    .wait_idle()
-                    .expect("failed to wait on queue");
             }
         }
     }

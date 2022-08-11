@@ -135,11 +135,8 @@ impl Window {
                     Event::KeyRelease {
                         keycode: keycode.into(),
                     },
-                windows::Event::PointerMotion { mut x, mut y } => {
-                    y += 11;  
-                    let (mut cx, mut cy) = self.resolution();
-                    cx /= 2;
-                    cy /= 2;
+                windows::Event::PointerMotion { x, mut y } => {
+                    y += if self.fullscreen { 0 } else { 11 };  
                     Event::PointerMotion { x, y }
                 }
                 windows::Event::FocusIn =>

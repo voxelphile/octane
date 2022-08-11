@@ -332,171 +332,183 @@ impl Vulkan {
     }
 }
 
+static mut DUMMY: bool = true;
+
 impl Renderer for Vulkan {
     fn draw(&mut self, batch: Batch) -> Result {
-        let cam_pos = {
-            let mut cam_pos = batch.camera.model[3].resize();
+        if unsafe { DUMMY } {
+            let cam_pos = {
+                let mut cam_pos = batch.camera.model[3].resize();
 
-            let mut forwards = Vector::<f32, 4>::new([0.0, 0.0, 1.0, 0.0]);
+                let mut forwards = Vector::<f32, 4>::new([0.0, 0.0, 1.0, 0.0]);
 
-            forwards = batch.camera.view * forwards;
+                forwards = batch.camera.view * forwards;
 
-            //Without this, there are clipping issues.
-            cam_pos += forwards.resize();
+                //Without this, there are clipping issues.
+                cam_pos += forwards.resize();
 
-            cam_pos
-        };
+                cam_pos
+            };
 
-        let last_cam_pos = {
-            let mut cam_pos = self.last_camera.unwrap_or_default().model[3].resize();
+            let last_cam_pos = {
+                let mut cam_pos = self.last_camera.unwrap_or_default().model[3].resize();
 
-            let mut forwards = Vector::<f32, 4>::new([0.0, 0.0, 1.0, 0.0]);
+                let mut forwards = Vector::<f32, 4>::new([0.0, 0.0, 1.0, 0.0]);
 
-            forwards = self.last_camera.unwrap_or_default().view * forwards;
+                forwards = self.last_camera.unwrap_or_default().view * forwards;
 
-            //Without this, there are clipping issues.
-            cam_pos += forwards.resize();
+                //Without this, there are clipping issues.
+                cam_pos += forwards.resize();
 
-            cam_pos
-        };
+                cam_pos
+            };
 
-        let camera_chunk_position = (cam_pos.cast() / CHUNK_SIZE as f64).castf::<i32>();
+            let camera_chunk_position = (cam_pos.cast() / CHUNK_SIZE as f64).castf::<i32>();
 
-        let last_camera_chunk_position = (last_cam_pos.cast() / CHUNK_SIZE as f64).castf::<i32>();
+            let last_camera_chunk_position = (last_cam_pos.cast() / CHUNK_SIZE as f64).castf::<i32>();
 
-        if camera_chunk_position != last_camera_chunk_position {
-            let mut instance_data = HashSet::new();
+            if camera_chunk_position != last_camera_chunk_position {
+                let mut instance_data = HashSet::new();
 
-            for cx in 0..2 * self.settings.render_distance as usize {
-                for cy in 1..=6 {
-                    for cz in 0..2 * self.settings.render_distance as usize {
-                        instance_data
-                            .insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
+                for cx in 0..2 * self.settings.render_distance as usize {
+                    for cy in 1..=6 {
+                        for cz in 0..2 * self.settings.render_distance as usize {
+                            instance_data
+                                .insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
+                            }
                     }
                 }
+
+                let mut instance_data = instance_data.into_iter().collect::<Vec<_>>();
+
+                instance_data.sort_by(|&a, &b| {
+                    let a_pos = a.cast() * CHUNK_SIZE as f64;
+                    let b_pos = b.cast() * CHUNK_SIZE as f64;
+
+                    let a_dst = a_pos.distance(&cam_pos.cast());
+                    let b_dst = b_pos.distance(&cam_pos.cast());
+
+                    b_dst.partial_cmp(&a_dst).unwrap()
+                });
+
+                self.staging_buffer.write(BufferWrite {
+                    offset: 0,
+                    data: &instance_data[..],
+                });
+
+                self.device.copy_buffer_to_buffer(BufferCopy {
+                    from: &self.staging_buffer,
+                    to: &mut self.instance_buffer,
+                    src: 0,
+                    dst: 0,
+                    size: (instance_data.len() * mem::size_of::<Vector<u32, 3>>()) as u64,
+                });
+
+                self.instance_count = instance_data.len();
             }
 
-            let mut instance_data = instance_data.into_iter().collect::<Vec<_>>();
-
-            instance_data.sort_by(|&a, &b| {
-                let a_pos = a.cast() * CHUNK_SIZE as f64;
-                let b_pos = b.cast() * CHUNK_SIZE as f64;
-
-                let a_dst = a_pos.distance(&cam_pos.cast());
-                let b_dst = b_pos.distance(&cam_pos.cast());
-
-                b_dst.partial_cmp(&a_dst).unwrap()
-            });
+            self.last_camera = Some(batch.camera);
 
             self.staging_buffer.write(BufferWrite {
-                offset: 0,
-                data: &instance_data[..],
+                offset: CAMERA_OFFSET,
+                data: &[batch.camera],
             });
 
             self.device.copy_buffer_to_buffer(BufferCopy {
                 from: &self.staging_buffer,
-                to: &mut self.instance_buffer,
-                src: 0,
-                dst: 0,
-                size: (instance_data.len() * mem::size_of::<Vector<u32, 3>>()) as u64,
+                to: &mut self.data_buffer,
+                src: CAMERA_OFFSET,
+                dst: CAMERA_OFFSET,
+                size: mem::size_of::<Camera>() as u64,
             });
 
-            self.instance_count = instance_data.len();
+            self.staging_buffer.write(BufferWrite {
+                offset: SETTINGS_OFFSET,
+                data: &[*self.settings],
+            });
+
+            self.device.copy_buffer_to_buffer(BufferCopy {
+                from: &self.staging_buffer,
+                to: &mut self.data_buffer,
+                src: SETTINGS_OFFSET,
+                dst: SETTINGS_OFFSET,
+                size: mem::size_of::<RenderSettings>() as u64,
+            });
+
+            self.staging_buffer.write(BufferWrite {
+                offset: OBJECT_OFFSET,
+                data: &[ObjectData {
+                    model: batch.objects[0].model,
+                }],
+            });
+
+            self.device.copy_buffer_to_buffer(BufferCopy {
+                from: &self.staging_buffer,
+                to: &mut self.data_buffer,
+                src: OBJECT_OFFSET,
+                dst: OBJECT_OFFSET,
+                size: mem::size_of::<ObjectData>() as u64,
+            });
+
+            self.staging_buffer.write(BufferWrite {
+                offset: 0,
+                data: &[
+                    batch.objects[0].data.size() as u32,
+                    batch.objects[0].data.nodes().len() as u32,
+                ],
+            });
+
+
+
+            let octree_bytes = 2 * mem::size_of::<u32>()
+                + batch.objects[0].data.nodes().len() * mem::size_of::<crate::octree::Node>();
+            self.staging_buffer.write(BufferWrite {
+                offset: (2 * mem::size_of::<u32>()) as u64,
+                data: batch.objects[0].data.nodes(),
+            });
+
+            self.device.copy_buffer_to_buffer(BufferCopy {
+                from: &self.staging_buffer,
+                to: &mut self.octree_buffer,
+                src: 0,
+                dst: 0,
+                size: octree_bytes as u64,
+
+            });
         }
-
-        self.last_camera = Some(batch.camera);
-
-        self.staging_buffer.write(BufferWrite {
-            offset: CAMERA_OFFSET,
-            data: &[batch.camera],
-        });
-
-        self.device.copy_buffer_to_buffer(BufferCopy {
-            from: &self.staging_buffer,
-            to: &mut self.data_buffer,
-            src: CAMERA_OFFSET,
-            dst: CAMERA_OFFSET,
-            size: mem::size_of::<Camera>() as u64,
-        });
-
-        self.staging_buffer.write(BufferWrite {
-            offset: SETTINGS_OFFSET,
-            data: &[*self.settings],
-        });
-
-        self.device.copy_buffer_to_buffer(BufferCopy {
-            from: &self.staging_buffer,
-            to: &mut self.data_buffer,
-            src: SETTINGS_OFFSET,
-            dst: SETTINGS_OFFSET,
-            size: mem::size_of::<RenderSettings>() as u64,
-        });
-
-        self.staging_buffer.write(BufferWrite {
-            offset: OBJECT_OFFSET,
-            data: &[ObjectData {
-                model: batch.objects[0].model,
-            }],
-        });
-
-        self.device.copy_buffer_to_buffer(BufferCopy {
-            from: &self.staging_buffer,
-            to: &mut self.data_buffer,
-            src: OBJECT_OFFSET,
-            dst: OBJECT_OFFSET,
-            size: mem::size_of::<ObjectData>() as u64,
-        });
-
-        self.staging_buffer.write(BufferWrite {
-            offset: 0,
-            data: &[
-                batch.objects[0].data.size() as u32,
-                batch.objects[0].data.nodes().len() as u32,
-            ],
-        });
-
-        self.staging_buffer.write(BufferWrite {
-            offset: (2 * mem::size_of::<u32>()) as u64,
-            data: batch.objects[0].data.nodes(),
-        });
 
         let octree_bytes = 2 * mem::size_of::<u32>()
             + batch.objects[0].data.nodes().len() * mem::size_of::<crate::octree::Node>();
+        #[cfg(debug_assertions)]
+        {
+            let mut load_graphics = false;
+            dbg!("should not happen");
 
-        self.device.copy_buffer_to_buffer(BufferCopy {
-            from: &self.staging_buffer,
-            to: &mut self.octree_buffer,
-            src: 0,
-            dst: 0,
-            size: octree_bytes as u64,
-        });
-
-        let mut load_graphics = false;
-
-        let mut load_shader = |shader: &mut Shader| match shader.load() {
-            Ok(loaded) => {
-                if loaded {
-                    load_graphics = true;
+            let mut load_shader = |shader: &mut Shader| match shader.load() {
+                Ok(loaded) => {
+                    if loaded {
+                        load_graphics = true;
+                    }
                 }
+                Err(err) => match err {
+                    ShaderError::Compilation(_, message) => {
+                        error!("Failed to compile shader: \n {}", message);
+                    }
+                    _ => panic!("unexpected error refreshing shader"),
+                },
+            };
+
+            load_shader(&mut self.graphics_vertex_shader);
+            load_shader(&mut self.graphics_fragment_shader);
+            load_shader(&mut self.fullscreen_vertex_shader);
+            load_shader(&mut self.postfx_fragment_shader);
+            load_shader(&mut self.present_fragment_shader);
+
+            if load_graphics {
+                info!("Loading pipeline\n");
+                self.render_data = Some(VulkanRenderData::load(self));
+                return Ok(Condition::Retry);
             }
-            Err(err) => match err {
-                ShaderError::Compilation(_, message) => {
-                    error!("Failed to compile shader: \n {}", message);
-                }
-                _ => panic!("unexpected error refreshing shader"),
-            },
-        };
-
-        load_shader(&mut self.graphics_vertex_shader);
-        load_shader(&mut self.graphics_fragment_shader);
-        load_shader(&mut self.fullscreen_vertex_shader);
-        load_shader(&mut self.postfx_fragment_shader);
-        load_shader(&mut self.present_fragment_shader);
-
-        if load_graphics {
-            info!("Loading pipeline\n");
-            self.render_data = Some(VulkanRenderData::load(self));
-            return Ok(Condition::Retry);
         }
 
         self.device.synchronize();
@@ -513,10 +525,12 @@ impl Renderer for Vulkan {
 
         let graphics_color = &render_data.graphics_color[image_index as usize];
         let postfx_color = &render_data.postfx_color[image_index as usize];
-
-        render_data.graphics_prepass_pipeline.bind(
-            image_index,
-            &[
+        if unsafe { DUMMY } {
+            println!("DUMMY");
+            for image_index in 0..render_data.swapchain_images.len() as u32 {
+            render_data.graphics_prepass_pipeline.bind(
+                image_index,
+                &[
                 Binding::Buffer {
                     binding: 0,
                     ty: DescriptorType::UniformBuffer,
@@ -545,99 +559,100 @@ impl Renderer for Vulkan {
                     range: octree_bytes as _,
                     buffer: &self.octree_buffer,
                 },
-            ],
-        );
+                ],
+                );
 
-        render_data.graphics_raycast_pipeline.bind(
-            image_index,
-            &[
-                Binding::Buffer {
-                    binding: 0,
-                    ty: DescriptorType::UniformBuffer,
-                    offset: CAMERA_OFFSET as _,
-                    range: mem::size_of::<Camera>(),
-                    buffer: &self.data_buffer,
-                },
-                Binding::Buffer {
-                    binding: 1,
-                    ty: DescriptorType::UniformBuffer,
-                    offset: OBJECT_OFFSET as _,
-                    range: mem::size_of::<ObjectData>(),
-                    buffer: &self.data_buffer,
-                },
-                Binding::Buffer {
-                    binding: 2,
-                    ty: DescriptorType::UniformBuffer,
-                    offset: SETTINGS_OFFSET as _,
-                    range: mem::size_of::<RenderSettings>(),
-                    buffer: &self.data_buffer,
-                },
-                Binding::Buffer {
-                    binding: 3,
-                    ty: DescriptorType::StorageBuffer,
-                    offset: 0,
-                    range: octree_bytes as _,
-                    buffer: &self.octree_buffer,
-                },
-            ],
-        );
+                render_data.graphics_raycast_pipeline.bind(
+                    image_index,
+                    &[
+                    Binding::Buffer {
+                        binding: 0,
+                        ty: DescriptorType::UniformBuffer,
+                        offset: CAMERA_OFFSET as _,
+                        range: mem::size_of::<Camera>(),
+                        buffer: &self.data_buffer,
+                    },
+                    Binding::Buffer {
+                        binding: 1,
+                        ty: DescriptorType::UniformBuffer,
+                        offset: OBJECT_OFFSET as _,
+                        range: mem::size_of::<ObjectData>(),
+                        buffer: &self.data_buffer,
+                    },
+                    Binding::Buffer {
+                        binding: 2,
+                        ty: DescriptorType::UniformBuffer,
+                        offset: SETTINGS_OFFSET as _,
+                        range: mem::size_of::<RenderSettings>(),
+                        buffer: &self.data_buffer,
+                    },
+                    Binding::Buffer {
+                        binding: 3,
+                        ty: DescriptorType::StorageBuffer,
+                        offset: 0,
+                        range: octree_bytes as _,
+                        buffer: &self.octree_buffer,
+                    },
+                    ],
+                    );
 
-        render_data.postfx_pipeline.bind(
-            image_index,
-            &[
-                Binding::Buffer {
-                    binding: 0,
-                    ty: DescriptorType::UniformBuffer,
-                    offset: SETTINGS_OFFSET as _,
-                    range: mem::size_of::<RenderSettings>(),
-                    buffer: &self.data_buffer,
-                },
-                Binding::Image {
-                    binding: 1,
-                    ty: DescriptorType::StorageImage,
-                    layout: ImageLayout::General,
-                    image: &graphics_color,
-                },
-                Binding::Image {
-                    binding: 2,
-                    ty: DescriptorType::StorageImage,
-                    layout: ImageLayout::General,
-                    image: &render_data.graphics_occlusion[image_index as usize],
-                },
-                Binding::Image {
-                    binding: 3,
-                    ty: DescriptorType::CombinedImageSampler,
-                    layout: ImageLayout::ShaderReadOnly,
-                    image: &render_data.depth,
-                },
-            ],
-        );
+                    render_data.postfx_pipeline.bind(
+                        image_index,
+                        &[
+                        Binding::Buffer {
+                            binding: 0,
+                            ty: DescriptorType::UniformBuffer,
+                            offset: SETTINGS_OFFSET as _,
+                            range: mem::size_of::<RenderSettings>(),
+                            buffer: &self.data_buffer,
+                        },
+                        Binding::Image {
+                            binding: 1,
+                            ty: DescriptorType::StorageImage,
+                            layout: ImageLayout::General,
+                            image: &graphics_color,
+                        },
+                        Binding::Image {
+                            binding: 2,
+                            ty: DescriptorType::StorageImage,
+                            layout: ImageLayout::General,
+                            image: &render_data.graphics_occlusion[image_index as usize],
+                        },
+                        Binding::Image {
+                            binding: 3,
+                            ty: DescriptorType::CombinedImageSampler,
+                            layout: ImageLayout::ShaderReadOnly,
+                            image: &render_data.depth,
+                        },
+                        ],
+                        );
 
-        render_data.present_pipeline.bind(
-            image_index,
-            &[
-                Binding::Buffer {
-                    binding: 0,
-                    ty: DescriptorType::UniformBuffer,
-                    offset: SETTINGS_OFFSET as _,
-                    range: mem::size_of::<RenderSettings>(),
-                    buffer: &self.data_buffer,
-                },
-                Binding::Image {
-                    binding: 1,
-                    ty: DescriptorType::StorageImage,
-                    layout: ImageLayout::General,
-                    image: &postfx_color,
-                },
-                Binding::Image {
-                    binding: 2,
-                    ty: DescriptorType::CombinedImageSampler,
-                    layout: ImageLayout::ShaderReadOnly,
-                    image: &self.look_up_table,
-                },
-            ],
-        );
-
+                        render_data.present_pipeline.bind(
+                            image_index,
+                            &[
+                            Binding::Buffer {
+                                binding: 0,
+                                ty: DescriptorType::UniformBuffer,
+                                offset: SETTINGS_OFFSET as _,
+                                range: mem::size_of::<RenderSettings>(),
+                                buffer: &self.data_buffer,
+                            },
+                            Binding::Image {
+                                binding: 1,
+                                ty: DescriptorType::StorageImage,
+                                layout: ImageLayout::General,
+                                image: &postfx_color,
+                            },
+                            Binding::Image {
+                                binding: 2,
+                                ty: DescriptorType::CombinedImageSampler,
+                                layout: ImageLayout::ShaderReadOnly,
+                                image: &self.look_up_table,
+                            },
+                            ],
+                            );
+            }
+       }
         self.device.draw_call(|mut commands| {
             let render_pass_begin_info = RenderPassBeginInfo {
                 render_pass: &render_data.graphics_render_pass,
@@ -684,74 +699,76 @@ impl Renderer for Vulkan {
                 PipelineStage::COLOR_ATTACHMENT_OUTPUT,
                 PipelineStage::FRAGMENT_SHADER,
                 &[
-                    Barrier::Image {
-                        src_access: Access::empty(),
-                        dst_access: Access::empty(),
-                        old_layout: ImageLayout::Undefined,
-                        new_layout: ImageLayout::General,
-                        image: &render_data.graphics_color[image_index as usize],
-                    },
-                    Barrier::Image {
-                        src_access: Access::empty(),
-                        dst_access: Access::empty(),
-                        old_layout: ImageLayout::Undefined,
-                        new_layout: ImageLayout::General,
-                        image: &render_data.graphics_occlusion[image_index as usize],
-                    },
-                    Barrier::Image {
-                        src_access: Access::empty(),
-                        dst_access: Access::empty(),
-                        old_layout: ImageLayout::Undefined,
-                        new_layout: ImageLayout::ShaderReadOnly,
-                        image: &render_data.depth,
-                    },
-                ],
-            );
-
-            let render_pass_begin_info = RenderPassBeginInfo {
-                render_pass: &render_data.postfx_render_pass,
-                framebuffer: &render_data.postfx_framebuffers[image_index as usize],
-                color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
-                depth_stencil_clear_value: None,
-            };
-
-            commands.begin_render_pass(render_pass_begin_info);
-
-            commands.bind_pipeline(image_index, &render_data.postfx_pipeline);
-
-            commands.draw(3, 1, 0, 0);
-
-            commands.end_render_pass();
-
-            commands.pipeline_barrier(
-                PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-                PipelineStage::FRAGMENT_SHADER,
-                &[Barrier::Image {
+                Barrier::Image {
                     src_access: Access::empty(),
                     dst_access: Access::empty(),
                     old_layout: ImageLayout::Undefined,
                     new_layout: ImageLayout::General,
-                    image: &render_data.postfx_color[image_index as usize],
-                }],
-            );
+                    image: &render_data.graphics_color[image_index as usize],
+                },
+                Barrier::Image {
+                    src_access: Access::empty(),
+                    dst_access: Access::empty(),
+                    old_layout: ImageLayout::Undefined,
+                    new_layout: ImageLayout::General,
+                    image: &render_data.graphics_occlusion[image_index as usize],
+                },
+                Barrier::Image {
+                    src_access: Access::empty(),
+                    dst_access: Access::empty(),
+                    old_layout: ImageLayout::Undefined,
+                    new_layout: ImageLayout::ShaderReadOnly,
+                    image: &render_data.depth,
+                },
+                ],
+                );
 
-            let render_pass_begin_info = RenderPassBeginInfo {
-                render_pass: &render_data.present_render_pass,
-                framebuffer: &render_data.present_framebuffers[image_index as usize],
-                color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
-                depth_stencil_clear_value: Some((1.0, 0)),
-            };
+                let render_pass_begin_info = RenderPassBeginInfo {
+                    render_pass: &render_data.postfx_render_pass,
+                    framebuffer: &render_data.postfx_framebuffers[image_index as usize],
+                    color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
+                    depth_stencil_clear_value: None,
+                };
 
-            commands.begin_render_pass(render_pass_begin_info);
+                commands.begin_render_pass(render_pass_begin_info);
 
-            commands.bind_pipeline(image_index, &render_data.present_pipeline);
+                commands.bind_pipeline(image_index, &render_data.postfx_pipeline);
 
-            commands.draw(3, 1, 0, 0);
+                commands.draw(3, 1, 0, 0);
 
-            commands.end_render_pass();
+                commands.end_render_pass();
+
+                commands.pipeline_barrier(
+                    PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+                    PipelineStage::FRAGMENT_SHADER,
+                    &[Barrier::Image {
+                        src_access: Access::empty(),
+                        dst_access: Access::empty(),
+                        old_layout: ImageLayout::Undefined,
+                        new_layout: ImageLayout::General,
+                        image: &render_data.postfx_color[image_index as usize],
+                    }],
+                );
+
+                let render_pass_begin_info = RenderPassBeginInfo {
+                    render_pass: &render_data.present_render_pass,
+                    framebuffer: &render_data.present_framebuffers[image_index as usize],
+                    color_clear_values: &[[1.0, 0.0, 1.0, 1.0]],
+                    depth_stencil_clear_value: Some((1.0, 0)),
+                };
+
+                commands.begin_render_pass(render_pass_begin_info);
+
+                commands.bind_pipeline(image_index, &render_data.present_pipeline);
+
+                commands.draw(3, 1, 0, 0);
+
+                commands.end_render_pass();
         });
 
         let present_result = self.device.present(&render_data.swapchain);
+
+        unsafe { DUMMY = false };
 
         match present_result {
             Ok(()) => {}
@@ -760,7 +777,6 @@ impl Renderer for Vulkan {
                 return Ok(Condition::Retry);
             }
         }
-
         Ok(Condition::Success)
     }
 
@@ -807,7 +823,7 @@ impl VulkanRenderData {
                     extent: graphics_extent,
                 })
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_occlusion = (0..swapchain_images.len())
             .map(|_| {
@@ -819,7 +835,7 @@ impl VulkanRenderData {
                     extent: graphics_extent,
                 })
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let postfx_color = (0..swapchain_images.len())
             .map(|_| {
@@ -831,7 +847,7 @@ impl VulkanRenderData {
                     extent: graphics_extent,
                 })
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         //RENDERPASSES
         let graphics_render_pass = RenderPass::new(RenderPassInfo {
@@ -864,30 +880,30 @@ impl VulkanRenderData {
                     layout: ImageLayout::DepthStencilAttachment,
                     ty: AttachmentType::DepthStencil,
                 },
-            ],
-            subpasses: &[
-                Subpass {
-                    src: None,
-                    src_access: Access::empty(),
-                    src_stage: PipelineStage::EARLY_FRAGMENT_TESTS,
-                    dst: Some(0),
-                    dst_access: Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    dst_stage: PipelineStage::EARLY_FRAGMENT_TESTS,
-                    attachments: &[2],
-                },
-                Subpass {
-                    src: Some(0),
-                    src_access: Access::empty(),
-                    src_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT
-                        | PipelineStage::EARLY_FRAGMENT_TESTS,
-                    dst: Some(1),
-                    dst_access: Access::COLOR_ATTACHMENT_WRITE
-                        | Access::DEPTH_STENCIL_ATTACHMENT_READ,
-                    dst_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT
-                        | PipelineStage::EARLY_FRAGMENT_TESTS,
-                    attachments: &[0, 1, 2],
-                },
-            ],
+                ],
+                subpasses: &[
+                    Subpass {
+                        src: None,
+                        src_access: Access::empty(),
+                        src_stage: PipelineStage::EARLY_FRAGMENT_TESTS,
+                        dst: Some(0),
+                        dst_access: Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        dst_stage: PipelineStage::EARLY_FRAGMENT_TESTS,
+                        attachments: &[2],
+                    },
+                    Subpass {
+                        src: Some(0),
+                        src_access: Access::empty(),
+                        src_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT
+                            | PipelineStage::EARLY_FRAGMENT_TESTS,
+                            dst: Some(1),
+                            dst_access: Access::COLOR_ATTACHMENT_WRITE
+                                | Access::DEPTH_STENCIL_ATTACHMENT_READ,
+                                dst_stage: PipelineStage::COLOR_ATTACHMENT_OUTPUT
+                                    | PipelineStage::EARLY_FRAGMENT_TESTS,
+                                    attachments: &[0, 1, 2],
+                    },
+                    ],
         });
 
         let postfx_render_pass = RenderPass::new(RenderPassInfo {
@@ -944,7 +960,7 @@ impl VulkanRenderData {
                     attachments: &[&graphics_color[i], &graphics_occlusion[i], &depth],
                 })
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let postfx_framebuffers = (0..swapchain_images.len())
             .map(|i| {
@@ -955,7 +971,7 @@ impl VulkanRenderData {
                     attachments: &[&postfx_color[i]],
                 })
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let present_framebuffers = (0..swapchain_images.len())
             .map(|i| {
@@ -966,7 +982,7 @@ impl VulkanRenderData {
                     attachments: &[&swapchain_images[i]],
                 })
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         //PIPELINES
         let graphics_prepass_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
@@ -1009,33 +1025,33 @@ impl VulkanRenderData {
                     format: Format::Rgb32Uint,
                     rate: InputRate::Instance,
                 },
-            ],
-            layout: &[
-                Descriptor {
-                    binding: 0,
-                    ty: DescriptorType::UniformBuffer,
-                    count: 1,
-                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
-                },
-                Descriptor {
-                    binding: 1,
-                    ty: DescriptorType::UniformBuffer,
-                    count: 1,
-                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
-                },
-                Descriptor {
-                    binding: 2,
-                    ty: DescriptorType::UniformBuffer,
-                    count: 1,
-                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
-                },
-                Descriptor {
-                    binding: 3,
-                    ty: DescriptorType::StorageBuffer,
-                    count: 1,
-                    stage: ShaderStage::FRAGMENT,
-                },
-            ],
+                ],
+                layout: &[
+                    Descriptor {
+                        binding: 0,
+                        ty: DescriptorType::UniformBuffer,
+                        count: 1,
+                        stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                    },
+                    Descriptor {
+                        binding: 1,
+                        ty: DescriptorType::UniformBuffer,
+                        count: 1,
+                        stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                    },
+                    Descriptor {
+                        binding: 2,
+                        ty: DescriptorType::UniformBuffer,
+                        count: 1,
+                        stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                    },
+                    Descriptor {
+                        binding: 3,
+                        ty: DescriptorType::StorageBuffer,
+                        count: 1,
+                        stage: ShaderStage::FRAGMENT,
+                    },
+                    ],
         });
 
         let graphics_raycast_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
@@ -1078,33 +1094,33 @@ impl VulkanRenderData {
                     format: Format::Rgb32Uint,
                     rate: InputRate::Instance,
                 },
-            ],
-            layout: &[
-                Descriptor {
-                    binding: 0,
-                    ty: DescriptorType::UniformBuffer,
-                    count: 1,
-                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
-                },
-                Descriptor {
-                    binding: 1,
-                    ty: DescriptorType::UniformBuffer,
-                    count: 1,
-                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
-                },
-                Descriptor {
-                    binding: 2,
-                    ty: DescriptorType::UniformBuffer,
-                    count: 1,
-                    stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
-                },
-                Descriptor {
-                    binding: 3,
-                    ty: DescriptorType::StorageBuffer,
-                    count: 1,
-                    stage: ShaderStage::FRAGMENT,
-                },
-            ],
+                ],
+                layout: &[
+                    Descriptor {
+                        binding: 0,
+                        ty: DescriptorType::UniformBuffer,
+                        count: 1,
+                        stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                    },
+                    Descriptor {
+                        binding: 1,
+                        ty: DescriptorType::UniformBuffer,
+                        count: 1,
+                        stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                    },
+                    Descriptor {
+                        binding: 2,
+                        ty: DescriptorType::UniformBuffer,
+                        count: 1,
+                        stage: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
+                    },
+                    Descriptor {
+                        binding: 3,
+                        ty: DescriptorType::StorageBuffer,
+                        count: 1,
+                        stage: ShaderStage::FRAGMENT,
+                    },
+                    ],
         });
 
         let postfx_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
@@ -1148,7 +1164,7 @@ impl VulkanRenderData {
                     count: 1,
                     stage: ShaderStage::FRAGMENT,
                 },
-            ],
+                ],
         });
 
         let present_pipeline = Pipeline::new_graphics_pipeline(GraphicsPipelineInfo {
@@ -1211,158 +1227,158 @@ impl VulkanRenderData {
 }
 
 /*
-fn create_compute_pipeline(
-    device: Rc<vk::Device>,
-    stage: vk::PipelineShaderStageCreateInfo<'_>,
-    layout: &'_ vk::PipelineLayout,
-) -> vk::Pipeline {
-    let compute_pipeline_create_info = vk::ComputePipelineCreateInfo {
-        stage,
-        layout,
-        base_pipeline: None,
-        base_pipeline_index: -1,
+   fn create_compute_pipeline(
+   device: Rc<vk::Device>,
+   stage: vk::PipelineShaderStageCreateInfo<'_>,
+   layout: &'_ vk::PipelineLayout,
+   ) -> vk::Pipeline {
+   let compute_pipeline_create_info = vk::ComputePipelineCreateInfo {
+   stage,
+   layout,
+   base_pipeline: None,
+   base_pipeline_index: -1,
+   };
+
+   vk::Pipeline::new_compute_pipelines(device, None, &[compute_pipeline_create_info])
+   .expect("failed to create compute pipeline")
+   .remove(0)
+   }
+
+   fn create_graphics_pipeline(
+   device: Rc<vk::Device>,
+   vertex_input_info: vk::PipelineVertexInputStateCreateInfo,
+   stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
+   render_pass: &'_ vk::RenderPass,
+   layout: &'_ vk::PipelineLayout,
+   extent: (u32, u32),
+   attachment_count: usize,
+   cull_mode: u32,
+   ) -> vk::Pipeline {
+   }
+   */
+/*
+   pub struct VulkanRenderInfo {
+   swapchain_images.len(): u32,
+   surface_format: vk::SurfaceFormat,
+   surface_capabilities: vk::SurfaceCapabilities,
+   present_mode: vk::PresentMode,
+   extent: (u32, u32),
+   scaling_factor: u32,
+   }
+
+   pub struct VulkanComputeData {
+   jfa_pipeline: vk::Pipeline,
+   jfa_pipeline_layout: vk::PipelineLayout,
+   jfa_descriptor_sets: Vec<vk::DescriptorSet>,
+   jfa_descriptor_pool: vk::DescriptorPool,
+   jfa_descriptor_set_layout: vk::DescriptorSetLayout,
+   }
+
+   impl VulkanComputeData {
+   pub fn init(device: Rc<vk::Device>, jfa_stage: vk::PipelineShaderStageCreateInfo<'_>) -> Self {
+   let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
+   binding: 0,
+   descriptor_type: vk::DescriptorType::UniformBuffer,
+   descriptor_count: 1,
+   stage: vk::SHADER_STAGE_COMPUTE,
+   };
+
+   let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
+   binding: 1,
+   descriptor_type: vk::DescriptorType::StorageBuffer,
+   descriptor_count: 1,
+   stage: vk::SHADER_STAGE_COMPUTE,
+   };
+
+/*let cubelet_sdf_result_binding = vk::DescriptorSetLayoutBinding {
+binding: 2,
+descriptor_type: vk::DescriptorType::StorageImage,
+descriptor_count: 1,
+stage: vk::SHADER_STAGE_COMPUTE,
+};
+*/
+
+let jfai_buffer_binding = vk::DescriptorSetLayoutBinding {
+    binding: 2,
+    descriptor_type: vk::DescriptorType::StorageBuffer,
+    descriptor_count: 1,
+    stage: vk::SHADER_STAGE_COMPUTE,
+};
+
+let jfa_descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+    bindings: &[
+        uniform_buffer_binding,
+        octree_buffer_binding,
+        //      cubelet_sdf_result_binding,
+        jfai_buffer_binding,
+    ],
+};
+
+    let jfa_descriptor_set_layout =
+vk::DescriptorSetLayout::new(device.clone(), jfa_descriptor_set_layout_create_info)
+    .expect("failed to create descriptor set layout");
+
+    let uniform_buffer_pool_size = vk::DescriptorPoolSize {
+        descriptor_type: vk::DescriptorType::UniformBuffer,
+        descriptor_count: 1,
     };
 
-    vk::Pipeline::new_compute_pipelines(device, None, &[compute_pipeline_create_info])
-        .expect("failed to create compute pipeline")
-        .remove(0)
-}
-
-fn create_graphics_pipeline(
-    device: Rc<vk::Device>,
-    vertex_input_info: vk::PipelineVertexInputStateCreateInfo,
-    stages: &'_ [vk::PipelineShaderStageCreateInfo<'_>],
-    render_pass: &'_ vk::RenderPass,
-    layout: &'_ vk::PipelineLayout,
-    extent: (u32, u32),
-    attachment_count: usize,
-    cull_mode: u32,
-) -> vk::Pipeline {
-}
-*/
+let octree_buffer_pool_size = vk::DescriptorPoolSize {
+    descriptor_type: vk::DescriptorType::StorageBuffer,
+    descriptor_count: 1,
+};
 /*
-pub struct VulkanRenderInfo {
-    swapchain_images.len(): u32,
-    surface_format: vk::SurfaceFormat,
-    surface_capabilities: vk::SurfaceCapabilities,
-    present_mode: vk::PresentMode,
-    extent: (u32, u32),
-    scaling_factor: u32,
-}
+   let cubelet_sdf_result_pool_size = vk::DescriptorPoolSize {
+   descriptor_type: vk::DescriptorType::StorageImage,
+   descriptor_count: 1,
+   };
+   */
+let jfai_buffer_pool_size = vk::DescriptorPoolSize {
+    descriptor_type: vk::DescriptorType::StorageBuffer,
+    descriptor_count: 1,
+};
 
-pub struct VulkanComputeData {
-    jfa_pipeline: vk::Pipeline,
-    jfa_pipeline_layout: vk::PipelineLayout,
-    jfa_descriptor_sets: Vec<vk::DescriptorSet>,
-    jfa_descriptor_pool: vk::DescriptorPool,
-    jfa_descriptor_set_layout: vk::DescriptorSetLayout,
-}
+let jfa_descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+    max_sets: 1,
+    pool_sizes: &[
+        uniform_buffer_pool_size,
+        octree_buffer_pool_size,
+        //              cubelet_sdf_result_pool_size,
+        jfai_buffer_pool_size,
+    ],
+};
 
-impl VulkanComputeData {
-    pub fn init(device: Rc<vk::Device>, jfa_stage: vk::PipelineShaderStageCreateInfo<'_>) -> Self {
-        let uniform_buffer_binding = vk::DescriptorSetLayoutBinding {
-            binding: 0,
-            descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_COMPUTE,
-        };
+    let jfa_descriptor_pool =
+vk::DescriptorPool::new(device.clone(), jfa_descriptor_pool_create_info)
+    .expect("failed to create descriptor pool");
 
-        let octree_buffer_binding = vk::DescriptorSetLayoutBinding {
-            binding: 1,
-            descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_COMPUTE,
-        };
+    let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
+        descriptor_pool: &jfa_descriptor_pool,
+        set_layouts: &[&jfa_descriptor_set_layout],
+    };
 
-        /*let cubelet_sdf_result_binding = vk::DescriptorSetLayoutBinding {
-            binding: 2,
-            descriptor_type: vk::DescriptorType::StorageImage,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_COMPUTE,
-        };
-        */
+    let jfa_descriptor_sets =
+vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
+    .expect("failed to allocate descriptor sets");
 
-        let jfai_buffer_binding = vk::DescriptorSetLayoutBinding {
-            binding: 2,
-            descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 1,
-            stage: vk::SHADER_STAGE_COMPUTE,
-        };
+    let jfa_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+        set_layouts: &[&jfa_descriptor_set_layout],
+    };
 
-        let jfa_descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
-            bindings: &[
-                uniform_buffer_binding,
-                octree_buffer_binding,
-                //      cubelet_sdf_result_binding,
-                jfai_buffer_binding,
-            ],
-        };
+    let jfa_pipeline_layout =
+vk::PipelineLayout::new(device.clone(), jfa_pipeline_layout_create_info)
+    .expect("failed to create pipeline layout");
 
-        let jfa_descriptor_set_layout =
-            vk::DescriptorSetLayout::new(device.clone(), jfa_descriptor_set_layout_create_info)
-                .expect("failed to create descriptor set layout");
+    let jfa_pipeline = create_compute_pipeline(device.clone(), jfa_stage, &jfa_pipeline_layout);
 
-        let uniform_buffer_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::UniformBuffer,
-            descriptor_count: 1,
-        };
-
-        let octree_buffer_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 1,
-        };
-        /*
-                let cubelet_sdf_result_pool_size = vk::DescriptorPoolSize {
-                    descriptor_type: vk::DescriptorType::StorageImage,
-                    descriptor_count: 1,
-                };
-        */
-        let jfai_buffer_pool_size = vk::DescriptorPoolSize {
-            descriptor_type: vk::DescriptorType::StorageBuffer,
-            descriptor_count: 1,
-        };
-
-        let jfa_descriptor_pool_create_info = vk::DescriptorPoolCreateInfo {
-            max_sets: 1,
-            pool_sizes: &[
-                uniform_buffer_pool_size,
-                octree_buffer_pool_size,
-                //              cubelet_sdf_result_pool_size,
-                jfai_buffer_pool_size,
-            ],
-        };
-
-        let jfa_descriptor_pool =
-            vk::DescriptorPool::new(device.clone(), jfa_descriptor_pool_create_info)
-                .expect("failed to create descriptor pool");
-
-        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: &jfa_descriptor_pool,
-            set_layouts: &[&jfa_descriptor_set_layout],
-        };
-
-        let jfa_descriptor_sets =
-            vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
-                .expect("failed to allocate descriptor sets");
-
-        let jfa_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
-            set_layouts: &[&jfa_descriptor_set_layout],
-        };
-
-        let jfa_pipeline_layout =
-            vk::PipelineLayout::new(device.clone(), jfa_pipeline_layout_create_info)
-                .expect("failed to create pipeline layout");
-
-        let jfa_pipeline = create_compute_pipeline(device.clone(), jfa_stage, &jfa_pipeline_layout);
-
-        Self {
-            jfa_pipeline,
-            jfa_pipeline_layout,
-            jfa_descriptor_sets,
-            jfa_descriptor_pool,
-            jfa_descriptor_set_layout,
-        }
+    Self {
+        jfa_pipeline,
+        jfa_pipeline_layout,
+        jfa_descriptor_sets,
+        jfa_descriptor_pool,
+        jfa_descriptor_set_layout,
     }
+}
 }
 
 pub struct VulkanRenderData {
@@ -1449,7 +1465,7 @@ impl VulkanRenderData {
             physical_device.memory_properties(),
             false,
         )
-        .expect("failed to allocate memory");
+            .expect("failed to allocate memory");
 
         depth
             .bind_memory(&depth_memory)
@@ -1549,7 +1565,7 @@ impl VulkanRenderData {
                 vk::ImageView::new(device.clone(), create_info)
                     .expect("failed to create image view")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         //DISTANCE
         let mut distance = (0..swapchain_images.len())
@@ -1573,7 +1589,7 @@ impl VulkanRenderData {
                 vk::Image::new(device.clone(), distance_create_info)
                     .expect("failed to allocate image")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let distance_memory = distance
             .iter_mut()
@@ -1589,7 +1605,7 @@ impl VulkanRenderData {
                     physical_device.memory_properties(),
                     false,
                 )
-                .expect("failed to allocate memory");
+                    .expect("failed to allocate memory");
 
                 distance
                     .bind_memory(&distance_memory)
@@ -1597,7 +1613,7 @@ impl VulkanRenderData {
 
                 distance_memory
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let distance_views = distance
             .iter()
@@ -1624,7 +1640,7 @@ impl VulkanRenderData {
                 vk::ImageView::new(device.clone(), distance_view_create_info)
                     .expect("failed to create image view")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let distance_samplers = (0..distance.len())
             .map(|_| {
@@ -1649,7 +1665,7 @@ impl VulkanRenderData {
                 vk::Sampler::new(device.clone(), distance_sampler_create_info)
                     .expect("failed to create sampler")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         //GRAPHICS
         let mut graphics_color = (0..swapchain_images.len())
@@ -1673,7 +1689,7 @@ impl VulkanRenderData {
                 vk::Image::new(device.clone(), graphics_color_create_info)
                     .expect("failed to allocate image")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_color_memory = graphics_color
             .iter_mut()
@@ -1689,7 +1705,7 @@ impl VulkanRenderData {
                     physical_device.memory_properties(),
                     false,
                 )
-                .expect("failed to allocate memory");
+                    .expect("failed to allocate memory");
 
                 graphics_color
                     .bind_memory(&graphics_color_memory)
@@ -1697,7 +1713,7 @@ impl VulkanRenderData {
 
                 graphics_color_memory
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_color_views = graphics_color
             .iter()
@@ -1724,7 +1740,7 @@ impl VulkanRenderData {
                 vk::ImageView::new(device.clone(), graphics_color_view_create_info)
                     .expect("failed to create image view")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_color_samplers = (0..graphics_color.len())
             .map(|_| {
@@ -1749,7 +1765,7 @@ impl VulkanRenderData {
                 vk::Sampler::new(device.clone(), graphics_color_sampler_create_info)
                     .expect("failed to create sampler")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let mut graphics_occlusion = (0..swapchain_images.len())
             .map(|_| {
@@ -1772,7 +1788,7 @@ impl VulkanRenderData {
                 vk::Image::new(device.clone(), graphics_occlusion_create_info)
                     .expect("failed to allocate image")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_occlusion_memory = graphics_occlusion
             .iter_mut()
@@ -1788,7 +1804,7 @@ impl VulkanRenderData {
                     physical_device.memory_properties(),
                     false,
                 )
-                .expect("failed to allocate memory");
+                    .expect("failed to allocate memory");
 
                 graphics_occlusion
                     .bind_memory(&graphics_occlusion_memory)
@@ -1796,7 +1812,7 @@ impl VulkanRenderData {
 
                 graphics_occlusion_memory
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_occlusion_views = graphics_occlusion
             .iter()
@@ -1823,7 +1839,7 @@ impl VulkanRenderData {
                 vk::ImageView::new(device.clone(), graphics_occlusion_view_create_info)
                     .expect("failed to create image view")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let graphics_occlusion_samplers = (0..graphics_occlusion.len())
             .map(|_| {
@@ -1848,7 +1864,7 @@ impl VulkanRenderData {
                 vk::Sampler::new(device.clone(), graphics_occlusion_sampler_create_info)
                     .expect("failed to create sampler")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let camera_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -1881,7 +1897,7 @@ impl VulkanRenderData {
 
         let graphics_descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
-                .expect("failed to create descriptor set layout");
+            .expect("failed to create descriptor set layout");
 
         let camera_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
@@ -1909,7 +1925,7 @@ impl VulkanRenderData {
 
         let graphics_descriptor_pool =
             vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
-                .expect("failed to create descriptor pool");
+            .expect("failed to create descriptor pool");
 
         let set_layouts = iter::repeat(&graphics_descriptor_set_layout)
             .take(swapchain_images.len() as _)
@@ -1922,7 +1938,7 @@ impl VulkanRenderData {
 
         let graphics_descriptor_sets =
             vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
-                .expect("failed to allocate descriptor sets");
+            .expect("failed to allocate descriptor sets");
 
         let graphics_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
             set_layouts: &[&graphics_descriptor_set_layout],
@@ -1930,7 +1946,7 @@ impl VulkanRenderData {
 
         let graphics_pipeline_layout =
             vk::PipelineLayout::new(device.clone(), graphics_pipeline_layout_create_info)
-                .expect("failed to create pipeline layout");
+            .expect("failed to create pipeline layout");
 
         let color_attachment_description = vk::AttachmentDescription {
             format: vk::Format::Rgba32Sfloat,
@@ -2143,7 +2159,7 @@ impl VulkanRenderData {
                 vk::Image::new(device.clone(), postfx_color_create_info)
                     .expect("failed to allocate image")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let postfx_color_memory = postfx_color
             .iter_mut()
@@ -2159,7 +2175,7 @@ impl VulkanRenderData {
                     physical_device.memory_properties(),
                     false,
                 )
-                .expect("failed to allocate memory");
+                    .expect("failed to allocate memory");
 
                 postfx_color
                     .bind_memory(&postfx_color_memory)
@@ -2167,7 +2183,7 @@ impl VulkanRenderData {
 
                 postfx_color_memory
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let postfx_color_views = postfx_color
             .iter()
@@ -2194,7 +2210,7 @@ impl VulkanRenderData {
                 vk::ImageView::new(device.clone(), postfx_color_view_create_info)
                     .expect("failed to create image view")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let postfx_color_samplers = (0..postfx_color.len())
             .map(|_| {
@@ -2219,7 +2235,7 @@ impl VulkanRenderData {
                 vk::Sampler::new(device.clone(), postfx_color_sampler_create_info)
                     .expect("failed to create sampler")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         let settings_buffer_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -2260,7 +2276,7 @@ impl VulkanRenderData {
 
         let postfx_descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
-                .expect("failed to create descriptor set layout");
+            .expect("failed to create descriptor set layout");
 
         let settings_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
@@ -2294,7 +2310,7 @@ impl VulkanRenderData {
 
         let postfx_descriptor_pool =
             vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
-                .expect("failed to create descriptor pool");
+            .expect("failed to create descriptor pool");
 
         let set_layouts = iter::repeat(&postfx_descriptor_set_layout)
             .take(swapchain_images.len() as _)
@@ -2307,7 +2323,7 @@ impl VulkanRenderData {
 
         let postfx_descriptor_sets =
             vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
-                .expect("failed to allocate descriptor sets");
+            .expect("failed to allocate descriptor sets");
 
         let postfx_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
             set_layouts: &[&postfx_descriptor_set_layout],
@@ -2315,7 +2331,7 @@ impl VulkanRenderData {
 
         let postfx_pipeline_layout =
             vk::PipelineLayout::new(device.clone(), postfx_pipeline_layout_create_info)
-                .expect("failed to create pipeline layout");
+            .expect("failed to create pipeline layout");
 
         let color_attachment_description = vk::AttachmentDescription {
             format: vk::Format::Rgba32Sfloat,
@@ -2393,7 +2409,7 @@ impl VulkanRenderData {
                 vk::Framebuffer::new(device.clone(), framebuffer_create_info)
                     .expect("failed to create framebuffer")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         //PRESENT
         let settings_buffer_binding = vk::DescriptorSetLayoutBinding {
@@ -2435,7 +2451,7 @@ impl VulkanRenderData {
 
         let present_descriptor_set_layout =
             vk::DescriptorSetLayout::new(device.clone(), descriptor_set_layout_create_info)
-                .expect("failed to create descriptor set layout");
+            .expect("failed to create descriptor set layout");
 
         let settings_buffer_pool_size = vk::DescriptorPoolSize {
             descriptor_type: vk::DescriptorType::UniformBuffer,
@@ -2469,7 +2485,7 @@ impl VulkanRenderData {
 
         let present_descriptor_pool =
             vk::DescriptorPool::new(device.clone(), descriptor_pool_create_info)
-                .expect("failed to create descriptor pool");
+            .expect("failed to create descriptor pool");
 
         let set_layouts = iter::repeat(&present_descriptor_set_layout)
             .take(swapchain_images.len() as _)
@@ -2482,7 +2498,7 @@ impl VulkanRenderData {
 
         let present_descriptor_sets =
             vk::DescriptorSet::allocate(device.clone(), descriptor_set_allocate_info)
-                .expect("failed to allocate descriptor sets");
+            .expect("failed to allocate descriptor sets");
 
         let present_pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
             set_layouts: &[&present_descriptor_set_layout],
@@ -2490,7 +2506,7 @@ impl VulkanRenderData {
 
         let present_pipeline_layout =
             vk::PipelineLayout::new(device.clone(), present_pipeline_layout_create_info)
-                .expect("failed to create pipeline layout");
+            .expect("failed to create pipeline layout");
 
         let color_attachment_description = vk::AttachmentDescription {
             format: render_info.surface_format.format,
@@ -2581,7 +2597,7 @@ impl VulkanRenderData {
                 vk::Framebuffer::new(device.clone(), framebuffer_create_info)
                     .expect("failed to create framebuffer")
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
         Self {
             swapchain,
@@ -2634,394 +2650,394 @@ impl VulkanRenderData {
 
 /*fn draw_batch(&mut self, batch: Batch, entries: &'_ [Entry<'_>]) {
 
-    let camera_chunk_position = Vector::<i32, 3>::new([
-        (cam_pos[0] / CHUNK_SIZE as f32) as i32,
-        (cam_pos[1] / CHUNK_SIZE as f32) as i32,
-        (cam_pos[2] / CHUNK_SIZE as f32) as i32,
-    ]);
-    let last_camera_chunk_position = Vector::<i32, 3>::new([
-        (last_cam_pos[0] / CHUNK_SIZE as f32) as i32,
-        (last_cam_pos[1] / CHUNK_SIZE as f32) as i32,
-        (last_cam_pos[2] / CHUNK_SIZE as f32) as i32,
-    ]);
+  let camera_chunk_position = Vector::<i32, 3>::new([
+  (cam_pos[0] / CHUNK_SIZE as f32) as i32,
+  (cam_pos[1] / CHUNK_SIZE as f32) as i32,
+  (cam_pos[2] / CHUNK_SIZE as f32) as i32,
+  ]);
+  let last_camera_chunk_position = Vector::<i32, 3>::new([
+  (last_cam_pos[0] / CHUNK_SIZE as f32) as i32,
+  (last_cam_pos[1] / CHUNK_SIZE as f32) as i32,
+  (last_cam_pos[2] / CHUNK_SIZE as f32) as i32,
+  ]);
 
-    let instance_offset = 65536;
+  let instance_offset = 65536;
 
-    if camera_chunk_position != last_camera_chunk_position {
-        let mut instance_data = HashSet::new();
+  if camera_chunk_position != last_camera_chunk_position {
+  let mut instance_data = HashSet::new();
 
-        for cx in 0..2 * self.settings.render_distance as usize {
-            for cy in 1..=3 {
-                for cz in 0..2 * self.settings.render_distance as usize {
-                    instance_data
-                        .insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
-                }
-            }
-        }
+  for cx in 0..2 * self.settings.render_distance as usize {
+  for cy in 1..=3 {
+  for cz in 0..2 * self.settings.render_distance as usize {
+  instance_data
+  .insert(Vector::<u32, 3>::new([cx as u32, cy as u32, cz as u32]));
+  }
+  }
+  }
 
-        self.instance_data = instance_data.into_iter().collect::<Vec<_>>();
+  self.instance_data = instance_data.into_iter().collect::<Vec<_>>();
 
-        self.instance_data.sort_by(|a, b| {
-            let a_pos = Vector::<f32, 3>::new([
-                a[0] as f32 * CHUNK_SIZE as f32,
-                a[1] as f32 * CHUNK_SIZE as f32,
-                a[2] as f32 * CHUNK_SIZE as f32,
-            ]);
+  self.instance_data.sort_by(|a, b| {
+  let a_pos = Vector::<f32, 3>::new([
+  a[0] as f32 * CHUNK_SIZE as f32,
+  a[1] as f32 * CHUNK_SIZE as f32,
+  a[2] as f32 * CHUNK_SIZE as f32,
+  ]);
 
-            let a_offset = Vector::<f32, 3>::new([
-                cam_pos[0]
-                    .max(a_pos[0] - CHUNK_SIZE as f32 / 2.0)
-                    .min(a_pos[0] + CHUNK_SIZE as f32 / 2.0),
-                cam_pos[1]
-                    .max(a_pos[1] - CHUNK_SIZE as f32 / 2.0)
-                    .min(a_pos[1] + CHUNK_SIZE as f32 / 2.0),
-                cam_pos[2]
-                    .max(a_pos[2] - CHUNK_SIZE as f32 / 2.0)
-                    .min(a_pos[2] + CHUNK_SIZE as f32 / 2.0),
-            ]);
+  let a_offset = Vector::<f32, 3>::new([
+  cam_pos[0]
+  .max(a_pos[0] - CHUNK_SIZE as f32 / 2.0)
+  .min(a_pos[0] + CHUNK_SIZE as f32 / 2.0),
+  cam_pos[1]
+  .max(a_pos[1] - CHUNK_SIZE as f32 / 2.0)
+  .min(a_pos[1] + CHUNK_SIZE as f32 / 2.0),
+  cam_pos[2]
+  .max(a_pos[2] - CHUNK_SIZE as f32 / 2.0)
+  .min(a_pos[2] + CHUNK_SIZE as f32 / 2.0),
+  ]);
 
-            let b_pos = Vector::<f32, 3>::new([
-                b[0] as f32 * CHUNK_SIZE as f32,
-                b[1] as f32 * CHUNK_SIZE as f32,
-                b[2] as f32 * CHUNK_SIZE as f32,
-            ]);
+  let b_pos = Vector::<f32, 3>::new([
+  b[0] as f32 * CHUNK_SIZE as f32,
+  b[1] as f32 * CHUNK_SIZE as f32,
+  b[2] as f32 * CHUNK_SIZE as f32,
+  ]);
 
-            let b_offset = Vector::<f32, 3>::new([
-                cam_pos[0]
-                    .max(b_pos[0] - CHUNK_SIZE as f32 / 2.0)
-                    .min(b_pos[0] + CHUNK_SIZE as f32 / 2.0),
-                cam_pos[1]
-                    .max(b_pos[1] - CHUNK_SIZE as f32 / 2.0)
-                    .min(b_pos[1] + CHUNK_SIZE as f32 / 2.0),
-                cam_pos[2]
-                    .max(b_pos[2] - CHUNK_SIZE as f32 / 2.0)
-                    .min(b_pos[2] + CHUNK_SIZE as f32 / 2.0),
-            ]);
+  let b_offset = Vector::<f32, 3>::new([
+  cam_pos[0]
+  .max(b_pos[0] - CHUNK_SIZE as f32 / 2.0)
+  .min(b_pos[0] + CHUNK_SIZE as f32 / 2.0),
+  cam_pos[1]
+  .max(b_pos[1] - CHUNK_SIZE as f32 / 2.0)
+  .min(b_pos[1] + CHUNK_SIZE as f32 / 2.0),
+  cam_pos[2]
+  .max(b_pos[2] - CHUNK_SIZE as f32 / 2.0)
+  .min(b_pos[2] + CHUNK_SIZE as f32 / 2.0),
+  ]);
 
-            let a_dst = a_pos.distance(&cam_pos);
+  let a_dst = a_pos.distance(&cam_pos);
 
-            let b_dst = b_pos.distance(&cam_pos);
+  let b_dst = b_pos.distance(&cam_pos);
 
-            b_dst.partial_cmp(&a_dst).unwrap()
-        });
+  b_dst.partial_cmp(&a_dst).unwrap()
+});
 
-        self.staging_buffer_memory
-            .write(instance_offset, |data: &'_ mut [Vector<u32, 3>]| {
-                data[..self.instance_data.len()].copy_from_slice(&self.instance_data[..]);
-            })
-            .expect("failed to write to buffer");
-    }
+self.staging_buffer_memory
+.write(instance_offset, |data: &'_ mut [Vector<u32, 3>]| {
+    data[..self.instance_data.len()].copy_from_slice(&self.instance_data[..]);
+})
+.expect("failed to write to buffer");
+}
 
-    self.last_camera = Some(*self.camera);
+self.last_camera = Some(*self.camera);
 
 
-    //#[cfg(debug_assertions)]
-    //TODO switch to shaderc
-    {
-        let mut base_path = std::env::current_exe().expect("failed to get current exe");
-        base_path.pop();
-        let base_path_str = base_path.to_str().unwrap();
+//#[cfg(debug_assertions)]
+//TODO switch to shaderc
+{
+    let mut base_path = std::env::current_exe().expect("failed to get current exe");
+    base_path.pop();
+    let base_path_str = base_path.to_str().unwrap();
 
-        let resources_path = format!("{}/{}", base_path_str, "resources");
-        let assets_path = format!("{}/{}", base_path_str, "assets");
+    let resources_path = format!("{}/{}", base_path_str, "resources");
+    let assets_path = format!("{}/{}", base_path_str, "assets");
 
-        for entry in fs::read_dir(resources_path).expect("failed to read directory") {
-            let entry = entry.expect("failed to get directory entry");
+    for entry in fs::read_dir(resources_path).expect("failed to read directory") {
+        let entry = entry.expect("failed to get directory entry");
 
-            if entry
-                .file_type()
+        if entry
+            .file_type()
                 .expect("failed to get file type")
                 .is_file()
-            {
-                let in_path = entry.path();
+                {
+                    let in_path = entry.path();
 
-                let out_path = format!(
-                    "{}/{}.spirv",
-                    assets_path,
-                    in_path.file_stem().unwrap().to_string_lossy(),
-                );
+                    let out_path = format!(
+                        "{}/{}.spirv",
+                        assets_path,
+                        in_path.file_stem().unwrap().to_string_lossy(),
+                    );
 
-                let metadata = fs::metadata(&in_path);
+                    let metadata = fs::metadata(&in_path);
 
-                if let Err(_) = metadata {
-                    continue;
-                }
-
-                let mod_time = metadata
-                    .unwrap()
-                    .modified()
-                    .expect("modified on unsupported platform");
-
-                let last_mod_time = *self
-                    .shader_mod_time
-                    .entry(out_path.clone())
-                    .or_insert(time::SystemTime::now());
-
-                if mod_time != last_mod_time {
-                    if in_path.extension().and_then(|os_str| os_str.to_str()) != Some("glsl") {
+                    if let Err(_) = metadata {
                         continue;
                     }
 
-                    let shader_type = in_path.file_stem().and_then(|stem| {
-                        let stem_str = stem.to_string_lossy();
+                    let mod_time = metadata
+                        .unwrap()
+                        .modified()
+                        .expect("modified on unsupported platform");
 
-                        let stem_str_spl = stem_str.split(".").collect::<Vec<_>>();
+                    let last_mod_time = *self
+                        .shader_mod_time
+                        .entry(out_path.clone())
+                        .or_insert(time::SystemTime::now());
 
-                        let ty = stem_str_spl[stem_str_spl.len() - 1];
-
-                        match ty {
-                            "vert" => Some(glsl_to_spirv::ShaderType::Vertex),
-                            "frag" => Some(glsl_to_spirv::ShaderType::Fragment),
-                            "comp" => Some(glsl_to_spirv::ShaderType::Compute),
-                            _ => None,
+                    if mod_time != last_mod_time {
+                        if in_path.extension().and_then(|os_str| os_str.to_str()) != Some("glsl") {
+                            continue;
                         }
-                    });
 
-                    if let None = shader_type {
-                        continue;
-                    }
+                        let shader_type = in_path.file_stem().and_then(|stem| {
+                            let stem_str = stem.to_string_lossy();
 
-                    let source =
-                        fs::read_to_string(&in_path).expect("failed to read shader source");
+                            let stem_str_spl = stem_str.split(".").collect::<Vec<_>>();
 
-                    info!("compiling shader...");
+                            let ty = stem_str_spl[stem_str_spl.len() - 1];
 
-                    let compilation_result =
-                        glsl_to_spirv::compile(&source, shader_type.unwrap());
+                            match ty {
+                                "vert" => Some(glsl_to_spirv::ShaderType::Vertex),
+                                "frag" => Some(glsl_to_spirv::ShaderType::Fragment),
+                                "comp" => Some(glsl_to_spirv::ShaderType::Compute),
+                                _ => None,
+                            }
+                        });
 
-                    if let Err(e) = compilation_result {
-                        error!(
-                            "failed to compile shader: {}",
-                            &in_path.file_stem().unwrap().to_string_lossy()
-                        );
-                        print!("{}", e);
+                        if let None = shader_type {
+                            continue;
+                        }
+
+                        let source =
+                            fs::read_to_string(&in_path).expect("failed to read shader source");
+
+                        info!("compiling shader...");
+
+                        let compilation_result =
+                            glsl_to_spirv::compile(&source, shader_type.unwrap());
+
+                        if let Err(e) = compilation_result {
+                            error!(
+                                "failed to compile shader: {}",
+                                &in_path.file_stem().unwrap().to_string_lossy()
+                            );
+                            print!("{}", e);
+                            self.shader_mod_time.insert(out_path.clone(), mod_time);
+                            return;
+                        }
+
+                        let mut compilation = compilation_result.unwrap();
+
+                        let mut compiled_bytes = vec![];
+
+                        compilation
+                            .read_to_end(&mut compiled_bytes)
+                            .expect("failed to read compilation to buffer");
+
+                        if fs::metadata(&assets_path).is_err() {
+                            fs::create_dir(&assets_path)
+                                .expect("failed to create assets directory");
+                        }
+
+                        if fs::metadata(&out_path).is_ok() {
+                            fs::remove_file(&out_path).expect("failed to remove file");
+                        }
+
+                        fs::write(&out_path, &compiled_bytes).expect("failed to write shader");
+
                         self.shader_mod_time.insert(out_path.clone(), mod_time);
-                        return;
+                        self.shaders.remove(out_path.as_str());
                     }
-
-                    let mut compilation = compilation_result.unwrap();
-
-                    let mut compiled_bytes = vec![];
-
-                    compilation
-                        .read_to_end(&mut compiled_bytes)
-                        .expect("failed to read compilation to buffer");
-
-                    if fs::metadata(&assets_path).is_err() {
-                        fs::create_dir(&assets_path)
-                            .expect("failed to create assets directory");
-                    }
-
-                    if fs::metadata(&out_path).is_ok() {
-                        fs::remove_file(&out_path).expect("failed to remove file");
-                    }
-
-                    fs::write(&out_path, &compiled_bytes).expect("failed to write shader");
-
-                    self.shader_mod_time.insert(out_path.clone(), mod_time);
-                    self.shaders.remove(out_path.as_str());
                 }
-            }
-        }
     }
+}
 
-    let mut load_graphics = false;
-    let mut load_compute = false;
-
-    self.shaders
-        .entry(batch.graphics_vertex_shader.clone())
-        .or_insert_with(|| {
-            info!("loading vertex shader");
-
-            load_graphics = true;
-
-            let bytes = fs::read(&batch.graphics_vertex_shader).unwrap();
-
-            let code = convert_bytes_to_spirv_data(bytes);
-
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
-
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
-
-            shader_module
-        });
+let mut load_graphics = false;
+let mut load_compute = false;
 
     self.shaders
-        .entry(batch.graphics_fragment_shader.clone())
-        .or_insert_with(|| {
-            info!("loading fragment shader");
+.entry(batch.graphics_vertex_shader.clone())
+    .or_insert_with(|| {
+        info!("loading vertex shader");
 
-            load_graphics = true;
+        load_graphics = true;
 
-            let bytes = fs::read(&batch.graphics_fragment_shader).unwrap();
+        let bytes = fs::read(&batch.graphics_vertex_shader).unwrap();
 
-            let code = convert_bytes_to_spirv_data(bytes);
+        let code = convert_bytes_to_spirv_data(bytes);
 
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
 
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
 
-            shader_module
-        });
-
-    self.shaders
-        .entry(batch.postfx_vertex_shader.clone())
-        .or_insert_with(|| {
-            info!("loading vertex shader");
-
-            load_graphics = true;
-
-            let bytes = fs::read(&batch.postfx_vertex_shader).unwrap();
-
-            let code = convert_bytes_to_spirv_data(bytes);
-
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
-
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
-
-            shader_module
-        });
+        shader_module
+    });
 
     self.shaders
-        .entry(batch.postfx_fragment_shader.clone())
-        .or_insert_with(|| {
-            info!("loading fragment shader");
+.entry(batch.graphics_fragment_shader.clone())
+    .or_insert_with(|| {
+        info!("loading fragment shader");
 
-            load_graphics = true;
+        load_graphics = true;
 
-            let bytes = fs::read(&batch.postfx_fragment_shader).unwrap();
+        let bytes = fs::read(&batch.graphics_fragment_shader).unwrap();
 
-            let code = convert_bytes_to_spirv_data(bytes);
+        let code = convert_bytes_to_spirv_data(bytes);
 
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
 
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
 
-            shader_module
-        });
-
-    self.shaders
-        .entry(batch.present_vertex_shader.clone())
-        .or_insert_with(|| {
-            info!("loading vertex shader");
-
-            load_graphics = true;
-
-            let bytes = fs::read(&batch.present_vertex_shader).unwrap();
-
-            let code = convert_bytes_to_spirv_data(bytes);
-
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
-
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
-
-            shader_module
-        });
+        shader_module
+    });
 
     self.shaders
-        .entry(batch.present_fragment_shader.clone())
-        .or_insert_with(|| {
-            info!("loading fragment shader");
+.entry(batch.postfx_vertex_shader.clone())
+    .or_insert_with(|| {
+        info!("loading vertex shader");
 
-            load_graphics = true;
+        load_graphics = true;
 
-            let bytes = fs::read(&batch.present_fragment_shader).unwrap();
+        let bytes = fs::read(&batch.postfx_vertex_shader).unwrap();
 
-            let code = convert_bytes_to_spirv_data(bytes);
+        let code = convert_bytes_to_spirv_data(bytes);
 
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
 
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
 
-            shader_module
-        });
+        shader_module
+    });
 
     self.shaders
-        .entry(batch.jfa_shader.clone())
-        .or_insert_with(|| {
-            info!("loading jfa compute shader");
+.entry(batch.postfx_fragment_shader.clone())
+    .or_insert_with(|| {
+        info!("loading fragment shader");
 
-            load_compute = true;
+        load_graphics = true;
 
-            let bytes = fs::read(&batch.jfa_shader).unwrap();
+        let bytes = fs::read(&batch.postfx_fragment_shader).unwrap();
 
-            let code = convert_bytes_to_spirv_data(bytes);
+        let code = convert_bytes_to_spirv_data(bytes);
 
-            let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
 
-            let shader_module =
-                vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
-                    .expect("failed to create shader module");
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
 
-            shader_module
-        });
+        shader_module
+    });
 
-    if load_graphics
-        || self.last_batch.graphics_vertex_shader != batch.graphics_vertex_shader
-        || self.last_batch.graphics_fragment_shader != batch.graphics_fragment_shader
-        || self.last_batch.postfx_vertex_shader != batch.postfx_vertex_shader
-        || self.last_batch.postfx_fragment_shader != batch.postfx_fragment_shader
-        || self.last_batch.present_vertex_shader != batch.present_vertex_shader
-        || self.last_batch.present_fragment_shader != batch.present_fragment_shader
-    {
-        self.device.wait_idle().expect("failed to wait on device");
+    self.shaders
+.entry(batch.present_vertex_shader.clone())
+    .or_insert_with(|| {
+        info!("loading vertex shader");
 
-        let graphics_shaders = [
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::SHADER_STAGE_VERTEX,
-                module: &self.shaders[&batch.graphics_vertex_shader],
-                entry_point: "main",
-            },
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::SHADER_STAGE_FRAGMENT,
-                module: &self.shaders[&batch.graphics_fragment_shader],
-                entry_point: "main",
-            },
-        ];
+        load_graphics = true;
 
-        let postfx_shaders = [
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::SHADER_STAGE_VERTEX,
-                module: &self.shaders[&batch.postfx_vertex_shader],
-                entry_point: "main",
-            },
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::SHADER_STAGE_FRAGMENT,
-                module: &self.shaders[&batch.postfx_fragment_shader],
-                entry_point: "main",
-            },
-        ];
+        let bytes = fs::read(&batch.present_vertex_shader).unwrap();
 
-        let present_shaders = [
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::SHADER_STAGE_VERTEX,
-                module: &self.shaders[&batch.present_vertex_shader],
-                entry_point: "main",
-            },
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::SHADER_STAGE_FRAGMENT,
-                module: &self.shaders[&batch.present_fragment_shader],
-                entry_point: "main",
-            },
-        ];
+        let code = convert_bytes_to_spirv_data(bytes);
 
-        info!("making new graphics pipeline...");
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
 
-        let old_swapchain = self.render_data.take().map(|data| data.swapchain);
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
 
-        self.render_data = Some(VulkanRenderData::init(
+        shader_module
+    });
+
+    self.shaders
+.entry(batch.present_fragment_shader.clone())
+    .or_insert_with(|| {
+        info!("loading fragment shader");
+
+        load_graphics = true;
+
+        let bytes = fs::read(&batch.present_fragment_shader).unwrap();
+
+        let code = convert_bytes_to_spirv_data(bytes);
+
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
+
+        shader_module
+    });
+
+    self.shaders
+.entry(batch.jfa_shader.clone())
+    .or_insert_with(|| {
+        info!("loading jfa compute shader");
+
+        load_compute = true;
+
+        let bytes = fs::read(&batch.jfa_shader).unwrap();
+
+        let code = convert_bytes_to_spirv_data(bytes);
+
+        let shader_module_create_info = vk::ShaderModuleCreateInfo { code: &code[..] };
+
+        let shader_module =
+            vk::ShaderModule::new(self.device.clone(), shader_module_create_info)
+            .expect("failed to create shader module");
+
+        shader_module
+    });
+
+if load_graphics
+|| self.last_batch.graphics_vertex_shader != batch.graphics_vertex_shader
+|| self.last_batch.graphics_fragment_shader != batch.graphics_fragment_shader
+|| self.last_batch.postfx_vertex_shader != batch.postfx_vertex_shader
+|| self.last_batch.postfx_fragment_shader != batch.postfx_fragment_shader
+|| self.last_batch.present_vertex_shader != batch.present_vertex_shader
+|| self.last_batch.present_fragment_shader != batch.present_fragment_shader
+{
+    self.device.wait_idle().expect("failed to wait on device");
+
+    let graphics_shaders = [
+        vk::PipelineShaderStageCreateInfo {
+            stage: vk::SHADER_STAGE_VERTEX,
+            module: &self.shaders[&batch.graphics_vertex_shader],
+            entry_point: "main",
+        },
+        vk::PipelineShaderStageCreateInfo {
+            stage: vk::SHADER_STAGE_FRAGMENT,
+            module: &self.shaders[&batch.graphics_fragment_shader],
+            entry_point: "main",
+        },
+    ];
+
+    let postfx_shaders = [
+        vk::PipelineShaderStageCreateInfo {
+            stage: vk::SHADER_STAGE_VERTEX,
+            module: &self.shaders[&batch.postfx_vertex_shader],
+            entry_point: "main",
+        },
+        vk::PipelineShaderStageCreateInfo {
+            stage: vk::SHADER_STAGE_FRAGMENT,
+            module: &self.shaders[&batch.postfx_fragment_shader],
+            entry_point: "main",
+        },
+    ];
+
+    let present_shaders = [
+        vk::PipelineShaderStageCreateInfo {
+            stage: vk::SHADER_STAGE_VERTEX,
+            module: &self.shaders[&batch.present_vertex_shader],
+            entry_point: "main",
+        },
+        vk::PipelineShaderStageCreateInfo {
+            stage: vk::SHADER_STAGE_FRAGMENT,
+            module: &self.shaders[&batch.present_fragment_shader],
+            entry_point: "main",
+        },
+    ];
+
+    info!("making new graphics pipeline...");
+
+    let old_swapchain = self.render_data.take().map(|data| data.swapchain);
+
+    self.render_data = Some(VulkanRenderData::init(
             self.device.clone(),
             &self.physical_device,
             &self.surface,
@@ -3030,29 +3046,29 @@ impl VulkanRenderData {
             &present_shaders,
             old_swapchain,
             &self.render_info,
-        ));
-    }
+    ));
+}
 
-    if load_compute || self.last_batch.jfa_shader != batch.jfa_shader {
-        self.device.wait_idle().expect("failed to wait on device");
+if load_compute || self.last_batch.jfa_shader != batch.jfa_shader {
+    self.device.wait_idle().expect("failed to wait on device");
 
-        let jfa_shader = vk::PipelineShaderStageCreateInfo {
-            stage: vk::SHADER_STAGE_COMPUTE,
-            module: &self.shaders[&batch.jfa_shader],
-            entry_point: "main",
-        };
+    let jfa_shader = vk::PipelineShaderStageCreateInfo {
+        stage: vk::SHADER_STAGE_COMPUTE,
+        module: &self.shaders[&batch.jfa_shader],
+        entry_point: "main",
+    };
 
-        info!("making new compute pipelines...");
+    info!("making new compute pipelines...");
 
-        self.compute_data = Some(VulkanComputeData::init(self.device.clone(), jfa_shader));
-    }
+    self.compute_data = Some(VulkanComputeData::init(self.device.clone(), jfa_shader));
+}
 
-    self.last_batch = batch;
+self.last_batch = batch;
 
-    let render_data = self
-        .render_data
-        .as_mut()
-        .expect("failed to retrieve render data");
+let render_data = self
+    .render_data
+.as_mut()
+    .expect("failed to retrieve render data");
 
     }
 }
@@ -3107,13 +3123,13 @@ fn resize(&mut self, resolution: (u32, u32)) {
     let swapchain = render_data.swapchain;
 
     self.render_data = Some(VulkanRenderData::init(
-        self.device.clone(),
-        &self.physical_device,
-        &self.surface,
-        &graphics_shaders,
-        &postfx_shaders,
-        &present_shaders,
-        Some(swapchain),
-        &self.render_info,
+            self.device.clone(),
+            &self.physical_device,
+            &self.surface,
+            &graphics_shaders,
+            &postfx_shaders,
+            &present_shaders,
+            Some(swapchain),
+            &self.render_info,
     ));
 }*/

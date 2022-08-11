@@ -205,6 +205,7 @@ impl Shader {
         if last_modified.resource.is_some() && modified == last_modified.resource.unwrap() {
             return Ok(());
         }
+        dbg!("yo what");
 
         let mut source_file = fs::File::open(resource).expect("failed to open shader file");
 
@@ -250,6 +251,7 @@ impl Shader {
         let mut options = CompileOptions::new().unwrap();
 
         options.add_macro_definition("EP", Some(entry));
+        options.set_generate_debug_info();
 
         let artifact = compiler
             .compile_into_spirv(&buffer, kind, name, entry, Some(&options))

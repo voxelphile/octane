@@ -413,7 +413,7 @@ float depth(mat4 true_model, vec3 position) {
 void main() {
 	out_color = vec4(1);
 	out_occlusion = vec4(1);	
-
+	
 	vec3 sun_pos = vec3(1000, 2000, 100);
 	mat4 true_model = object.model;
 
