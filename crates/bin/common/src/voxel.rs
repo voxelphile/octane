@@ -27,4 +27,11 @@ impl Voxel {
             _ => false,
         }
     }
+    
+    pub fn is_transparent(&self) -> bool {
+        match self.id {
+            Id::Vacuum | Id::Air => true,
+            _ => false,
+        }
+    }
 }

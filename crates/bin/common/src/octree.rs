@@ -49,13 +49,13 @@ impl Octree<Voxel> for SparseOctree<Voxel> {
     }
 
     fn place(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
-        self.size = 9;
+        self.size = 2;
 
         let mut hierarchy = self.get_position_hierarchy(x, y, z);
 
         //dbg!(&hierarchy);
 
-        let node = self.push_back(&hierarchy[..]);
+        let node = self.add_node(&hierarchy[..]);
 
         node.unwrap().voxel = voxel;
 
@@ -96,7 +96,11 @@ impl SparseOctree<Voxel> {
         Some((&self.nodes[index], index))
     }
 
-    fn push_back<'a>(&'a mut self, hierarchy: &[u8]) -> Option<&'a mut Node> {
+    pub fn get_node_by_index(&self, index: usize) -> Option<&'_ Node> {
+        self.nodes.get(index)
+    }
+
+    fn add_node<'a>(&'a mut self, hierarchy: &[u8]) -> Option<&'a mut Node> {
         //println!("ADD NODE");
 
         let mut index = 0;
@@ -265,6 +269,24 @@ pub struct Node {
     valid: u32,
     morton: u64,
     voxel: Voxel,
+}
+
+impl Node {
+    pub fn valid(&self) -> u32 {
+        self.valid
+    }
+
+    pub fn child(&self) -> u32 {
+        self.child
+    }
+
+    pub fn voxel(&self) -> Voxel {
+        self.voxel
+    }
+
+    pub fn morton(&self) -> u64 {
+        self.morton
+    }
 }
 
 impl Default for Node {

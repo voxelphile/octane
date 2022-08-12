@@ -17,6 +17,7 @@ use common::mesh::Mesh;
 use common::octree::{Octree, SparseOctree};
 use common::render::{self, Condition, Renderer};
 use common::voxel::{Id::*, Voxel};
+use common::bitfield::*;
 
 //use input::prelude::*;
 use math::prelude::{Matrix, Vector};
@@ -75,9 +76,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let render_distance = 32;
 
-    let octree = {
-        let mut octree = SparseOctree::<Voxel>::new();
+    let mut octree = {
 
+        /*
         let ct = 2 * render_distance as usize * CHUNK_SIZE;
 
         use noise::NoiseFn;
@@ -119,7 +120,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         octree.optimize();
 
         octree
+        */
+        let mut octree = SparseOctree::<Voxel>::new();
+        for x in 0..=0 {
+            for y in 0..=0 {
+                for z in 0..=0 {
+                    octree.place(1,1,1, Voxel { id: Dirt });
+                }
+            }
+        }
+        octree
     };
+    octree.optimize();
+    let bitfield = octree.build_bitfield();
+
+    dbg!(&bitfield);
+    dbg!(&bitfield.data());
+
+
+    panic!("");
 
     //create matrices
 
@@ -255,7 +274,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        
+
         if should_capture {
             window.capture();
         }

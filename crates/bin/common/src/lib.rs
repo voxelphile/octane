@@ -5,6 +5,7 @@ pub mod input;
 pub mod mesh;
 pub mod octree;
 pub mod render;
+pub mod bitfield;
 pub mod voxel;
 
 pub mod prelude {

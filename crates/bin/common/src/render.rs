@@ -98,6 +98,7 @@ const SETTINGS_OFFSET: u64 = 512;
 const OBJECT_OFFSET: u64 = 1024;
 const VERTEX_OFFSET: u64 = 2048;
 const INDEX_OFFSET: u64 = 4096;
+const BITFIELD_OFFSET: u64 = 65536;
 
 pub struct Vulkan {
     index_count: usize,
@@ -475,6 +476,25 @@ impl Renderer for Vulkan {
                 size: octree_bytes as u64,
 
             });
+           /*
+            let bitfield = 
+
+            let bitfield_bytes = 1 * mem::size_of::<u32>()
+                + batch.objects[0].data.nodes().len() * mem::size_of::<crate::octree::Node>();
+            self.staging_buffer.write(BufferWrite {
+                offset: (2 * mem::size_of::<u32>()) as u64,
+                data: batch.objects[0].data.nodes(),
+            });
+
+            self.device.copy_buffer_to_buffer(BufferCopy {
+                from: &self.staging_buffer,
+                to: &mut self.octree_buffer,
+                src: 0,
+                dst: 0,
+                size: octree_bytes as u64,
+
+            });
+           */
         }
 
         let octree_bytes = 2 * mem::size_of::<u32>()
